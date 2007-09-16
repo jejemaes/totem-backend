@@ -392,6 +392,7 @@ class WebsiteAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                 "meta_description",
                 "menu",
                 "homepage",
+                "cover_media",
                 "footer",
                 "side_bar_content",
                 "theme",
@@ -431,6 +432,17 @@ class WebsiteAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                 )
             else:
                 self.assertIsNone(api_data["menu"])
+        if "cover_media" in fields:
+            # A media's label is a filename, so the relation carries its URL too
+            # -- an editor showing which image is the cover needs the thumbnail,
+            # not `photo-3.png`.
+            if obj.cover_media_id:
+                self.assertEqual(api_data["cover_media"]["id"], obj.cover_media.pk)
+                self.assertEqual(
+                    api_data["cover_media"]["content"], obj.cover_media.content.url
+                )
+            else:
+                self.assertIsNone(api_data["cover_media"])
         if "homepage" in fields:
             if obj.homepage_id:
                 self.assertEqual(

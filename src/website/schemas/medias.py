@@ -35,10 +35,46 @@ from website.models import Media
 # ----------------------------------------------------
 
 
+def stored_path_to_url(value):
+    """The stored path -> the public URL, the way a `FieldFile` would.
+
+    Shared by every schema that exposes `content`, so the rule has one home.
+
+    A list route serialises `instance.__dict__`, which holds what the storage
+    returned from `_save` -- the symbolic path, `website/YYYY/MM/name.png`. A
+    value read off an instance has instead already been mapped to its `.url` by
+    ninja's `DjangoGetter`, and prefixing that a second time would produce
+    `/media/public/media/public/...`. The leading-slash test tells them apart: a
+    stored path never starts with a slash, a URL always does. That is what makes
+    the same validator safe on a list route and on a retrieve route.
+    """
+    if isinstance(value, str) and value and not value.startswith("/"):
+        return Media._meta.get_field("content").storage.url(value)
+    return value
+
+
 class MediaDisplayNameSchema(ModelSchema):
+    """What a relation to a media serialises to.
+
+    Carries `content` where the other display-name schemas carry nothing but a
+    label, because a media's label is a filename: an editor showing which image
+    is the site's cover needs the thumbnail to show, not `photo-3.png`. Same
+    normalisation as `MediaListSchema` and for the same reason -- see
+    `stored_path_to_url` above.
+    """
+
     class Meta:
         model = Media
-        fields = ["id", "name"]
+        fields = ["id", "name", "content", "mimetype"]
+        optional_fields = "__all__"
+
+    # Same `check_fields=False` requirement as `MediaListSchema`: `content` is
+    # derived from the model after the class body is built, so pydantic cannot
+    # see it while collecting decorators.
+    @field_validator("content", mode="before", check_fields=False)
+    @classmethod
+    def _stored_path_to_url(cls, value):
+        return stored_path_to_url(value)
 
 
 class MediaSchema(ModelSchema):
@@ -70,24 +106,12 @@ class MediaListSchema(ModelSchema):
     # decorators while the class body is being built, and `content` is not in it
     # -- `ModelSchema`'s metaclass derives the field from the model afterwards.
     # Without it every import of this module raises `decorator-missing-field`.
+    # `mode="before"` because the value arrives as the raw column. See
+    # `stored_path_to_url`.
     @field_validator("content", mode="before", check_fields=False)
     @classmethod
     def _stored_path_to_url(cls, value):
-        """The stored path -> the public URL, the way a `FieldFile` would.
-
-        `mode="before"` because the value arrives as the raw column: a list route
-        serialises `instance.__dict__`, which holds what the storage returned
-        from `_save` -- the symbolic path, `website/YYYY/MM/name.png`.
-
-        The leading-slash test is what makes the schema safe on any route: a
-        value read off an instance has already been mapped to its `.url` by
-        ninja's `DjangoGetter`, and prefixing that a second time would produce
-        `/media/public/media/public/...`. A stored path never starts with a
-        slash; a URL always does.
-        """
-        if isinstance(value, str) and value and not value.startswith("/"):
-            return Media._meta.get_field("content").storage.url(value)
-        return value
+        return stored_path_to_url(value)
 
 
 class MediaCreateSchema(ModelSchema):

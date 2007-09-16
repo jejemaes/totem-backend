@@ -12,7 +12,7 @@ from django.test import Client, TestCase
 
 from website.models import Page, Website
 from website.theme import DEFAULT_THEME_ID, LAYOUTS, get_themes
-from website.views import PageView
+from website.views import HomePageView, PageView
 
 from .common import WebsiteViewTestMixin
 
@@ -232,3 +232,99 @@ class TestSwitchingTheme(WebsiteViewTestMixin, TestCase):
                         self.assertNotContains(
                             response, f"/static/website/themes/{other}/theme.css"
                         )
+
+
+class TestCoverMedia(WebsiteViewTestMixin, TestCase):
+    """`Website.cover_media`, drawn by the themes whose layouts have room for it.
+
+    A cover is not universal: Furni's hero is built around an image panel, the
+    default theme's is a flat colour band. Nothing declares that -- the context
+    offers the cover to every theme and a layout with nowhere to put one simply
+    never reads it, which is the same outcome with no vocabulary to keep in step
+    with the templates.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.page = self.build_page(slug="home", layout="landing")
+        self.media = self.build_media()
+        self.website = self.build_website(
+            homepage=self.page,
+            menu=self.build_menu_tree(page=self.page),
+            theme="furni",
+            cover_media=self.media,
+        )
+
+    def test_a_supporting_theme_draws_the_cover(self):
+        response = Client().get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 't-hero__cover')
+        self.assertContains(response, self.media.content.url)
+
+    def test_a_supporting_theme_falls_back_when_no_cover_is_set(self):
+        """A site that has not chosen one yet is the normal state, not an error.
+
+        The hero keeps its decorative panel, so it does not render with an empty
+        half column.
+        """
+        Website.objects.filter(pk=self.website.pk).update(cover_media=None)
+
+        response = Client().get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "t-hero__cover")
+        self.assertContains(response, "t-hero__panel")
+
+    def test_a_theme_whose_layout_has_no_room_ignores_the_cover(self):
+        """Set on the record, absent from the page: the template is the switch."""
+        Website.objects.filter(pk=self.website.pk).update(theme=DEFAULT_THEME_ID)
+
+        response = Client().get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, self.media.content.url)
+
+    def test_the_context_offers_the_cover_to_every_theme(self):
+        """The view does not decide; the layout does.
+
+        Both themes get the same context, and the difference on the page comes
+        from whether the layout reads the key.
+        """
+        for theme_id in ("furni", DEFAULT_THEME_ID):
+            Website.objects.filter(pk=self.website.pk).update(theme=theme_id)
+            with self.subTest(theme=theme_id):
+                response = self.get_unrendered_response(HomePageView, "/")
+
+                self.assertEqual(
+                    response.context_data["cover_media"].pk, self.media.pk
+                )
+
+    def test_rendering_the_cover_makes_no_query(self):
+        """The reason `read_current` selects the relation.
+
+        A layout reads `cover_media.content.url` while the template renders,
+        outside any `sync_to_async` hop -- so a lazy foreign key there would
+        raise `SynchronousOnlyOperation`, not merely cost a query.
+        `check_render_context_data` would not catch it either: it refuses
+        querysets, and an unresolved relation is not one.
+        """
+        response = self.get_unrendered_response(HomePageView, "/")
+
+        with self.assertNumQueries(0):
+            response.render()
+        self.assertEqual(response.status_code, 200)
+
+    def test_deleting_the_media_leaves_the_homepage_renderable(self):
+        """`SET_NULL`, not `PROTECT`: a cover is decorative.
+
+        The trade it buys is that deletion is never refused; the cost is that it
+        blanks the cover with no warning, which this asserts is survivable.
+        """
+        self.media.delete()
+
+        response = Client().get("/")
+
+        self.assertEqual(response.status_code, 200)
+        self.website.refresh_from_db()
+        self.assertIsNone(self.website.cover_media_id)

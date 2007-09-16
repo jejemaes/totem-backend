@@ -96,6 +96,16 @@ class WebsiteRenderContextMixin(EnvironmentViewMixin, RenderContextMixin):
             "side_bar_content": await expand_widgets(
                 website.side_bar_content if website is not None else "", self.env
             ),
+            # The cover image, or None. Offered to every theme, and a layout
+            # that has nowhere to put one simply never reads it -- which is the
+            # same answer a declared capability gave, without a vocabulary to
+            # keep in step with the templates.
+            #
+            # Resolved by `read_current`'s `select_related`, so reading
+            # `.content.url` in a template costs no query;
+            # `check_render_context_data` would not catch a lazy relation, since
+            # it only refuses querysets.
+            "cover_media": website.cover_media if website is not None else None,
             # The theme object itself, not just its id: a layout reads
             # `theme.stylesheets` and `theme.base_template` off it. A plain
             # python object holding no lazy attribute, so

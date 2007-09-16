@@ -45,6 +45,28 @@ class Website(models.Model):
     # has no content yet -- which is why `/` must degrade rather than 404.
     homepage = models.ForeignKey('website.Page', verbose_name="Homepage", null=True, blank=True, on_delete=models.PROTECT, related_name="+", help_text="Page rendered at the root of the website.")
 
+    # `SET_NULL` and not `PROTECT`, unlike `homepage`. A cover is decorative:
+    # losing it leaves the homepage perfectly renderable, since a theme only
+    # draws it when it is there. `PROTECT` would instead refuse to delete a
+    # media because some site uses it as a cover -- surprising in what is
+    # otherwise a general file store, and `MediaService` refuses nothing else.
+    # The cost is that deleting the media blanks the cover with no warning,
+    # which is the trade being made.
+    #
+    # `related_name="+"`: nothing needs to ask a media which websites use it.
+    cover_media = models.ForeignKey(
+        'website.Media',
+        verbose_name="Cover Image",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+        help_text=(
+            "Image a theme may show on the homepage. Whether it appears is up "
+            "to the theme: a layout with nowhere to put one ignores it."
+        ),
+    )
+
     footer = fields.HtmlField("Footer Content", null=True, blank=True, allow_widget=True)
     side_bar_content = fields.HtmlField(
         "Sidebar Content", null=True, blank=True, allow_widget=True

@@ -378,4 +378,18 @@ class WebsiteService(
         list from the response schema instead of guessing it.
         """
         queryset = await self.read(ordering=["id"], fields=fields)
+        # `select_related` and not a lazy dereference: a layout reads
+        # `cover_media.content.url` while the template renders, out of reach of
+        # any `sync_to_async` hop, so following the relation there would raise
+        # `SynchronousOnlyOperation`. Resolved by this very query instead -- the
+        # same reason and the same fix as `MenuService.read_tree` selecting
+        # `page`.
+        #
+        # Skipped when the caller restricted the fields: `read(fields=...)`
+        # already issued the `only()`/`prefetch_related()` its schema needs, and
+        # `select_related` on a deferred relation makes django raise
+        # `FieldError`. Only the controller passes `fields`, and it derives them
+        # from the response schema.
+        if not fields:
+            queryset = queryset.select_related("cover_media")
         return await queryset.afirst()

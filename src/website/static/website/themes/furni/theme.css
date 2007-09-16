@@ -176,8 +176,21 @@ h1, h2, h3, h4, h5, h6 {
   margin-bottom: 0;
 }
 
-/* The offset sage panel behind Furni's hero imagery. Decorative only, which is
- * why the element carries `aria-hidden`. */
+/* The cover image, when the site has one. Same footprint as the sage panel it
+ * replaces, so the hero does not change height when an author sets or clears
+ * one. `object-fit` rather than a fixed height: the author uploads whatever
+ * they have, and letting the browser crop beats distorting it. */
+.t-hero__cover {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 16px;
+}
+
+/* The offset sage panel behind Furni's hero imagery, and the fallback when no
+ * cover is set. Decorative only, which is why the element carries
+ * `aria-hidden`. */
 .t-hero__panel {
   background: var(--t-color-sage);
   border-radius: 16px;

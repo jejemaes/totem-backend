@@ -4,6 +4,7 @@ from ninja import Schema
 
 from core.schemas import ModelSchema
 from website.models import Website
+from website.schemas.medias import MediaDisplayNameSchema
 from website.schemas.menus import MenuDisplayNameSchema
 from website.schemas.pages import PageDisplayNameSchema
 
@@ -32,6 +33,7 @@ class WebsiteSchema(ModelSchema):
     # `website.schemas.pages`.
     menu: Optional[MenuDisplayNameSchema] = None
     homepage: Optional[PageDisplayNameSchema] = None
+    cover_media: Optional[MediaDisplayNameSchema] = None
 
     class Meta:
         model = Website
@@ -43,6 +45,7 @@ class WebsiteSchema(ModelSchema):
             "meta_description",
             "menu",
             "homepage",
+            "cover_media",
             "footer",
             "side_bar_content",
             "theme",
@@ -61,6 +64,7 @@ class WebsiteUpdateSchema(ModelSchema):
             "meta_description",
             "menu",
             "homepage",
+            "cover_media",
             "footer",
             "side_bar_content",
             "theme",

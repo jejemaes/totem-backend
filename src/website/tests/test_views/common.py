@@ -1,7 +1,9 @@
 from asgiref.sync import async_to_sync
 from django.test import RequestFactory
 
-from website.models import Menu, Page, Website
+from django.core.files.uploadedfile import SimpleUploadedFile
+
+from website.models import Media, Menu, Page, Website
 
 
 class WebsiteViewTestMixin:
@@ -19,6 +21,24 @@ class WebsiteViewTestMixin:
         return Website.objects.create(
             menu=menu, homepage=homepage, footer=footer, **values
         )
+
+    def build_media(self, filename="cover.png"):
+        """A media row with real bytes behind it.
+
+        `bulk_create` and not `create`, which is the write path the service
+        uses: `MediaQuerySet.bulk_create` is what derives `checksum`, `mimetype`
+        and `name` from the upload, and it has to run before the INSERT commits
+        the file and rewrites `content.name` to the stored path. Going through
+        `create()` reaches `Model.save()` instead, which this model does not
+        support for a fresh upload.
+        """
+        return Media.objects.bulk_create([
+            Media(
+                content=SimpleUploadedFile(
+                    filename, b"\x89PNG\r\n", content_type="image/png"
+                )
+            )
+        ])[0]
 
     def build_menu_tree(self, page=None):
         root = Menu.objects.create(name="Main")

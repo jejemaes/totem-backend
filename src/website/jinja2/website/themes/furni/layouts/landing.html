@@ -20,7 +20,22 @@
         {% endif %}
       </div>
       <div class="col-12 col-lg-6 d-none d-lg-block">
+        {# `Website.cover_media`, which this theme declares support for through
+           its `cover-media` feature. Already resolved by `read_current`'s
+           `select_related`, so reading `.content.url` here costs no query.
+
+           The sage panel stays as the fallback: a hero with an empty half
+           column reads as broken, and a site with no cover set yet is the
+           normal state rather than an error. It keeps `aria-hidden` because it
+           carries no meaning; the cover does not, and takes the site's name as
+           its alt text -- a decorative image would be the wrong call for
+           something an author deliberately chose. #}
+        {% if cover_media %}
+        <img class="t-hero__cover" src="{{ cover_media.content.url }}"
+             alt="{{ website.name if website else "" }}">
+        {% else %}
         <div class="t-hero__panel" aria-hidden="true"></div>
+        {% endif %}
       </div>
     </div>
   </div>
