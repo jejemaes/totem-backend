@@ -1,27 +1,18 @@
 import logging
 from collections import OrderedDict
-from typing import (
-    Any,
-    Generic,
-    List,
-    Optional,
-    Type,
-    TypeVar,
-    Union,
-)
+from typing import Any, Generic, List, Optional, Type, TypeVar, Union
 
-from django.http import Http404
 from django.core.paginator import InvalidPage, Page, Paginator
 from django.db.models import QuerySet
-from django.http import HttpRequest
+from django.http import Http404, HttpRequest
 from ninja import Schema
-from ninja.pagination import PaginationBase, paginate # noqa
+from ninja.pagination import PaginationBase, paginate  # noqa
 from ninja.types import DictStrAny
 from pydantic import Field
 from pydantic.networks import AnyUrl
 
+from core.orm.queryset import model_instance_to_dict
 from core.utils.urls import remove_query_param, replace_query_param
-
 
 logger = logging.getLogger()
 
@@ -94,7 +85,7 @@ class PageNumberPagination(PaginationBase):
                 ("count", page.paginator.count),
                 ("next", self.get_next_link(base_url, page=page)),
                 ("previous", self.get_previous_link(base_url, page=page)),
-                ("results", list(page)),
+                ("results", [model_instance_to_dict(r) for r in page]),
             ]
         )
         return res

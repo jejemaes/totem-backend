@@ -17,10 +17,12 @@ from ninja.signature.utils import get_path_param_names
 from ninja.utils import normalize_path
 from pydantic import BaseModel
 
+from core.schemas.utils import extract_orm_fields_map
 from user.access_policy import apply_access_rules, request_to_context
 
 from .ordering import Ordering, OrderingBase, ordering
 from .pagination import PageNumberPagination, PaginationBase, paginate
+from .query_fields import QueryField, QueryFieldBase, query_field
 from .route import MAGIC_ROUTE_ATTR, Route  # pragma: no cover
 
 
@@ -127,6 +129,7 @@ class BaseModelController(BaseController):
         description: str = None,
         decorators: t.List[t.Callable] = None,
         view_wrapper: t.Callable = None,
+        exclude_unset: bool = False,
         tags: t.Optional[t.List[str]] = None,
     ):
         """This method decorates the given function with the route obj. This is required for the
@@ -149,6 +152,7 @@ class BaseModelController(BaseController):
             summary=summary,
             description=description,
             decorators=decorators,
+            exclude_unset=exclude_unset,
             tags=tags,
         )
         route.set_controller(cls())
@@ -229,7 +233,9 @@ class ListModelControllerMixin:
     list_ordering: t.Optional[t.Type[OrderingBase]] = Ordering
     list_ordering_fields: t.List[str] = []
     list_ordering_default_fields: t.List[str] = []
+    list_ordering_fields_alias: t.Dict[str, str] = {}
     list_pagination: t.Optional[t.Type[PaginationBase]] = PageNumberPagination
+    list_query_field_class: t.Optional[t.Type[QueryFieldBase]] = QueryField
 
     @classmethod
     def add_routes_to(cls, router) -> None:
@@ -246,6 +252,7 @@ class ListModelControllerMixin:
                 decorators=decorators,
                 view_wrapper=cls._annotate_list_view_function,
                 tags=[cls.model._meta.verbose_name],
+                exclude_unset=True,
             )
 
         super().add_routes_to(router)
@@ -255,12 +262,21 @@ class ListModelControllerMixin:
         decorators = []
         if cls.list_pagination:
             decorators.append(paginate(cls.list_pagination))
+        if cls.list_response_schema:
+            decorators.append(
+                query_field(
+                    cls.list_query_field_class,
+                    field_map=cls._get_list_response_fields_map(),
+                    pass_parameter="query_fields",
+                )
+            )
         if cls.list_ordering:
             decorators.append(
                 ordering(
                     cls.list_ordering,
-                    ordering_fields=cls.list_ordering_fields,
+                    field_map=cls.get_ordering_fields_map(),
                     default_ordering_fields=cls.list_ordering_default_fields,
+                    pass_parameter="ordering_fields",
                 )
             )
         return decorators
@@ -285,10 +301,53 @@ class ListModelControllerMixin:
         request,
         path_parameters: t.Optional[BaseModel],
         query_parameters: t.Optional[FilterSchema],
+        **kwargs: t.Any,
     ) -> QuerySet:
         queryset = self.get_queryset()
         queryset = self.apply_query_parameters(queryset, query_parameters)
         return self.apply_access_rules(queryset, "read")
+
+    _list_response_fields_map: t.Dict[str, str] = None
+
+    @classmethod
+    def _get_list_response_fields_map(cls):
+        """Get the dict mapping pydantic schema field name with the corresponding django model field name,
+        based on the `list_response_schema`.
+        :returns: dict where key is schema field, and value is the orm field name
+        """
+        if cls._list_response_fields_map is None:
+            if cls.list_response_schema:
+                schema = cls.list_response_schema
+                if (
+                    cls.list_response_schema.__origin__ is list
+                    or cls.list_response_schema.__origin__ is t.List
+                ):
+                    schema = cls.list_response_schema.__args__[0]
+                cls._list_response_fields_map = {
+                    fname: fspec["source"]
+                    for fname, fspec in extract_orm_fields_map(
+                        schema, cls.model
+                    ).items()
+                }
+            else:
+                cls._list_response_fields_map = {}
+        return cls._list_response_fields_map
+
+    @classmethod
+    def get_ordering_fields_map(cls):
+        response_schema_field_map = cls._get_list_response_fields_map()
+
+        field_map = {}
+        for fname in cls.list_ordering_fields:
+            alias = None
+            if fname in cls.list_ordering_fields_alias:
+                alias = cls.list_ordering_fields_alias[fname]
+            elif fname in response_schema_field_map:
+                alias = response_schema_field_map[fname]
+            else:
+                alias = fname  # supposed the ordering alias has the same name as the django model one
+            field_map[fname] = alias
+        return field_map
 
 
 class RetrieveModelControllerMixin:
@@ -523,6 +582,11 @@ class UpdateModelControllerMixin:
                 for field_name, value in many_to_many.items():
                     field = getattr(instance, field_name)
                     field.set(value)
+                    if not hasattr(instance, "_prefetched_objects_cache"):
+                        instance._prefetched_objects_cache = {}
+                    # Update cache in order to avoid refetching the m2m relation when serializing.
+                    # This can be done since we are in update mode, we just need to update the cache value with the new related objects.
+                    instance._prefetched_objects_cache[field_name] = value
 
             # Postprocess
             self._update_postprocess(request, instance)

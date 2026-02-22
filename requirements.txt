@@ -1,3 +1,4 @@
+dict-deep==4.1.2
 Django==5.0.10
 django-cors-headers==4.6.0
 django-jazzmin==2.6.0

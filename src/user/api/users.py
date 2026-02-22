@@ -32,7 +32,13 @@ class UserController(TokenHasScopePermissionModelControllerMixin, ModelControlle
 
     list_response_schema: Schema = List[UserSchema]
     list_filter_schema: FilterSchema = UserFilterSchema
-    list_ordering_fields = ["username", "email", "first_name", "is_active", "date_joined"]
+    list_ordering_fields = [
+        "username",
+        "email",
+        "first_name",
+        "is_active",
+        "date_joined",
+    ]
     list_ordering_default_fields = ["username"]
 
     retrieve_response_schema: Schema = UserSchema
@@ -42,14 +48,6 @@ class UserController(TokenHasScopePermissionModelControllerMixin, ModelControlle
 
     update_request_schema = UserUpdateSchema
     update_response_schema = UserSchema
-
-    # Overrides
-
-    def get_queryset(self):
-        queryset = super().get_queryset()
-        if self.action == "list":
-            queryset = queryset.prefetch_related("roles")
-        return queryset
 
     # Actions
 

@@ -1,6 +1,6 @@
 import asyncio
-import inspect
 import functools
+import inspect
 import typing as t
 
 from ninja.constants import NOT_SET, NOT_SET_TYPE

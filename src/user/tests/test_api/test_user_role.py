@@ -163,6 +163,71 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
 
     @parameterized.expand(
         [
+            (
+                [],
+                [
+                    "id",
+                    "name",
+                    "permissions",
+                    "rules",
+                ],
+                4,
+            ),  # default means all fields
+            (["name"], ["id", "name"], 4),
+            (
+                ["rules", "name"],
+                ["id", "rules", "name"],
+                4,
+            ),
+        ]
+    )
+    def test_list_query_fields(self, query_fields, received_fields, query_count):
+        queryfield = ",".join(query_fields)
+        params = {}
+        if queryfield:
+            params = {"fields": queryfield}
+
+        with self.assertNumQueries(query_count):
+            response = self.do_api_request(
+                self.url, "GET", self.user_access_token_frodon.token, params=params
+            )
+            data = response.json()
+
+        self.assertEqual(response.status_code, 200)
+
+        record_map = {
+            str(obj.pk): obj
+            for obj in UserRole.objects.filter(
+                pk__in=[item["id"] for item in data["results"]]
+            )
+        }
+        for item in data["results"]:
+            obj = record_map.get(item["id"])
+            # id is always in response
+            self.assertEqual(set(item), set(received_fields))
+            self._assert_api_format(item, obj, received_fields)
+
+    @parameterized.expand(
+        [
+            (["not_existing_field"],),
+            (["not_existing_field", "roles"],),  # with relation
+            (["not_existing_field", "name"],),
+        ]
+    )
+    def test_list_invalid_query_fields(self, query_fields):
+        queryfield = ",".join(query_fields)
+        params = {}
+        if queryfield:
+            params = {"fields": queryfield}
+
+        response = self.do_api_request(
+            self.url, "GET", self.user_access_token_frodon.token, params=params
+        )
+
+        self.assertEqual(response.status_code, 422)
+
+    @parameterized.expand(
+        [
             ("scout", [ROLE_ID3, ROLE_ID4]),
             ("oobi", [ROLE_ID1]),
             ("no-match", []),

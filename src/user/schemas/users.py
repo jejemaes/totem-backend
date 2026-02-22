@@ -28,7 +28,7 @@ class UserDisplayNameSchema(ModelSchema):
 
 class UserSchema(ModelSchema):
 
-    roles: List[UserRoleDisplayNameSchema]
+    roles: Optional[List[UserRoleDisplayNameSchema]] = None
 
     class Meta:
         model = User

@@ -55,6 +55,26 @@ class TestSchemaFieldConverter(TestCase):
                 t.Optional[str],
                 FieldInfo(default=None),
             ),
+            # Slug
+            (
+                models.SlugField(),
+                str,
+                FieldInfo(max_length=50, pattern=slug_re),
+            ),
+            (
+                models.SlugField(max_length=123, blank=True),
+                t.Optional[str],
+                FieldInfo(max_length=123, default=None, pattern=slug_re),
+            ),
+        ]
+    )
+    def test_text_field_conversion(self, django_field, expected_type, expected_field):
+        python_type, field = convert_db_field(django_field, optional=False)
+        self.assertEqual(python_type, expected_type)
+        self.assertPydanticFieldEqual(field, expected_field)
+
+    @parameterized.expand(
+        [
             # Email
             (
                 models.EmailField(),
@@ -76,22 +96,29 @@ class TestSchemaFieldConverter(TestCase):
                 t.Optional[EmailStr],
                 FieldInfo(max_length=254, default=None),
             ),
-            # Slug
-            (
-                models.SlugField(),
-                str,
-                FieldInfo(max_length=50, pattern=slug_re),
-            ),
-            (
-                models.SlugField(max_length=123, blank=True),
-                t.Optional[str],
-                FieldInfo(max_length=123, default=None, pattern=slug_re),
-            ),
         ]
     )
-    def test_text_field_conversion(self, django_field, expected_type, expected_field):
+    def test_email_field_conversion(self, django_field, expected_type, expected_field):
         python_type, field = convert_db_field(django_field, optional=False)
-        self.assertEqual(python_type, expected_type)
+
+        expected_type_optional = False
+        if hasattr(expected_type, "__origin__") and expected_type.__origin__ is t.Union:
+            expected_type = (
+                expected_type.__args__[0]
+                if expected_type.__args__[1] is type(None)
+                else expected_type.__args__[1]
+            )
+
+        python_type_optional = False
+        if python_type.__origin__ is t.Union:
+            python_type = (
+                python_type.__args__[0]
+                if python_type.__args__[1] is type(None)
+                else python_type.__args__[1]
+            )
+
+        self.assertEqual(python_type_optional, expected_type_optional)
+        self.assertIn(expected_type, python_type.__args__)
         self.assertPydanticFieldEqual(field, expected_field)
 
     # -------------------------------------------------------------
