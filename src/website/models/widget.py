@@ -2,10 +2,8 @@ from django.core import validators
 from django.db import models
 
 from core import fields
-
 from website import choices
 from website.website_widget import get_widget_type, get_widget_type_choices
-
 
 
 class WidgetQueryset(models.QuerySet):
@@ -30,9 +28,7 @@ class Widget(models.Model):
     )
 
     # parameters
-    param_content = fields.HtmlField(
-        "HTML Content", null=True, blank=True, sanitize=True
-    )
+    param_content = fields.HtmlField("HTML Content", null=True, blank=True)
     param_limit_item = models.IntegerField("Max Item to Display", null=True, blank=True, validators=[validators.MaxValueValidator(10)], help_text="Used to limit the number of item to display in the widget.")
 
     @property

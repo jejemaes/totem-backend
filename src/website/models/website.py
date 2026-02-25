@@ -1,4 +1,5 @@
 import uuid
+
 from django.db import models
 
 from core import fields
@@ -20,9 +21,7 @@ class Website(models.Model):
 
     menu = models.ForeignKey('website.Menu', verbose_name="Main Menu", null=True, blank=True, on_delete=models.SET_NULL, help_text="Parent item as the main menu of the website.")
 
-    footer = fields.HtmlField(
-        "Footer Content", null=True, blank=True, sanitize=True
-    )
+    footer = fields.HtmlField("Footer Content", null=True, blank=True)
 
     class Meta:
         verbose_name = "Website"
