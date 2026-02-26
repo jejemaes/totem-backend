@@ -1,8 +1,8 @@
 from django.db import models
 
-#------------------------------------------------
+# ------------------------------------------------
 # Auto Remove File related to model instance
-#------------------------------------------------
+# ------------------------------------------------
 
 class CleanupFileQuerysetMixin:
 
@@ -16,10 +16,10 @@ class CleanupFileQuerysetMixin:
                 self._result_cache is None
             ):  # queryset not evaluated, fetch only required fields
                 values = self.values(*updated_file_fnames)
-            for fname in updated_file_fnames:
-                for item in values:
-                    file_to_delete[fname].append(item[fname])
-            else:  # queryset already evaluated
+                for fname in updated_file_fnames:
+                    for item in values:
+                        file_to_delete[fname].append(item[fname])
+            else:
                 for fname in updated_file_fnames:
                     for instance in self:
                         file_to_delete[fname].append(getattr(instance, fname).name)
@@ -62,16 +62,36 @@ class CleanupFileModelMixin(models.Model):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        file_state = {}
-        for field in self.get_file_fields():
-            file_state[field.name] = getattr(self, field.name).name
 
-        setattr(self, '_init_file_state', file_state)
+        # Initialize the file state to track changes to file fields
+        setattr(self._state, "_initial_file_state", {})
+        file_field_names = [f.name for f in self.get_file_fields()]
+        for fname, fval in self.__dict__.items():
+            if fname in file_field_names:
+                self._state._initial_file_state[fname] = fval
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        if name in [f.name for f in self.get_file_fields()]:
+            if (
+                hasattr(self._state, "_initial_file_state")
+                and name not in self._state._initial_file_state
+            ):
+                self._state._initial_file_state[name] = value
 
     def save(self, *args, **kwargs):
+        file_state = getattr(self._state, "_initial_file_state", {})
         for field_name in self._get_dirty_file_fields():
-            self.delete_files(field_name, [self._init_file_state[field_name]])
+            self.delete_files(field_name, [file_state[field_name]])
+
         super().save(*args, **kwargs)
+
+        # Clean the initial file state after saving to avoid deleting files on subsequent saves
+        file_field_names = [f.name for f in self.get_file_fields()]
+        for fname, fval in self.__dict__.items():
+            if fname in file_field_names:
+                file_state[fname] = fval.name if fval else ""
+        setattr(self._state, "_initial_file_state", file_state)
 
     def delete(self, using=None, keep_parents=False):
         for field in self.get_file_fields():
@@ -79,11 +99,11 @@ class CleanupFileModelMixin(models.Model):
         return super().delete(using=using, keep_parents=keep_parents)
 
     def _get_dirty_file_fields(self):
-        initial_state = getattr(self, '_init_file_state', {})
+        initial_state = getattr(self._state, "_initial_file_state", {})
 
         dirty = []
         for fname, val in initial_state.items():
-            current_val = getattr(self, fname).name
+            current_val = initial_state.get(fname)
             if current_val != val:
                 dirty.append(fname)
         return dirty
