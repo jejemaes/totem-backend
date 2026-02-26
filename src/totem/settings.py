@@ -30,18 +30,21 @@ CSRF_TRUSTED_ORIGINS = env('TOTEM_CSRF_TRUSTED_ORIGINS').split(',')
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
-    'oauth2_provider',
-    'base',
-    'core',
-    'oauth',
-    'user',
-    'website',
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "oauth2_provider",
+    "base",
+    "oauth",
+    "user",
+    "website",
+    # `core` must be last since it autodiscover `api` module
+    # of each app, and generate schema on the fly (all models and
+    # other auto loading stuff).
+    "core",
 ]
 
 MIDDLEWARE = [
