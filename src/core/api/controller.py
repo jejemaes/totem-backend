@@ -4,21 +4,22 @@ from contextlib import contextmanager
 from types import FunctionType
 
 import pydantic
-from asgiref.sync import async_to_sync
 from django.core.exceptions import PermissionDenied
-from django.db import transaction
-from django.db.models import ManyToManyField, Model, QuerySet
-from django.db.utils import DatabaseError
+from django.db.models import Model, QuerySet
 from django.http import HttpRequest
 from ninja import Body, FilterSchema, NinjaAPI, Path, Query, Router, Schema
-from ninja.errors import ValidationError
+from ninja.errors import ValidationError, HttpError
 from ninja.security.base import AuthBase
 from ninja.signature.utils import get_path_param_names
 from ninja.utils import normalize_path
 from pydantic import BaseModel
 
-from core.schemas.utils import extract_orm_fields_map
-from user.access_policy import apply_access_rules, request_to_context
+from core.schemas.utils import schema_to_orm_fields
+from core.services import (
+    ServiceEnvironment,
+    ServiceContext,
+    ServiceValidationMultiError,
+)
 
 from .ordering import Ordering, OrderingBase, ordering
 from .pagination import PageNumberPagination, PaginationBase, paginate
@@ -45,8 +46,8 @@ class BaseController:
         return cls._instance
 
     def __init__(self):
-        self.action = None
-        self.request = None
+        self._request = None
+        self._service_env = None
         super().__init__()
 
     def __init_subclass__(cls) -> None:
@@ -88,32 +89,46 @@ class BaseController:
             route.set_controller(cls())  # singleton instance is bind to route
             router.add_api_operation(**route.as_operation())
 
-    @contextmanager
-    def set_context(
-        self,
-        request: HttpRequest,
-        action: str,
-    ):
-        old_action = self.action
-        old_request = self.request
-        self.action = action
-        self.request = request
-        try:
-            yield
-        finally:
-            self.action = old_action
-            self.request = old_request
-
     def permission_denied(self, message=None):
         if not message:
             message = "You are not allowed to archived this operation."
         raise PermissionDenied(message)
+
+    def request_to_service_context(self, request: HttpRequest) -> ServiceContext:
+        user = None  # force none instead of Anonymous user
+        if request is not None:
+            if request.auth and hasattr(request.auth, "user"):
+                user = request.auth.user
+        return ServiceContext(user=user)
+
+    @contextmanager
+    def with_service_request(
+        self,
+        request: HttpRequest,
+    ):
+        old_services_env = self._service_env
+        self._service_env = ServiceEnvironment(self.request_to_service_context(request))
+        try:
+            yield self
+        finally:
+            if self._service_env is not None:
+                self._service_env.__exit__(None, None, None)
+                self._service_env = old_services_env
+
+    @property
+    def services(self):
+        if self._service_env is None:
+            raise RuntimeError(
+                "Service environment is not set. Use with_service_request context manager."
+            )
+        return self._service_env.__enter__()
 
 
 class BaseModelController(BaseController):
 
     model: Model = None
     path_model = None
+    service_name: str = None
 
     # Route Helpers
 
@@ -173,52 +188,31 @@ class BaseModelController(BaseController):
 
         return pydantic.create_model("PathParameters", **schema_fields)
 
-    # Queryset Helpers
+    # Error Handling
 
-    def get_queryset(self):
-        return self.model._default_manager.all()
+    def service_validation_error_to_api_error(
+        self,
+        exc: ServiceValidationMultiError,
+        response_schema: BaseModel,
+        loc_path: t.List[str] = ["body", "request_body"],
+    ) -> ValidationError:
+        """Convert a ServiceValidationMultiError to a Ninja ValidationError, with error location mapped to the response schema fields."""
+        fields_map = schema_to_orm_fields(response_schema, self.model)
 
-    def apply_query_parameters(
-        self, queryset: QuerySet[Model], query_parameters: BaseModel
-    ):
-        if isinstance(query_parameters, FilterSchema):
-            queryset = query_parameters.filter(queryset)
-        elif isinstance(query_parameters, BaseModel):
-            queryset = queryset.filter(
-                **query_parameters.model_dump(exclude_unset=True)
-            )
-        return queryset
-
-    def apply_path_parameters(
-        self, queryset: QuerySet[Model], path_parameters: BaseModel
-    ):
-        return queryset.get(**(path_parameters.model_dump() if path_parameters else {}))
-
-    # Access rules
-
-    def apply_access_rules(self, queryset: QuerySet, operation: str):
-        context = async_to_sync(request_to_context)(self.request)
-        return async_to_sync(apply_access_rules)(queryset, operation, context)
-
-    # Data Validation
-
-    def validate_data(self, request_body: BaseModel, instance: Model = None):
-        """
-        :param request:body: model instance of pydantic schema. This is already validate (done during instanciation). Values are python obj.
-        :param instance: the django model instance to validate the data against if given. None in case of creation.
-
-        Note: don't use `model_dump` as it will serialize m2m relations (`core.schemas.QuerySet`) into a list of pk scalar type.
-        """
-        if instance:
-            fields = request_body.model_fields_set
-        else:
-            fields = set(request_body.model_fields)
-
-        # TODO: maybe use alias ?
-        values = {}
-        for fname in fields:
-            values[fname] = getattr(request_body, fname, None)
-        return values
+        result = []
+        for key, error_dict in exc.dict().items():
+            for field, messages in error_dict.items():
+                result.append(
+                    {
+                        "type": "validation_error",
+                        "loc": loc_path + [fields_map.get(field, field)],
+                        "msg": ".".join(messages),
+                        "ctx": {
+                            "key": key,
+                        },
+                    }
+                )
+        return ValidationError(result)
 
 
 # -------------------------------------------
@@ -260,17 +254,17 @@ class ListModelControllerMixin:
     @classmethod
     def _list_function_decorators(cls):
         decorators = []
-        if cls.list_pagination:
+        if cls.list_pagination is not None:
             decorators.append(paginate(cls.list_pagination))
-        if cls.list_response_schema:
+        if cls.list_response_schema is not None:
             decorators.append(
                 query_field(
                     cls.list_query_field_class,
-                    field_map=cls._get_list_response_fields_map(),
+                    field_map=schema_to_orm_fields(cls.list_response_schema, cls.model),
                     pass_parameter="query_fields",
                 )
             )
-        if cls.list_ordering:
+        if cls.list_ordering is not None:
             decorators.append(
                 ordering(
                     cls.list_ordering,
@@ -280,6 +274,23 @@ class ListModelControllerMixin:
                 )
             )
         return decorators
+
+    @classmethod
+    def get_ordering_fields_map(cls):
+        response_schema_field_map = schema_to_orm_fields(
+            cls.list_response_schema, cls.model
+        )
+        field_map = {}
+        for fname in cls.list_ordering_fields:
+            alias = None
+            if fname in cls.list_ordering_fields_alias:
+                alias = cls.list_ordering_fields_alias[fname]
+            elif fname in response_schema_field_map:
+                alias = response_schema_field_map[fname]
+            else:
+                alias = fname  # supposed the ordering alias has the same name as the django model one
+            field_map[fname] = alias
+        return field_map
 
     @classmethod
     def _annotate_list_view_function(
@@ -303,51 +314,8 @@ class ListModelControllerMixin:
         query_parameters: t.Optional[FilterSchema],
         **kwargs: t.Any,
     ) -> QuerySet:
-        queryset = self.get_queryset()
-        queryset = self.apply_query_parameters(queryset, query_parameters)
-        return self.apply_access_rules(queryset, "read")
-
-    _list_response_fields_map: t.Dict[str, str] = None
-
-    @classmethod
-    def _get_list_response_fields_map(cls):
-        """Get the dict mapping pydantic schema field name with the corresponding django model field name,
-        based on the `list_response_schema`.
-        :returns: dict where key is schema field, and value is the orm field name
-        """
-        if cls._list_response_fields_map is None:
-            if cls.list_response_schema:
-                schema = cls.list_response_schema
-                if (
-                    cls.list_response_schema.__origin__ is list
-                    or cls.list_response_schema.__origin__ is t.List
-                ):
-                    schema = cls.list_response_schema.__args__[0]
-                cls._list_response_fields_map = {
-                    fname: fspec["source"]
-                    for fname, fspec in extract_orm_fields_map(
-                        schema, cls.model
-                    ).items()
-                }
-            else:
-                cls._list_response_fields_map = {}
-        return cls._list_response_fields_map
-
-    @classmethod
-    def get_ordering_fields_map(cls):
-        response_schema_field_map = cls._get_list_response_fields_map()
-
-        field_map = {}
-        for fname in cls.list_ordering_fields:
-            alias = None
-            if fname in cls.list_ordering_fields_alias:
-                alias = cls.list_ordering_fields_alias[fname]
-            elif fname in response_schema_field_map:
-                alias = response_schema_field_map[fname]
-            else:
-                alias = fname  # supposed the ordering alias has the same name as the django model one
-            field_map[fname] = alias
-        return field_map
+        # TODO : handle path_parameters
+        return self.services[self.service_name].read(query_parameters)
 
 
 class RetrieveModelControllerMixin:
@@ -393,9 +361,16 @@ class RetrieveModelControllerMixin:
         request: HttpRequest,
         path_parameters: t.Optional[BaseModel],
     ) -> Model:
-        queryset = self.get_queryset()
-        queryset = self.apply_access_rules(queryset, "read")
-        return queryset.get(**(path_parameters.model_dump() if path_parameters else {}))
+        queryset = self.services[self.service_name].read()
+        try:
+            return queryset.get(
+                **(path_parameters.model_dump() if path_parameters else {})
+            )
+        except queryset.model.DoesNotExist as exc:
+            raise HttpError(
+                status_code=404,
+                message=f"{self.model._meta.verbose_name.capitalize()} not found.",
+            ) from exc
 
 
 class CreateModelControllerMixin:
@@ -444,62 +419,13 @@ class CreateModelControllerMixin:
         path_parameters: t.Optional[BaseModel],
         request_body: BaseModel,
     ) -> Model:
-        """Override this method to add additional non-atomic operations."""
-        with transaction.atomic():
-            queryset = self.get_queryset()
-
-            # Preprocess data
-            validated_data = self.validate_data(request_body, instance=None)
-
-            # Remove many-to-many relationships from validated_data.
-            # They are not valid arguments to the default `.create()` method,
-            # as they require that the instance has already been saved.
-            many_to_many = {}
-            for field in queryset.model._meta.get_fields():
-                if isinstance(field, ManyToManyField) and field.name in validated_data:
-                    many_to_many[field.name] = validated_data.pop(field.name)
-
-            # Create instance
-            try:
-                instance = queryset.create(**validated_data)
-            except TypeError as exc:
-                raise TypeError(str(exc))
-            except DatabaseError as exc:
-                raise ValidationError(
-                    [str(exc)]
-                )  # TODO parse error and respond with violation error define on model constraint
-
-            # Access rules check
-            queryset = self.apply_access_rules(queryset, "create")
-            if queryset.filter(pk=instance.pk).count() != 1:
-                self.permission_denied(
-                    "Your access rules prevent you to create this object."
-                )
-
-            # Save many-to-many relationships after the instance is created, and set it in the prefetch cache
-            if many_to_many:
-                prefetched_objects = getattr(instance, "_prefetched_objects_cache", {})
-                for field_name, value in many_to_many.items():
-                    field = getattr(instance, field_name)
-                    # optimization: `set` will cause a read but since we are in a creation,
-                    # there is no exsting relations.
-                    field.add(*value)
-                    # Set in cache in order to avoid refetching the m2m relation when serializing.
-                    # This can be done since we are in creation mode. m2m cache value is a django queryset.
-                    prefetched_objects[field_name] = value
-
-                setattr(instance, "_prefetched_objects_cache", prefetched_objects)
-
-            # Postprocess
-            self._create_postprocess(request, instance)
-
-        return instance
-
-    def _create_postprocess(self, request: HttpRequest, instance: Model):
-        """This is part of the atomic process of creation. Any error here will rollback the create.
-        Override this method to add additional atomic operation.
-        """
-        return instance
+        try:
+            instances = self.services[self.service_name].create([request_body])
+            return instances[0] if instances else None
+        except ServiceValidationMultiError as exc:
+            raise self.service_validation_error_to_api_error(
+                exc, self.create_response_schema, loc_path=["body", "request_body"]
+            )
 
 
 class UpdateModelControllerMixin:
@@ -548,56 +474,21 @@ class UpdateModelControllerMixin:
         path_parameters: t.Optional[BaseModel],
         request_body: BaseModel,
     ) -> Model:
-        """Override this method to add additional non-atomic operations."""
-        with transaction.atomic():
-            queryset = self.get_queryset()
-            queryset = self.apply_access_rules(queryset, "update")
-            instance = queryset.get(
-                **(path_parameters.model_dump() if path_parameters else {})
+        try:
+            filters = path_parameters.model_dump() if path_parameters else {}
+            count, queryset = self.services[self.service_name].update(
+                filters, request_body
             )
-
-            # Preprocess data
-            validated_data = self.validate_data(request_body, instance=instance)
-
-            # Remove many-to-many relationships from validated_data.
-            # They are not valid arguments to the default `.create()` method,
-            # as they require that the instance has already been saved.
-            many_to_many = {}
-            for field in queryset.model._meta.get_fields():
-                if isinstance(field, ManyToManyField) and field.name in validated_data:
-                    many_to_many[field.name] = validated_data.pop(field.name)
-
-            # Update instance
-            try:
-                for attr, value in validated_data.items():
-                    setattr(instance, attr, value)
-                instance.save(update_fields=list(validated_data))
-            except DatabaseError as exc:
-                raise ValidationError(
-                    [str(exc)]
-                )  # TODO parse error and respond with violation error define on model constraint
-
-            # Save many-to-many relationships after the instance is created.
-            if many_to_many:
-                for field_name, value in many_to_many.items():
-                    field = getattr(instance, field_name)
-                    field.set(value)
-                    if not hasattr(instance, "_prefetched_objects_cache"):
-                        instance._prefetched_objects_cache = {}
-                    # Update cache in order to avoid refetching the m2m relation when serializing.
-                    # This can be done since we are in update mode, we just need to update the cache value with the new related objects.
-                    instance._prefetched_objects_cache[field_name] = value
-
-            # Postprocess
-            self._update_postprocess(request, instance)
-
-            return instance
-
-    def _update_postprocess(self, request: HttpRequest, instance: Model):
-        """This is part of the atomic process of update. Any error here will rollback the update.
-        Override this method to add additional atomic operation.
-        """
-        return instance
+            if count == 0:
+                raise HttpError(
+                    status_code=404,
+                    message=f"{self.model._meta.verbose_name.capitalize()} not found.",
+                )
+            return queryset.first() if count > 0 else None
+        except ServiceValidationMultiError as exc:
+            raise self.service_validation_error_to_api_error(
+                exc, self.create_response_schema, loc_path=["body", "request_body"]
+            )
 
 
 class DeleteModelControllerMixin:
@@ -641,21 +532,13 @@ class DeleteModelControllerMixin:
         request: HttpRequest,
         path_parameters: t.Optional[BaseModel],
     ) -> None:
-        queryset = self.get_queryset()
-        queryset = self.apply_access_rules(queryset, "delete")
-        instance = queryset.get(
-            **(path_parameters.model_dump() if path_parameters else {})
-        )
-
-        instance_pk = instance.pk
-        instance.delete()
-        self._delete_postprocess(request, instance_pk)
-
-    def _delete_postprocess(self, request: HttpRequest, instance_pk: t.Any):
-        """This is part of the atomic process of deletion. Any error here will rollback the delete.
-        Override this method to add additional atomic operation.
-        """
-        return instance_pk
+        filters = path_parameters.model_dump() if path_parameters else {}
+        count = self.services[self.service_name].delete(filters)
+        if count == 0:
+            raise HttpError(
+                status_code=404,
+                message=f"{self.model._meta.verbose_name.capitalize()} not found.",
+            )
 
 
 class ModelController(

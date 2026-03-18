@@ -20,6 +20,7 @@ from user.security import IsAuthenticated, TokenHasScopePermissionModelControlle
 class UserController(TokenHasScopePermissionModelControllerMixin, ModelController):
     api = api_v1
     model = User
+    service_name = "user.User"
 
     path_prefix = "/users/"
     auth = [OAuthTokenAuthentication()]

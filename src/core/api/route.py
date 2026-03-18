@@ -200,15 +200,15 @@ class Route(object):
 
         @functools.wraps(view_func)
         async def async_handler(*args: t.Any, **kwargs: t.Any) -> t.Any:
-            request = args[0] # heuristic
-            with self._api_controller.set_context(request, action=view_func.__name__):
-                return await view_func(self._api_controller, *args, **kwargs)
+            request = args[0]  # heuristic
+            with self._api_controller.with_service_request(request) as controller:
+                return await view_func(controller, *args, **kwargs)
 
         @functools.wraps(view_func)
         def sync_handler(*args: t.Any, **kwargs: t.Any) -> t.Any:
-            request = args[0] # heuristic
-            with self._api_controller.set_context(request, action=view_func.__name__):
-                return view_func(self._api_controller, *args, **kwargs)
+            request = args[0]  # heuristic
+            with self._api_controller.with_service_request(request) as controller:
+                return view_func(controller, *args, **kwargs)
 
         standalone_handler = (
             async_handler if asyncio.iscoroutinefunction(view_func) else sync_handler

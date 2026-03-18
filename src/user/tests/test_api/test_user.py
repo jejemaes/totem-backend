@@ -314,7 +314,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(response.status_code, status_code)
         if status_code != 200:
             self.assertEqual(
-                data, {"message": "You do not have permission to perform this action."}
+                data, {"detail": ["You do not have permission to perform this action."]}
             )
 
     # ------------------------------------------
@@ -398,7 +398,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(response.status_code, status_code)
         if status_code != 201:
             self.assertEqual(
-                data, {"message": "You do not have permission to perform this action."}
+                data, {"detail": ["You do not have permission to perform this action."]}
             )
 
     # ------------------------------------------
@@ -481,7 +481,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(response.status_code, status_code)
         if status_code != 200:
             self.assertEqual(
-                data, {"message": "You do not have permission to perform this action."}
+                data, {"detail": ["You do not have permission to perform this action."]}
             )
 
     # ------------------------------------------
@@ -516,7 +516,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         if status_code != 204:
             data = response.json()
             self.assertEqual(
-                data, {"message": "You do not have permission to perform this action."}
+                data, {"detail": ["You do not have permission to perform this action."]}
             )
 
     # ------------------------------------------
@@ -556,7 +556,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(response.status_code, status_code)
         if status_code != 200:
             self.assertEqual(
-                data, {"message": "You do not have permission to perform this action."}
+                data, {"detail": ["You do not have permission to perform this action."]}
             )
 
     # ------------------------------------------

@@ -19,3 +19,6 @@ class CoreConfig(AppConfig):
         # django application, they need to loaded. In native django ninja, the route is
         # populated by importing every `api.py` file. This is not the case with controllers.
         autodiscover_modules('api')
+
+        # Also, need to load all services defined
+        autodiscover_modules("services")
