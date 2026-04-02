@@ -3,17 +3,16 @@ import typing as t
 from asgiref.sync import async_to_sync
 from django.core import exceptions
 from django.db import models, transaction
-from django.db.models import ManyToManyField
+from django.db.models import F, ManyToManyField
 from django.db.utils import DatabaseError
 from ninja import FilterSchema
 from pydantic import BaseModel
 
-from core.orm.queryset import queryset_fetch_fields
+from core.orm.queryset import queryset_fetch_fields, queryset_order_by_fields
 from user.access_policy import apply_access_rules, Context as AccessContext
 
 from .base import BaseService, ServiceMeta
 from .exceptions import ServiceValidationError, ServiceValidationMultiError
-
 
 
 class ModelServiceMeta(ServiceMeta):
@@ -31,11 +30,13 @@ class ModelServiceMeta(ServiceMeta):
         return new_class
 
 
-
 class ModelService(BaseService, metaclass=ModelServiceMeta):
     model = None
 
     ValidationError = ServiceValidationError
+
+    # Configuration
+    ordering_fields_nulls_last = "__all__"  # list of orm field names that should be ordered with nulls last, or '__all__' to apply to all fields.
 
     def get_queryset(self):
         return self.model.objects.all()
@@ -151,8 +152,12 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
         return queryset_fetch_fields(queryset, field_lookups)
 
     def _read_apply_ordering(self, queryset: models.QuerySet, ordering_fields: t.List[str]) -> models.QuerySet:
-        # TODO : add F expression, and maybe null lasts. + id to have deterministic result
-        return queryset.order_by(*ordering_fields)
+        return queryset_order_by_fields(
+            queryset,
+            ordering_fields,
+            add_pk=True,
+            null_last_fields=self.ordering_fields_nulls_last,
+        )
 
     # -----------------------------------------------------------------
     # Update
@@ -163,7 +168,7 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
         # Implement the update logic here
         with transaction.atomic():
             queryset = self.get_queryset()
-            
+
             # Access rules check
             queryset = self.apply_access_rules(queryset, "update")
 
@@ -191,7 +196,7 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
 
             if error:
                 raise error
-            
+
             # If no instance found, return now.
             if not pks:
                 return 0, queryset.none()
@@ -211,8 +216,8 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
                 count = queryset.update(**internal_values)
             except DatabaseError as exc:
                 raise self._database_error_to_validation_error(exc) from exc
-            
-            # As `update()` invalidates the `_result_cache` of the queryset, we need to refetch the instances as the initial 
+
+            # As `update()` invalidates the `_result_cache` of the queryset, we need to refetch the instances as the initial
             # query might have alter the instances to update (self-alterable queryset).
             # Postprocessing will decide to evaluate or not the queryset.
             queryset = self.get_queryset().filter(pk__in=pks)
@@ -243,7 +248,7 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
                             }))
                         else:
                             pks_to_keep.add(existing_objs_map[(pk, new_value.pk)])
-                
+
                 pks_to_remove = set(existing_objs_map.values()) - set(pks_to_keep)
                 if pks_to_remove:
                     through_model.objects.filter(pk__in=pks_to_remove).delete()
@@ -260,7 +265,7 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
     ) -> models.QuerySet:
         # TODO use update_fields to optimize field to fetch, for validation
         return queryset
-    
+
     def _update_postrocess(
         self, queryset: models.QuerySet, update_values: t.Dict
     ):
@@ -325,7 +330,6 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
         for fname in fields:
             values[fname] = getattr(data, fname, None)
         return values
-
 
     def validate_data(self, data: t.Dict, instance: models.Model) -> t.Dict:
         """ Validate the data for creation or update with the current instance (None for creation). This method 

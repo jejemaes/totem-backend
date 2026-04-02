@@ -1,4 +1,5 @@
 from django.test import TestCase
+from django.db.models import F
 from freezegun import freeze_time
 from parameterized import parameterized
 
@@ -23,6 +24,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             id=USER_ID3,
             username="pipin@lacomte.com",
             email="pipin@lacomte.com",
+            first_name="Pipin",
             user_type=UserType.INTERNAL,
         )
         cls.user_galadriel = User.objects.create(
@@ -150,14 +152,16 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
     @parameterized.expand(
         [
             ([], ["username", "id"]),  # default
-            (["username"], ["username"]),
-            (["-username"], ["-username"]),
-            (["email"], ["email"]),
-            (["-email"], ["-email"]),
-            (["is_active"], ["is_active"]),
-            (["-is_active"], ["-is_active"]),
-            (["date_joined"], ["date_joined"]),
-            (["-date_joined"], ["-date_joined"]),
+            (["username"], ["username", "id"]),
+            (["-username"], ["-username", "id"]),
+            (["email"], ["email", "id"]),
+            (["-email"], ["-email", "id"]),
+            (["is_active"], ["is_active", "id"]),
+            (["-is_active"], ["-is_active", "id"]),
+            (["date_joined"], ["date_joined", "id"]),
+            (["-date_joined"], ["-date_joined", "id"]),
+            (["first_name"], [F("first_name").asc(nulls_last=True), "id"]),
+            (["-first_name"], [F("first_name").desc(nulls_last=True), "id"]),
         ]
     )
     def test_list_ordering(self, ordering_fields, order_by):

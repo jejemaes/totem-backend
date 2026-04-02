@@ -13,6 +13,7 @@ from ninja.utils import contribute_operation_args, is_async_callable
 from pydantic import ConfigDict
 
 from core.schemas.types import DelimiterList, MultiChoices
+from core.orm.queryset import queryset_order_by_fields
 
 __all__ = [
     "OrderingBase",
@@ -83,7 +84,7 @@ class Ordering(OrderingBase):
         ordering_ = ordering_input.ordering
         if ordering_:
             if isinstance(items, QuerySet):
-                return items.order_by(*ordering_)
+                return queryset_order_by_fields(items, ordering_)
             elif isinstance(items, list) and items:
 
                 def multisort(xs: List, specs: List[Tuple[str, bool]]) -> List:
@@ -136,6 +137,7 @@ def ordering(func_or_pgn_class: Any = NOT_SET, **orderator_params: Any) -> Calla
 def _inject_ordering(
     func: Callable,
     ordering_class: Type[Union[OrderingBase]],
+    execute_ordering=True,
     **orderator_params: Any,
 ) -> Callable:
     orderator = ordering_class(**orderator_params)
@@ -149,10 +151,11 @@ def _inject_ordering(
 
             items = await func(request, **kwargs)
 
-            result = await orderator.ordering_queryset(
-                items, ordering_input=ordering_params
-            )
-            return result
+            if execute_ordering:
+                items = await orderator.ordering_queryset(
+                    items, ordering_input=ordering_params
+                )
+            return items
 
     else:
 
@@ -164,10 +167,11 @@ def _inject_ordering(
 
             items = func(request, **kwargs)
 
-            result = orderator.ordering_queryset(
-                items, ordering_input=ordering_params
-            )
-            return result
+            if execute_ordering:
+                items = orderator.ordering_queryset(
+                    items, ordering_input=ordering_params
+                )
+            return items
 
     contribute_operation_args(
         view_with_ordering,

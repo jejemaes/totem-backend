@@ -26,6 +26,7 @@ class CommonTestMixin:
             id=USER_ID1,
             username="frodon@lacomte.com",
             email="frodon@lacomte.com",
+            first_name="Frodon",
             user_type=user_choices.UserType.INTERNAL,
         )
         cls.user_gollum = User.objects.create(

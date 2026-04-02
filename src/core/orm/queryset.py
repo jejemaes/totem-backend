@@ -1,9 +1,12 @@
 import typing as t
 
 from dict_deep import deep_set
-from django.db.models import Model, Prefetch, QuerySet
+from django.db.models import F, Model, Prefetch, QuerySet
 from django.db.models.constants import LOOKUP_SEP
 
+# ---------------------------------------------------------------------
+# Fetching Fields
+# ---------------------------------------------------------------------
 
 def queryset_fetch_fields(queryset: QuerySet, field_lookups: t.List[str]) -> QuerySet:
     """ Modifies the given queryset to fetch only the specified fields, including related fields.
@@ -83,3 +86,55 @@ def model_instance_to_dict(instance) -> t.Dict[str, t.Any]:
     for key, value in instance.__dict__.get("_prefetched_objects_cache", {}).items():
         values[key] = [model_instance_to_dict(i) for i in value]
     return values
+
+
+# ---------------------------------------------------------------------
+# Ordering Queryset
+# ---------------------------------------------------------------------
+
+
+def queryset_order_by_fields(
+    queryset: QuerySet,
+    ordering_fields: t.List[str],
+    add_pk: bool = True,
+    null_last_fields: t.Union[t.List[str], t.Literal["__all__"]] = None,
+) -> QuerySet:
+    """Modifies the given queryset to order by the specified fields, which can include related fields using Django's lookup syntax (e.g., 'roles__id').
+    :param queryset: The initial queryset to modify.
+    :param ordering_fields: A list of field lookups to order by, which can include related fields using Django's lookup syntax (e.g., 'roles__id').
+    :param add_pk: Whether to ensure deterministic order by adding the primary key.
+    :param null_last_fields: A list of fields or "__all__" to apply NULLS LAST ordering.
+    :return: A modified queryset ordered by the specified fields.
+    """
+    # Ensure deterministic order by adding PK
+    if add_pk:
+        pk_field = queryset.model._meta.pk
+        if (
+            pk_field.name not in ordering_fields
+            and f"-{pk_field.name}" not in ordering_fields
+        ):
+            ordering_fields.append(pk_field.name)
+
+    # Null Last Fields (convert into F-expression)
+    new_ordering_fields = []
+    for order_field_expr in ordering_fields:
+        if isinstance(order_field_expr, str):
+            order_field_name = order_field_expr.replace("-", "")
+            desc = "-" in order_field_expr
+
+            order_params = {}
+            if null_last_fields == "__all__" or order_field_name in null_last_fields:
+                if queryset.model._meta.get_field(
+                    order_field_name
+                ).null:  # only nullable field
+                    order_params["nulls_last"] = True
+
+            order_field_expr = (
+                F(order_field_name).desc(**order_params)
+                if desc
+                else F(order_field_name).asc(**order_params)
+            )
+
+        new_ordering_fields.append(order_field_expr)
+
+    return queryset.order_by(*new_ordering_fields)

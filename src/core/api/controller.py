@@ -271,6 +271,7 @@ class ListModelControllerMixin:
                     field_map=cls.get_ordering_fields_map(),
                     default_ordering_fields=cls.list_ordering_default_fields,
                     pass_parameter="ordering_fields",
+                    execute_ordering=False,  # disable automatic ordering execution to let the controller handle it in the list method
                 )
             )
         return decorators
@@ -315,7 +316,13 @@ class ListModelControllerMixin:
         **kwargs: t.Any,
     ) -> QuerySet:
         # TODO : handle path_parameters
-        return self.services[self.service_name].read(query_parameters)
+        ordering_fields = None
+        ordering_parameters = kwargs.pop("ordering_fields", None)
+        if ordering_parameters:
+            ordering_fields = ordering_parameters.ordering
+        return self.services[self.service_name].read(
+            query_parameters, ordering=ordering_fields
+        )
 
 
 class RetrieveModelControllerMixin:
