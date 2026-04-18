@@ -12,7 +12,7 @@ from pydantic import UUID4, AnyUrl, EmailStr, IPvAnyAddress
 from pydantic.fields import FieldInfo as PydanticField
 from pydantic_core import PydanticUndefined
 
-from core.schemas.relations import create_foreignkey_field, create_queryset_field
+from core.schemas.relations import create_foreignkey_field
 from core.schemas.types import AnyObject
 from core.schemas.validators import convert_validators
 
@@ -319,10 +319,10 @@ def convert_field_to_many_to_one(
     field: Field, optional: bool = False, extra_kwargs: dict = None
 ) -> t.Tuple[t.Type, PydanticField]:
     pk_field = field.related_model._meta.pk  # pylint: disable=protected-access
-    dummy, field_info = convert_db_field(
+    python_type, field_info = convert_db_field(
         pk_field, optional=optional, extra_kwargs=extra_kwargs
     )
-    return (create_foreignkey_field(field.related_model, optional=optional), field_info)
+    return python_type, field_info
 
 
 # Many-to-Many relation
@@ -334,15 +334,12 @@ def convert_field_to_many_to_one(
 def convert_field_to_many_to_many(
     field: Field, optional: bool = False, extra_kwargs: dict = None
 ) -> t.Tuple[t.Type, PydanticField]:
-    dummy, field_info = _get_pydantic_fieldinfo_from_field(
+    python_type, field_info = _get_pydantic_fieldinfo_from_field(
         str,  # don't care about the type here, just want field infos
         field,
         optional=optional,
     )
-    return (
-        create_queryset_field(field.related_model, optional=optional),
-        field_info,
-    )
+    return t.List[python_type], field_info
 
 
 # -----------------------------------------

@@ -51,7 +51,7 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
 
             # Validate data
             error = ServiceValidationMultiError({}, code="creation_invalid_data")
-            internal_data = [self._to_internal_values(item) for item in data]
+            internal_data = self.to_internal_values(data)
             for index, internal_values in enumerate(internal_data):
                 try:
                     self.validate_data(internal_values, None)
@@ -163,7 +163,9 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
     # Update
     # -----------------------------------------------------------------
 
-    def update(self, filters: BaseModel, data: BaseModel) -> t.List[models.Model]:
+    def update(
+        self, filters: BaseModel, data: BaseModel
+    ) -> t.Tuple[int, t.List[models.Model]]:
         """ Update multiple records with the same data. """
         # Implement the update logic here
         with transaction.atomic():
@@ -177,7 +179,7 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
                 queryset = self._apply_filters(queryset, filters)
 
             # Preprocess data
-            internal_values = self._to_internal_values(data)
+            internal_values = self.to_internal_values([data])[0]
             update_fields = set(internal_values.keys())
 
             # Preprocess queryset to optimize which field to fetch
@@ -319,17 +321,108 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
         context = AccessContext(user=self.context.user)
         return async_to_sync(apply_access_rules)(queryset, operation, context)
 
-    def _to_internal_values(self, data: BaseModel, exclude_unset: bool = False) -> t.Dict:
-        if not exclude_unset:
-            fields = data.model_fields_set
-        else:
-            fields = set(data.model_fields)
+    def to_internal_values(
+        self, data: t.List[BaseModel], exclude_unset: bool = False
+    ) -> t.List[t.Dict]:
+        # extract relational field names
+        many_to_many_fields = []
+        foreign_key_fields = []
+        for field in self.model._meta.get_fields():
+            if isinstance(field, models.ForeignKey):
+                foreign_key_fields.append(field.name)
+            if isinstance(field, models.ManyToManyField):
+                many_to_many_fields.append(field.name)
 
-        # TODO: maybe use alias ?
-        values = {}
-        for fname in fields:
-            values[fname] = getattr(data, fname, None)
-        return values
+        # group all values of relational fields
+        many_to_many = {}  # fname -> set of values
+        foreign_key = {}  # fname -> set of values
+        for item in data:
+            if not exclude_unset:
+                fields = set(item.model_fields_set)
+            else:
+                fields = set(item.model_fields)
+
+            for fk_fname in set(foreign_key_fields) & fields:
+                foreign_key.setdefault(fk_fname, set())
+                if getattr(item, fk_fname, None) is not None:
+                    foreign_key[fk_fname] |= set([getattr(item, fk_fname)])
+
+            for m2m_fname in set(many_to_many_fields) & fields:
+                many_to_many.setdefault(m2m_fname, set())
+                many_to_many[m2m_fname] |= set(getattr(item, m2m_fname, []))
+
+        # fetch relations to minimize the number of queries.
+        many_to_many_instances = {}
+        for fname, values in many_to_many.items():
+            field = self.model._meta.get_field(fname)
+            related_model = field.related_model
+            related_instances = related_model.objects.filter(pk__in=values)
+            many_to_many_instances[fname] = {
+                instance.pk: instance for instance in related_instances
+            }
+
+        foreign_key_instances = {}
+        for fname, values in foreign_key.items():
+            field = self.model._meta.get_field(fname)
+            related_model = field.related_model
+            related_instances = related_model.objects.filter(pk__in=values)
+            foreign_key_instances[fname] = {
+                instance.pk: instance for instance in related_instances
+            }
+
+        # convert data to internal values, replacing relational fields values with the corresponding instances.
+        result = []
+        error = ServiceValidationMultiError({}, code="invalid_data")
+        for index, item in enumerate(data):
+            if not exclude_unset:
+                fields = item.model_fields_set
+            else:
+                fields = set(item.model_fields)
+
+            values = {}
+            for fname in fields:
+                suberror = ServiceValidationError({})
+
+                if fname in many_to_many_instances:
+                    invalid_values = []
+                    valid_values = []
+                    for v in getattr(item, fname, []):
+                        if v not in many_to_many_instances[fname]:
+                            invalid_values.append(v)
+                        else:
+                            valid_values.append(many_to_many_instances[fname][v])
+                    values[fname] = valid_values
+
+                    if invalid_values:
+                        suberror.add_message(
+                            f"Invalid value(s) for field '{fname}': {','.join(invalid_values)}",
+                            key=fname,
+                        )
+
+                elif fname in foreign_key_instances:
+                    if getattr(item, fname, None) not in foreign_key_instances[fname]:
+                        suberror.add_message(
+                            f"Invalid value for field '{fname}': {getattr(item, fname, None)}",
+                            key=fname,
+                        )
+                    else:
+                        values[fname] = foreign_key_instances[fname].get(
+                            getattr(item, fname, None)
+                        )
+
+                else:
+                    values[fname] = getattr(item, fname, None)
+
+                if suberror:
+                    error.add_error(index, suberror)
+
+            result.append(values)
+
+        # raise all error at once
+        if error:
+            raise error
+
+        return result
 
     def validate_data(self, data: t.Dict, instance: models.Model) -> t.Dict:
         """ Validate the data for creation or update with the current instance (None for creation). This method 
