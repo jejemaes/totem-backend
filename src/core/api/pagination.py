@@ -1,12 +1,13 @@
 import logging
 from collections import OrderedDict
 from typing import Any, Generic, List, Optional, Type, TypeVar, Union
+from asgiref.sync import async_to_sync, sync_to_async
 
 from django.core.paginator import InvalidPage, Page, Paginator
 from django.db.models import QuerySet
 from django.http import Http404, HttpRequest
 from ninja import Schema
-from ninja.pagination import PaginationBase, paginate  # noqa
+from ninja.pagination import AsyncPaginationBase, paginate  # noqa
 from ninja.types import DictStrAny
 from pydantic import Field
 from pydantic.networks import AnyUrl
@@ -21,7 +22,7 @@ T = TypeVar("T")
 PAGINATION_PER_PAGE = 20
 
 
-class PageNumberPagination(PaginationBase):
+class PageNumberPagination(AsyncPaginationBase):
 
     items_attribute = "results"
 
@@ -66,19 +67,31 @@ class PageNumberPagination(PaginationBase):
         request: Optional[HttpRequest] = None,
         **params: DictStrAny,
     ) -> Any:
+        return async_to_sync(self.apaginate_queryset)(
+            queryset, pagination, request, **params
+        )
+
+    async def apaginate_queryset(
+        self,
+        queryset: QuerySet,
+        pagination: Input,
+        request: Optional[HttpRequest] = None,
+        **params: DictStrAny,
+    ) -> Any:
         assert request, "request is required"
         current_page_number = pagination.page
         paginator = self.paginator_class(queryset, pagination.page_size)
         try:
             url = request.build_absolute_uri()
-            page: Page = paginator.page(current_page_number)
-            return self.get_paginated_response(base_url=url, page=page)
+            page: Page = await sync_to_async(paginator.page)(current_page_number)
+            return await self.get_paginated_response(base_url=url, page=page)
         except InvalidPage as exc:  # pragma: no cover
             msg = "Invalid page. {page_number} {message}".format(
                 page_number=current_page_number, message=str(exc)
             )
             raise Http404(msg) from exc
 
+    @sync_to_async
     def get_paginated_response(self, *, base_url: str, page: Page) -> DictStrAny:
         res = dict(
             [

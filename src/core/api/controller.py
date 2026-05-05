@@ -7,6 +7,7 @@ import pydantic
 from django.core.exceptions import PermissionDenied
 from django.db.models import Model, QuerySet
 from django.http import HttpRequest
+from django.conf import settings
 from ninja import Body, FilterSchema, NinjaAPI, Path, Query, Router, Schema
 from ninja.errors import ValidationError, HttpError
 from ninja.security.base import AuthBase
@@ -14,15 +15,14 @@ from ninja.signature.utils import get_path_param_names
 from ninja.utils import normalize_path
 from pydantic import BaseModel
 
-from core.schemas.utils import schema_to_orm_fields
+from core.schemas.utils import schema_to_orm_fields, model_instance_to_dict
 from core.services import (
-    ServiceEnvironment,
-    ServiceContext,
+    Environment,
     ServiceValidationMultiError,
 )
 
 from .ordering import Ordering, OrderingBase, ordering
-from .pagination import PageNumberPagination, PaginationBase, paginate
+from .pagination import PageNumberPagination, AsyncPaginationBase, paginate
 from .query_fields import QueryField, QueryFieldBase, query_field
 from .route import MAGIC_ROUTE_ATTR, Route  # pragma: no cover
 
@@ -44,11 +44,6 @@ class BaseController:
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
-
-    def __init__(self):
-        self._request = None
-        self._service_env = None
-        super().__init__()
 
     def __init_subclass__(cls) -> None:
         super().__init_subclass__()
@@ -93,35 +88,6 @@ class BaseController:
         if not message:
             message = "You are not allowed to archived this operation."
         raise PermissionDenied(message)
-
-    def request_to_service_context(self, request: HttpRequest) -> ServiceContext:
-        user = None  # force none instead of Anonymous user
-        if request is not None:
-            if request.auth and hasattr(request.auth, "user"):
-                user = request.auth.user
-        return ServiceContext(user=user)
-
-    @contextmanager
-    def with_service_request(
-        self,
-        request: HttpRequest,
-    ):
-        old_services_env = self._service_env
-        self._service_env = ServiceEnvironment(self.request_to_service_context(request))
-        try:
-            yield self
-        finally:
-            if self._service_env is not None:
-                self._service_env.__exit__(None, None, None)
-                self._service_env = old_services_env
-
-    @property
-    def services(self):
-        if self._service_env is None:
-            raise RuntimeError(
-                "Service environment is not set. Use with_service_request context manager."
-            )
-        return self._service_env.__enter__()
 
 
 class BaseModelController(BaseController):
@@ -228,7 +194,7 @@ class ListModelControllerMixin:
     list_ordering_fields: t.List[str] = []
     list_ordering_default_fields: t.List[str] = []
     list_ordering_fields_alias: t.Dict[str, str] = {}
-    list_pagination: t.Optional[t.Type[PaginationBase]] = PageNumberPagination
+    list_pagination: t.Optional[t.Type[AsyncPaginationBase]] = PageNumberPagination
     list_query_field_class: t.Optional[t.Type[QueryFieldBase]] = QueryField
 
     @classmethod
@@ -308,7 +274,7 @@ class ListModelControllerMixin:
             ]
         return view_func
 
-    def list(
+    async def list(
         self,
         request,
         path_parameters: t.Optional[BaseModel],
@@ -320,7 +286,7 @@ class ListModelControllerMixin:
         ordering_parameters = kwargs.pop("ordering_fields", None)
         if ordering_parameters:
             ordering_fields = ordering_parameters.ordering
-        return self.services[self.service_name].read(
+        return await request.env[self.service_name].read(
             query_parameters, ordering=ordering_fields
         )
 
@@ -368,7 +334,7 @@ class RetrieveModelControllerMixin:
         request: HttpRequest,
         path_parameters: t.Optional[BaseModel],
     ) -> Model:
-        queryset = self.services[self.service_name].read()
+        queryset = request.env[self.service_name].read()
         try:
             return queryset.get(
                 **(path_parameters.model_dump() if path_parameters else {})
@@ -427,7 +393,9 @@ class CreateModelControllerMixin:
         request_body: BaseModel,
     ) -> Model:
         try:
-            instances = self.services[self.service_name].create([request_body])
+            instances = request.env[self.service_name].create(
+                [model_instance_to_dict(request_body, exclude_unset=False)]
+            )
             return instances[0] if instances else None
         except ServiceValidationMultiError as exc:
             raise self.service_validation_error_to_api_error(
@@ -483,8 +451,8 @@ class UpdateModelControllerMixin:
     ) -> Model:
         try:
             filters = path_parameters.model_dump() if path_parameters else {}
-            count, queryset = self.services[self.service_name].update(
-                filters, request_body
+            count, queryset = request.env[self.service_name].update(
+                filters, model_instance_to_dict(request_body, exclude_unset=True)
             )
             if count == 0:
                 raise HttpError(
@@ -494,7 +462,7 @@ class UpdateModelControllerMixin:
             return queryset.first() if count > 0 else None
         except ServiceValidationMultiError as exc:
             raise self.service_validation_error_to_api_error(
-                exc, self.create_response_schema, loc_path=["body", "request_body"]
+                exc, self.update_response_schema, loc_path=["body", "request_body"]
             )
 
 
@@ -540,7 +508,7 @@ class DeleteModelControllerMixin:
         path_parameters: t.Optional[BaseModel],
     ) -> None:
         filters = path_parameters.model_dump() if path_parameters else {}
-        count = self.services[self.service_name].delete(filters)
+        count = request.env[self.service_name].delete(filters)
         if count == 0:
             raise HttpError(
                 status_code=404,

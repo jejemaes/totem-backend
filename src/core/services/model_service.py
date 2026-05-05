@@ -1,6 +1,7 @@
 import typing as t
 
-from asgiref.sync import async_to_sync
+from asgiref.sync import async_to_sync, sync_to_async
+
 from django.core import exceptions
 from django.db import models, transaction
 from django.db.models import F, ManyToManyField
@@ -11,26 +12,26 @@ from pydantic import BaseModel
 from core.orm.queryset import queryset_fetch_fields, queryset_order_by_fields
 from user.access_policy import apply_access_rules, Context as AccessContext
 
-from .base import BaseService, ServiceMeta
+from .base import Service, ServiceMeta
 from .exceptions import ServiceValidationError, ServiceValidationMultiError
 
 
 class ModelServiceMeta(ServiceMeta):
     def __new__(cls, name, bases, namespace):
 
-        # Allow `_name` to be set explicitly in the service definition
+        # Allow `name` to be set explicitly in the service definition
         model_class = namespace.get("model", None)
-        if namespace.get("_name", None) is None and model_class is not None:
+        if namespace.get("name", None) is None and model_class is not None:
             if issubclass(model_class, models.Model):
-                namespace["_name"] = model_class._meta.label  # app.model_name
+                namespace["name"] = model_class._meta.label  # app.model_name
             else:
-                namespace["_name"] = "__unknown__"
+                namespace["name"] = "__unknown__"
 
         new_class = super().__new__(cls, name, bases, namespace)
         return new_class
 
 
-class ModelService(BaseService, metaclass=ModelServiceMeta):
+class ModelService(Service, metaclass=ModelServiceMeta):
     model = None
 
     ValidationError = ServiceValidationError
@@ -45,7 +46,7 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
     # Create
     # -----------------------------------------------------------------
 
-    def create(self, data: t.List[BaseModel]) -> t.List[models.Model]:
+    def create(self, data: t.List[dict]) -> t.List[models.Model]:
         with transaction.atomic():
             queryset = self.get_queryset()
 
@@ -90,6 +91,7 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
                 raise exceptions.PermissionDenied("You do not have permission to create some of the objects.")
 
             # Save many-to-many relationships after the instance is created, and set it in the prefetch cache
+            error = ServiceValidationMultiError({}, code="creation_invalid_data")
             for instance, many_to_many_values in zip(instances, many_to_many_data):
                 if many_to_many_values:
                     prefetched_objects = getattr(instance, "_prefetched_objects_cache", {})
@@ -97,7 +99,10 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
                         field = getattr(instance, field_name)
                         # optimization: `set` will cause a read but since we are in a creation,
                         # there is no exsting relations.
-                        field.add(*value)
+                        try:
+                            field.add(*value)
+                        except DatabaseError as exc:
+                            raise self._database_error_to_validation_error(exc) from exc
                         # Set in cache in order to avoid refetching the m2m relation when serializing.
                         # This can be done since we are in creation mode. m2m cache value is a django queryset.
                         prefetched_objects[field_name] = value
@@ -119,8 +124,11 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
     # Read
     # -----------------------------------------------------------------
 
-    def read(
-        self, filters: t.Union[BaseModel, FilterSchema, t.Dict] = None, ordering=None, fields: t.List[str]=None
+    async def read(
+        self,
+        filters: t.Union[BaseModel, FilterSchema, t.Dict] = None,
+        ordering=None,
+        fields: t.List[str] = None,
     ) -> models.QuerySet:
         """ Read records from the database applying access rules, filters, pagination, ordering and fields selection.
             :param filters: either
@@ -136,10 +144,10 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
         """
         queryset = self.get_queryset()
         # apply access rules
-        queryset = self.apply_access_rules(queryset, "read")
+        queryset = await self.apply_access_rules(queryset, "read")
         # apply filters
         if filters:
-            queryset = self._apply_filters(queryset, filters)
+            queryset = await self._apply_filters(queryset, filters)
         # apply ordering
         if ordering:
             queryset = self._read_apply_ordering(queryset, ordering)
@@ -164,10 +172,11 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
     # -----------------------------------------------------------------
 
     def update(
-        self, filters: BaseModel, data: BaseModel
+        self, filters: BaseModel, data: dict
     ) -> t.Tuple[int, t.List[models.Model]]:
         """ Update multiple records with the same data. """
         # Implement the update logic here
+        pks = []
         with transaction.atomic():
             queryset = self.get_queryset()
 
@@ -188,7 +197,6 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
 
             # Validate data with current instances
             error = ServiceValidationMultiError({}, code="update_invalid_data")
-            pks = []
             for instance in instances:
                 pks.append(instance.pk)
                 try:
@@ -215,7 +223,7 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
 
             # Update instances
             try:
-                count = queryset.update(**internal_values)
+                queryset.update(**internal_values)
             except DatabaseError as exc:
                 raise self._database_error_to_validation_error(exc) from exc
 
@@ -251,16 +259,23 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
                         else:
                             pks_to_keep.add(existing_objs_map[(pk, new_value.pk)])
 
-                pks_to_remove = set(existing_objs_map.values()) - set(pks_to_keep)
-                if pks_to_remove:
-                    through_model.objects.filter(pk__in=pks_to_remove).delete()
-                if relations_to_create:
-                    through_model.objects.bulk_create(relations_to_create, ignore_conflicts=True)
+                try:
+                    pks_to_remove = set(existing_objs_map.values()) - set(pks_to_keep)
+                    if pks_to_remove:
+                        through_model.objects.filter(pk__in=pks_to_remove).delete()
+                    if relations_to_create:
+                        through_model.objects.bulk_create(
+                            relations_to_create, ignore_conflicts=False
+                        )
+                except DatabaseError as exc:
+                    raise self._database_error_to_validation_error(exc) from exc
 
             # Postprocess
             self._update_postrocess(queryset, internal_values)
 
-        return count, queryset
+        # Use `len(pks)` instead of `count = queryset.update()` because we want to include records even if no concrete fields were altered.
+        # e.i.: partial update of only a m2m relations, the instance itself if not altered.
+        return len(pks), queryset
 
     def _update_preprocess(
         self, queryset: models.QuerySet, update_fields: t.List[str]
@@ -317,13 +332,38 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
     # Utils
     # -----------------------------------------------------------------
 
-    def apply_access_rules(self, queryset: models.QuerySet, operation: str):
-        context = AccessContext(user=self.context.user)
-        return async_to_sync(apply_access_rules)(queryset, operation, context)
+    async def apply_access_rules(self, queryset: models.QuerySet, operation: str):
+        context = AccessContext(user=self.env.user)
+        return await apply_access_rules(queryset, operation, context)
 
     def to_internal_values(
         self, data: t.List[BaseModel], exclude_unset: bool = False
     ) -> t.List[t.Dict]:
+        # convert input in list of dict
+        error = ServiceValidationMultiError({}, code="invalid_data")
+        data_list = []
+        for index, item in enumerate(data):
+            if isinstance(item, dict):
+                suberror = ServiceValidationError({})
+                for key, val in item.items():
+                    try:
+                        field = self.model._meta.get_field(key)
+                        field.run_validators(val)
+                    except exceptions.ValidationError as exc:
+                        suberror.add_message(
+                            str(exc),
+                            key=key,
+                        )
+                data_list.append(item)
+                if suberror:
+                    error.add_error(index, suberror)
+            else:
+                raise TypeError(f"Invalid data type: {type(item)}. Expected dict.")
+
+        # raise all error at once
+        if error:
+            raise error
+
         # extract relational field names
         many_to_many_fields = []
         foreign_key_fields = []
@@ -336,20 +376,18 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
         # group all values of relational fields
         many_to_many = {}  # fname -> set of values
         foreign_key = {}  # fname -> set of values
-        for item in data:
-            if not exclude_unset:
-                fields = set(item.model_fields_set)
-            else:
-                fields = set(item.model_fields)
+        for item in data_list:
+            fields = set(item.keys())
 
             for fk_fname in set(foreign_key_fields) & fields:
                 foreign_key.setdefault(fk_fname, set())
-                if getattr(item, fk_fname, None) is not None:
-                    foreign_key[fk_fname] |= set([getattr(item, fk_fname)])
+                fval = item.get(fk_fname)
+                if fval is not None:
+                    foreign_key[fk_fname] |= set([fval])
 
             for m2m_fname in set(many_to_many_fields) & fields:
                 many_to_many.setdefault(m2m_fname, set())
-                many_to_many[m2m_fname] |= set(getattr(item, m2m_fname, []))
+                many_to_many[m2m_fname] |= set(item.get(m2m_fname) or [])
 
         # fetch relations to minimize the number of queries.
         many_to_many_instances = {}
@@ -373,20 +411,19 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
         # convert data to internal values, replacing relational fields values with the corresponding instances.
         result = []
         error = ServiceValidationMultiError({}, code="invalid_data")
-        for index, item in enumerate(data):
-            if not exclude_unset:
-                fields = item.model_fields_set
-            else:
-                fields = set(item.model_fields)
+        for index, item in enumerate(data_list):
+            fields = set(item.keys())
 
             values = {}
             for fname in fields:
                 suberror = ServiceValidationError({})
 
+                fval = item.get(fname)
+
                 if fname in many_to_many_instances:
                     invalid_values = []
                     valid_values = []
-                    for v in getattr(item, fname, []):
+                    for v in fval or []:
                         if v not in many_to_many_instances[fname]:
                             invalid_values.append(v)
                         else:
@@ -400,18 +437,16 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
                         )
 
                 elif fname in foreign_key_instances:
-                    if getattr(item, fname, None) not in foreign_key_instances[fname]:
+                    if fval not in foreign_key_instances[fname]:
                         suberror.add_message(
-                            f"Invalid value for field '{fname}': {getattr(item, fname, None)}",
+                            f"Invalid value for field '{fname}': {fval}",
                             key=fname,
                         )
                     else:
-                        values[fname] = foreign_key_instances[fname].get(
-                            getattr(item, fname, None)
-                        )
+                        values[fname] = foreign_key_instances[fname].get(fval)
 
                 else:
-                    values[fname] = getattr(item, fname, None)
+                    values[fname] = fval
 
                 if suberror:
                     error.add_error(index, suberror)
@@ -425,12 +460,12 @@ class ModelService(BaseService, metaclass=ModelServiceMeta):
         return result
 
     def validate_data(self, data: t.Dict, instance: models.Model) -> t.Dict:
-        """ Validate the data for creation or update with the current instance (None for creation). This method 
-            raises ValidationError in case of validation error and return nothing.
+        """Validate the data for creation or update with the current instance (None for creation). This method
+        raises ValidationError in case of validation error and return nothing.
         """
         pass
 
-    def _apply_filters(
+    async def _apply_filters(
         self,
         queryset: models.QuerySet,
         filters: t.Union[BaseModel, FilterSchema, t.Dict],

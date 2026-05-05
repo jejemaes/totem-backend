@@ -537,7 +537,15 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self._assert_api_format(
             data,
             self.user_access_token_frodon.user,
-            ["id", "last_name", "first_name", "email", "language", "avatar"],
+            [
+                "id",
+                "username",
+                "last_name",
+                "first_name",
+                "email",
+                "language",
+                "avatar",
+            ],
         )
 
     @parameterized.expand(

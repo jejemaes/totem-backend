@@ -45,6 +45,9 @@ class UserSchema(ModelSchema):
             "roles",
         ]
         optional_fields = "__all__"
+        extra_fields_kwargs = {
+            "username": {"alias": "login"},
+        }
 
 
 class UserCreateSchema(ModelSchema):
@@ -81,7 +84,15 @@ class UserUpdateSchema(ModelSchema):
 class UserProfileSchema(ModelSchema):
     class Meta:
         model = User
-        fields = ["id", "last_name", "first_name", "email", "language", "avatar"]
+        fields = [
+            "id",
+            "username",
+            "last_name",
+            "first_name",
+            "email",
+            "language",
+            "avatar",
+        ]
         optional_fields = "__all__"
 
 

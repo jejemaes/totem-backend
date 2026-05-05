@@ -1,5 +1,6 @@
 import typing as t
 
+from pydantic import BaseModel
 from django.db import models
 from django.db.models.constants import LOOKUP_SEP
 
@@ -153,3 +154,18 @@ def extract_orm_fields_from_specs(orm_field_map: t.Dict[str, t.Any], field_names
             nested_fields = extract_orm_fields_from_specs(orm_field_map[name]["fields"], list(orm_field_map[name]["fields"].keys()))
             orm_fields.extend([f"{orm_field_map[name]['source']}{LOOKUP_SEP}{nf}" for nf in nested_fields])
     return orm_fields
+
+
+def model_instance_to_dict(
+    model_instance: BaseModel, exclude_unset: bool = True
+) -> dict:
+    """Converts a Pydantic model instance to a dictionary, optionally excluding unset fields."""
+    if exclude_unset:
+        field_list = list(model_instance.model_fields_set)
+    else:
+        field_list = list(model_instance.model_fields)
+
+    values = {}
+    for field in field_list:
+        values[field] = getattr(model_instance, field, None)
+    return values
