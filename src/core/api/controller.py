@@ -15,7 +15,12 @@ from ninja.signature.utils import get_path_param_names
 from ninja.utils import normalize_path
 from pydantic import BaseModel
 
-from core.schemas.utils import schema_to_orm_fields, model_instance_to_dict
+from core.schemas.utils import (
+    extract_orm_fields_from_specs,
+    extract_orm_fields_map,
+    model_instance_to_dict,
+    schema_to_orm_fields,
+)
 from core.services import (
     Environment,
     ServiceValidationMultiError,
@@ -329,16 +334,31 @@ class RetrieveModelControllerMixin:
         ]
         return view_func
 
-    def retrieve(
+    @classmethod
+    def _retrieve_orm_fields(cls) -> t.List[str]:
+        """ORM lookups covering every field the response schema will read.
+
+        Passing them to `read()` makes the queryset `only()` and `prefetch_related()`
+        exactly what serialization touches. This is not an optimization but a
+        correctness requirement for an async route: ninja serializes the returned
+        instance outside of any `sync_to_async`, so a deferred field or an unresolved
+        relation would raise `SynchronousOnlyOperation` at that point, out of reach of
+        the service.
+        """
+        orm_field_map = extract_orm_fields_map(cls.retrieve_response_schema, cls.model)
+        return extract_orm_fields_from_specs(orm_field_map, list(orm_field_map.keys()))
+
+    async def retrieve(
         self,
         request: HttpRequest,
         path_parameters: t.Optional[BaseModel],
     ) -> Model:
-        queryset = request.env[self.service_name].read()
+        queryset = await request.env[self.service_name].read(
+            filters=path_parameters.model_dump() if path_parameters else None,
+            fields=self._retrieve_orm_fields(),
+        )
         try:
-            return queryset.get(
-                **(path_parameters.model_dump() if path_parameters else {})
-            )
+            return await queryset.aget()
         except queryset.model.DoesNotExist as exc:
             raise HttpError(
                 status_code=404,

@@ -1,10 +1,10 @@
 import typing as t
 
-from asgiref.sync import async_to_sync, sync_to_async
+from asgiref.sync import async_to_sync
 
 from django.core import exceptions
 from django.db import models, transaction
-from django.db.models import F, ManyToManyField
+from django.db.models import ManyToManyField
 from django.db.utils import DatabaseError
 from ninja import FilterSchema
 from pydantic import BaseModel
@@ -86,16 +86,15 @@ class ModelService(Service, metaclass=ModelServiceMeta):
                 raise self._database_error_to_validation_error(exc) from exc
 
             # Access rules check
-            queryset = self.apply_access_rules(queryset, "create")
+            queryset = async_to_sync(self.apply_access_rules)(queryset, "create")
             if queryset.filter(pk__in=[obj.pk for obj in instances]).count() != len(instances):
                 raise exceptions.PermissionDenied("You do not have permission to create some of the objects.")
 
             # Save many-to-many relationships after the instance is created, and set it in the prefetch cache
-            error = ServiceValidationMultiError({}, code="creation_invalid_data")
             for instance, many_to_many_values in zip(instances, many_to_many_data):
                 if many_to_many_values:
                     prefetched_objects = getattr(instance, "_prefetched_objects_cache", {})
-                    for field_name, value in many_to_many.items():
+                    for field_name, value in many_to_many_values.items():
                         field = getattr(instance, field_name)
                         # optimization: `set` will cause a read but since we are in a creation,
                         # there is no exsting relations.
@@ -147,7 +146,7 @@ class ModelService(Service, metaclass=ModelServiceMeta):
         queryset = await self.apply_access_rules(queryset, "read")
         # apply filters
         if filters:
-            queryset = await self._apply_filters(queryset, filters)
+            queryset = self._apply_filters(queryset, filters)
         # apply ordering
         if ordering:
             queryset = self._read_apply_ordering(queryset, ordering)
@@ -181,7 +180,7 @@ class ModelService(Service, metaclass=ModelServiceMeta):
             queryset = self.get_queryset()
 
             # Access rules check
-            queryset = self.apply_access_rules(queryset, "update")
+            queryset = async_to_sync(self.apply_access_rules)(queryset, "update")
 
             # Apply filters
             if filters:
@@ -296,7 +295,7 @@ class ModelService(Service, metaclass=ModelServiceMeta):
         with transaction.atomic():
             queryset = self.get_queryset()
             # apply access rules
-            queryset = self.apply_access_rules(queryset, "delete")
+            queryset = async_to_sync(self.apply_access_rules)(queryset, "delete")
 
             # apply filters
             if filters:
@@ -465,7 +464,7 @@ class ModelService(Service, metaclass=ModelServiceMeta):
         """
         pass
 
-    async def _apply_filters(
+    def _apply_filters(
         self,
         queryset: models.QuerySet,
         filters: t.Union[BaseModel, FilterSchema, t.Dict],

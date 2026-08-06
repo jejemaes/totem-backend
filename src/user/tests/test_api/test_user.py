@@ -322,6 +322,44 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             )
 
     # ------------------------------------------
+    # Retrieve Operation
+    # ------------------------------------------
+
+    def test_retrieve_response(self):
+        response = self.do_api_request(
+            self.url_detail, "GET", self.user_access_token_frodon.token
+        )
+        data = response.json()
+
+        self.assertEqual(response.status_code, 200)
+        # `user_gollum` has a role: serializing `roles` is what forces the relation
+        # to be resolved, so this covers the relational part of the payload.
+        self._assert_api_format(data, self.user_gollum, None)
+
+    def test_retrieve_not_found(self):
+        response = self.do_api_request(
+            f"/api/v1/users/{USER_ID5}/", "GET", self.user_access_token_frodon.token
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    @parameterized.expand(
+        [
+            ("totem.user.read", 200),
+            ("totem.user.create", 403),
+        ]
+    )
+    def test_retrieve_access_rights(self, scope, status_code):
+        self.user_access_token_frodon.scope = scope
+        self.user_access_token_frodon.save(update_fields=["scope"])
+
+        response = self.do_api_request(
+            self.url_detail, "GET", self.user_access_token_frodon.token
+        )
+
+        self.assertEqual(response.status_code, status_code)
+
+    # ------------------------------------------
     # Create Operation
     # ------------------------------------------
 

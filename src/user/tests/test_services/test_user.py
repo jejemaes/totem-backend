@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from asgiref.sync import async_to_sync
 from django.test import TestCase
 from parameterized import parameterized
 
@@ -115,7 +116,7 @@ class TestUserService(TestCase):
     )
     def test_read_valid(self, filters, fields, query_count, expected_count):
         with self.assertNumQueries(query_count):
-            qs = self.env[self.service_name].read(filters, fields=fields)
+            qs = async_to_sync(self.env[self.service_name].read)(filters, fields=fields)
             self.assertEqual(qs.count(), expected_count)
 
     # ------------------------------------------
