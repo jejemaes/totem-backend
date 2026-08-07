@@ -1,8 +1,11 @@
+from unittest.mock import patch
+
 from asgiref.sync import async_to_sync
 from django.db.models import QuerySet
 from django.test import SimpleTestCase, TestCase
 
 from core.services import Environment
+from core.services.exceptions import ServiceValidationMultiError
 from user.models import User, UserRole
 from user.schemas import UserCreateSchema, UserUpdateSchema
 from user.services import UserRoleService, UserService
@@ -52,6 +55,65 @@ class TestServiceComposition(SimpleTestCase):
         """
         self.assertTrue(hasattr(UserRoleService, "browse"))
         self.assertTrue(hasattr(UserService, "browse"))
+
+
+class TestValidateDataHook(TestCase):
+    """The level-3 hook: business rules that need current state.
+
+    Field-level checks live in the input schema; this hook is the only place that
+    sees the instance being written, so it is where rules depending on state belong.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.actor = User.objects.create(
+            username="tintin", email="tintin@moulinsart.com"
+        )
+
+    @property
+    def service(self):
+        return Environment(user=self.actor).get(UserService)
+
+    def create(self):
+        data = UserCreateSchema(
+            username="haddock", email="haddock@moulinsart.com", roles=[]
+        )
+        return async_to_sync(self.service.create)([data])
+
+    def test_receives_no_instance_on_creation(self):
+        seen = []
+
+        with patch.object(UserService, "validate_data", lambda s, data, instance: seen.append((data, instance))):
+            self.create()
+
+        self.assertEqual(len(seen), 1)
+        data, instance = seen[0]
+        self.assertIsNone(instance)
+        self.assertEqual(data["username"], "haddock")
+
+    def test_receives_the_instance_on_update(self):
+        seen = []
+
+        with patch.object(UserService, "validate_data", lambda s, data, instance: seen.append((data, instance))):
+            async_to_sync(self.service.update)(
+                {"pk": self.actor.pk}, UserUpdateSchema(first_name="Tintin")
+            )
+
+        self.assertEqual(len(seen), 1)
+        data, instance = seen[0]
+        self.assertEqual(instance.pk, self.actor.pk)
+        self.assertEqual(data, {"first_name": "Tintin"})
+
+    def test_raising_rejects_the_write_and_rolls_back(self):
+        def refuse(service, data, instance):
+            raise service.ValidationError("nope", key="username")
+
+        with patch.object(UserService, "validate_data", refuse):
+            with self.assertRaises(ServiceValidationMultiError) as ctx:
+                self.create()
+
+        self.assertIn("username", str(ctx.exception.dict()))
+        self.assertFalse(User.objects.filter(username="haddock").exists())
 
 
 class TestBrowse(TestCase):

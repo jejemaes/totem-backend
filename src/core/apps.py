@@ -22,3 +22,10 @@ class CoreConfig(AppConfig):
 
         # Also, need to load all services defined
         autodiscover_modules("services")
+
+        # Every service is loaded by now, so cross-service consistency can be
+        # checked: a writable relation whose model has no service would only fail
+        # on the first request carrying it.
+        from .services.registry import ServiceRegistry
+
+        ServiceRegistry.validate()

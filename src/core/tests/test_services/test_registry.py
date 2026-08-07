@@ -1,6 +1,10 @@
+from unittest.mock import patch
+
+import pydantic
 from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase
 
+from core.schemas import create_schema
 from core.services import Service, ServiceBase
 from core.services.registry import ServiceRegistry
 from user.models import User, UserRole
@@ -68,3 +72,46 @@ class TestServiceRegistry(SimpleTestCase):
     def test_keys_lists_served_models(self):
         self.assertIn(User, ServiceRegistry.keys())
         self.assertIn(UserRole, ServiceRegistry.keys())
+
+
+class TestRegistryValidation(SimpleTestCase):
+    """Cross-service consistency, checked at startup rather than on first request."""
+
+    def test_current_configuration_is_valid(self):
+        ServiceRegistry.validate()  # must not raise
+
+    def test_writable_relation_without_a_service_is_rejected(self):
+        """`groups` comes from `AbstractUser` and auth.Group has no service.
+
+        It is normally absent from the input schemas, which is exactly why the check
+        looks at the schemas and not at `model._meta.get_fields()`. Exposing it for
+        writing must fail at startup, not when a payload first carries it.
+        """
+        schema = create_schema(
+            User, name="TestUserWithGroups", fields=["username", "groups"]
+        )
+
+        with patch.object(UserService, "create_schema", schema):
+            with self.assertRaises(ImproperlyConfigured) as ctx:
+                ServiceRegistry.validate()
+
+        self.assertIn("auth.Group", str(ctx.exception))
+        self.assertIn("groups", str(ctx.exception))
+
+    def test_schema_field_absent_from_the_model_is_rejected(self):
+        schema = pydantic.create_model("TestBogusInput", not_a_field=(str, None))
+
+        with patch.object(UserService, "create_schema", schema):
+            with self.assertRaises(ImproperlyConfigured) as ctx:
+                ServiceRegistry.validate()
+
+        self.assertIn("not_a_field", str(ctx.exception))
+
+    def test_relation_with_a_service_passes(self):
+        """`roles` points at UserRole, which has a service: nothing to report."""
+        schema = create_schema(
+            User, name="TestUserWithRoles", fields=["username", "roles"]
+        )
+
+        with patch.object(UserService, "create_schema", schema):
+            ServiceRegistry.validate()  # must not raise

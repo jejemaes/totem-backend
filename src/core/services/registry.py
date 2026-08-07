@@ -1,4 +1,4 @@
-from django.core.exceptions import ImproperlyConfigured
+from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 
 
 class ServiceRegistry:
@@ -38,3 +38,53 @@ class ServiceRegistry:
     @classmethod
     def keys(cls):
         return cls._by_model.keys()
+
+    @classmethod
+    def validate(cls):
+        """Check that every writable relation can be resolved through a service.
+
+        Resolution goes through `env[related_model]`, which raises when the related
+        model has no service. Without this check that failure would surface as a
+        runtime error on the first request carrying the relation; here it surfaces at
+        startup instead.
+
+        Scoped to the fields declared by the input schemas, deliberately not to
+        `model._meta.get_fields()`: a model inherits relations it never exposes for
+        writing -- `AbstractUser` brings `groups` and `user_permissions`, which will
+        never have a service -- and requiring one for those would be meaningless.
+
+        Must run after every `services` module is imported, so it belongs at the end
+        of `CoreConfig.ready()` rather than in `__init_subclass__`, where the service
+        of a related model may not be loaded yet.
+        """
+        errors = []
+        for model, service_class in cls._by_model.items():
+            schemas = (
+                getattr(service_class, "create_schema", None),
+                getattr(service_class, "update_schema", None),
+            )
+            for schema in schemas:
+                if schema is None:
+                    continue
+                for field_name in schema.model_fields:
+                    try:
+                        field = model._meta.get_field(field_name)
+                    except FieldDoesNotExist:
+                        errors.append(
+                            f"{service_class.__name__}: {schema.__name__} declares "
+                            f"{field_name!r}, absent from {model._meta.label}."
+                        )
+                        continue
+
+                    if not field.is_relation or field.related_model is None:
+                        continue
+                    if field.related_model not in cls._by_model:
+                        errors.append(
+                            f"{service_class.__name__}: {schema.__name__} accepts the "
+                            f"relation {field_name!r} but "
+                            f"{field.related_model._meta.label} has no service, so it "
+                            f"cannot be resolved with access rules."
+                        )
+
+        if errors:
+            raise ImproperlyConfigured("\n".join(errors))
