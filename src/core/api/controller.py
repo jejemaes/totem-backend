@@ -15,6 +15,7 @@ from ninja.signature.utils import get_path_param_names
 from ninja.utils import normalize_path
 from pydantic import BaseModel
 
+from core.orm.queryset import queryset_fetch_fields
 from core.schemas.utils import (
     extract_orm_fields_from_specs,
     extract_orm_fields_map,
@@ -157,6 +158,22 @@ class BaseModelController(BaseController):
             schema_fields[param] = func_params.get(param, str)
 
         return pydantic.create_model("PathParameters", **schema_fields)
+
+    # Response loading
+
+    @classmethod
+    def _response_orm_fields(cls, response_schema: Schema) -> t.List[str]:
+        """ORM lookups covering every field the given response schema will read.
+
+        Passing them to `read()` (or to `queryset_fetch_fields`) makes the queryset
+        `only()` and `prefetch_related()` exactly what serialization touches. This is
+        not an optimization but a correctness requirement for an async route: ninja
+        serializes the returned instance outside of any `sync_to_async`, so a
+        deferred field or an unresolved relation would raise
+        `SynchronousOnlyOperation` there, out of reach of the service.
+        """
+        orm_field_map = extract_orm_fields_map(response_schema, cls.model)
+        return extract_orm_fields_from_specs(orm_field_map, list(orm_field_map.keys()))
 
     # Error Handling
 
@@ -333,20 +350,6 @@ class RetrieveModelControllerMixin:
         ]
         return view_func
 
-    @classmethod
-    def _retrieve_orm_fields(cls) -> t.List[str]:
-        """ORM lookups covering every field the response schema will read.
-
-        Passing them to `read()` makes the queryset `only()` and `prefetch_related()`
-        exactly what serialization touches. This is not an optimization but a
-        correctness requirement for an async route: ninja serializes the returned
-        instance outside of any `sync_to_async`, so a deferred field or an unresolved
-        relation would raise `SynchronousOnlyOperation` at that point, out of reach of
-        the service.
-        """
-        orm_field_map = extract_orm_fields_map(cls.retrieve_response_schema, cls.model)
-        return extract_orm_fields_from_specs(orm_field_map, list(orm_field_map.keys()))
-
     async def retrieve(
         self,
         request: HttpRequest,
@@ -354,7 +357,7 @@ class RetrieveModelControllerMixin:
     ) -> Model:
         queryset = await request.env[self.model].read(
             filters=path_parameters.model_dump() if path_parameters else None,
-            fields=self._retrieve_orm_fields(),
+            fields=self._response_orm_fields(self.retrieve_response_schema),
         )
         try:
             return await queryset.aget()
@@ -405,14 +408,17 @@ class CreateModelControllerMixin:
         annotations["request_body"] = t.Annotated[cls.create_request_schema, Body()]
         return view_func
 
-    def create(
+    async def create(
         self,
         request: HttpRequest,
         path_parameters: t.Optional[BaseModel],
         request_body: BaseModel,
     ) -> Model:
         try:
-            instances = request.env[self.model].create(
+            # No refetch needed to serialize: the instance is built in memory with
+            # every concrete field, and the service primes the m2m prefetch cache
+            # for all relations, empty ones included.
+            instances = await request.env[self.model].create(
                 [model_instance_to_dict(request_body, exclude_unset=False)]
             )
             return instances[0] if instances else None
@@ -462,7 +468,7 @@ class UpdateModelControllerMixin:
         annotations["request_body"] = t.Annotated[cls.update_request_schema, Body()]
         return view_func
 
-    def update(
+    async def update(
         self,
         request: HttpRequest,
         path_parameters: t.Optional[BaseModel],
@@ -470,7 +476,7 @@ class UpdateModelControllerMixin:
     ) -> Model:
         try:
             filters = path_parameters.model_dump() if path_parameters else {}
-            count, queryset = request.env[self.model].update(
+            count, queryset = await request.env[self.model].update(
                 filters, model_instance_to_dict(request_body, exclude_unset=True)
             )
             if count == 0:
@@ -478,7 +484,13 @@ class UpdateModelControllerMixin:
                     status_code=404,
                     message=f"{self.model._meta.verbose_name.capitalize()} not found.",
                 )
-            return queryset.first() if count > 0 else None
+            # Unlike a creation, existing relations are unknown here, so the prefetch
+            # cache cannot be primed: the response has to be loaded explicitly before
+            # leaving the async context.
+            queryset = queryset_fetch_fields(
+                queryset, self._response_orm_fields(self.update_response_schema)
+            )
+            return await queryset.afirst()
         except ServiceValidationMultiError as exc:
             raise self.service_validation_error_to_api_error(
                 exc, self.update_response_schema, loc_path=["body", "request_body"]
@@ -521,13 +533,13 @@ class DeleteModelControllerMixin:
         ]
         return view_func
 
-    def delete(
+    async def delete(
         self,
         request: HttpRequest,
         path_parameters: t.Optional[BaseModel],
     ) -> None:
         filters = path_parameters.model_dump() if path_parameters else {}
-        count = request.env[self.model].delete(filters)
+        count = await request.env[self.model].delete(filters)
         if count == 0:
             raise HttpError(
                 status_code=404,

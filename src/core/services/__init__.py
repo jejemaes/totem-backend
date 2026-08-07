@@ -1,4 +1,4 @@
-from .base import Service, ServiceMeta
+from .base import Service, ServiceBase
 from .environment import Environment
-from .model_service import ModelService, ModelServiceMeta
+from .mixins import CreateMixin, DeleteMixin, ReadMixin, UpdateMixin
 from .exceptions import ServiceValidationError, ServiceValidationMultiError

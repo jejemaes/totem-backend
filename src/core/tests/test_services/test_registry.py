@@ -1,7 +1,7 @@
 from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase
 
-from core.services import ModelService, Service
+from core.services import Service, ServiceBase
 from core.services.registry import ServiceRegistry
 from user.models import User, UserRole
 from user.services import UserRoleService, UserService
@@ -22,8 +22,8 @@ class TestServiceRegistry(SimpleTestCase):
         self.assertTrue(ServiceRegistry.contains(User))
 
     def test_declaring_a_service_registers_it(self):
-        class MenuService(ModelService):
-            model = Menu
+        class MenuService(ServiceBase[Menu]):
+            pass
 
         self.assertIs(ServiceRegistry.get_service_class(Menu), MenuService)
 
@@ -42,13 +42,13 @@ class TestServiceRegistry(SimpleTestCase):
     def test_two_services_on_the_same_model_raise_at_import(self):
         """Otherwise `env[Model]` would depend on import order."""
 
-        class MenuService(ModelService):
-            model = Menu
+        class MenuService(ServiceBase[Menu]):
+            pass
 
         with self.assertRaises(ImproperlyConfigured) as ctx:
 
-            class OtherMenuService(ModelService):
-                model = Menu
+            class OtherMenuService(ServiceBase[Menu]):
+                pass
 
         self.assertIn("single service", str(ctx.exception))
         # The first registration must survive the rejected one.

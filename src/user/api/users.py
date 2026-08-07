@@ -60,7 +60,7 @@ class UserController(TokenHasScopePermissionModelControllerMixin, ModelControlle
     @route.patch(
         "/me/", response=UserProfileSchema, permissions=[IsAuthenticated], tags=["User"]
     )
-    def profile_update(self, request, body: UserProfileSchema):
+    async def profile_update(self, request, body: UserProfileSchema):
         path_parameters = ProfilePathParam(id=request.auth.user.pk)
-        instance = self.update(request, path_parameters, body)
+        instance = await self.update(request, path_parameters, body)
         return instance

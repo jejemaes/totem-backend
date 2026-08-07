@@ -68,18 +68,22 @@ class TestUserService(TestCase):
     )
     def test_create_valid(self, payload, query_count):
         with self.assertNumQueries(query_count):
-            self.service.create(payload)
+            async_to_sync(self.service.create)(payload)
 
+    # Access rules are now read before the transactional body starts, so the roles
+    # query is paid even when the operation is rejected further down. Only the
+    # rejection paths are affected: the last case fails after the rules were read
+    # anyway, and every success count is unchanged.
     @parameterized.expand(
         [
-            ([{"username": "Tintin"}], 4),  # username already exists
+            ([{"username": "Tintin"}], 5),  # username already exists
             (
                 [{"username": "newuser", "email": "not-an-email"}],
-                3,
+                4,
             ),  # invalid email
             (
                 [{"username": "haddock", "roles": ["NOT_EXISTING"]}],
-                4,
+                5,
             ),  # role does not exist
             (
                 [{"username": "haddock", "roles": ["CAT1_TEST2", "CAT1_TEST1"]}],
@@ -90,7 +94,7 @@ class TestUserService(TestCase):
     def test_create_invalid(self, payload, query_count):
         with self.assertNumQueries(query_count):
             with self.assertRaises(ServiceValidationMultiError):
-                self.service.create(payload)
+                async_to_sync(self.service.create)(payload)
 
     # ------------------------------------------
     # Tests Read
@@ -149,7 +153,7 @@ class TestUserService(TestCase):
     )
     def test_update_valid(self, filters, data, query_count, affected_row):
         with self.assertNumQueries(query_count):
-            count, queryset = self.service.update(filters, data)
+            count, queryset = async_to_sync(self.service.update)(filters, data)
             self.assertEqual(count, affected_row)
 
     @parameterized.expand(
@@ -174,7 +178,7 @@ class TestUserService(TestCase):
     def test_update_invalid(self, filters, data, query_count):
         with self.assertNumQueries(query_count):
             with self.assertRaises(ServiceValidationMultiError):
-                self.service.update(filters, data)
+                async_to_sync(self.service.update)(filters, data)
 
     # ------------------------------------------
     # Tests Delete
@@ -198,5 +202,5 @@ class TestUserService(TestCase):
     )
     def test_delete_valid(self, filters, query_count, affected_row):
         with self.assertNumQueries(query_count):
-            count = self.service.delete(filters)
+            count = async_to_sync(self.service.delete)(filters)
             self.assertEqual(count, affected_row)
