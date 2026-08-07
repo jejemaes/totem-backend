@@ -27,7 +27,6 @@ class UserRoleController(
 ):
     api = api_v1
     model = UserRole
-    service_name = "user.UserRole"
 
     path_prefix = "/user-roles/"
     auth = [OAuthTokenAuthentication()]

@@ -17,18 +17,7 @@ from .exceptions import ServiceValidationError, ServiceValidationMultiError
 
 
 class ModelServiceMeta(ServiceMeta):
-    def __new__(cls, name, bases, namespace):
-
-        # Allow `name` to be set explicitly in the service definition
-        model_class = namespace.get("model", None)
-        if namespace.get("name", None) is None and model_class is not None:
-            if issubclass(model_class, models.Model):
-                namespace["name"] = model_class._meta.label  # app.model_name
-            else:
-                namespace["name"] = "__unknown__"
-
-        new_class = super().__new__(cls, name, bases, namespace)
-        return new_class
+    pass
 
 
 class ModelService(Service, metaclass=ModelServiceMeta):
@@ -332,7 +321,11 @@ class ModelService(Service, metaclass=ModelServiceMeta):
     # -----------------------------------------------------------------
 
     async def apply_access_rules(self, queryset: models.QuerySet, operation: str):
-        context = AccessContext(user=self.env.user)
+        # Roles come from the environment, which fetches them at most once per unit
+        # of work: rules are applied on every operation, and once relations are
+        # resolved through the related service each relation would otherwise cost
+        # an extra role query.
+        context = AccessContext(user=self.env.user, roles=await self.env.get_access_roles())
         return await apply_access_rules(queryset, operation, context)
 
     def to_internal_values(

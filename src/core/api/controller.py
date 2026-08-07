@@ -99,7 +99,6 @@ class BaseModelController(BaseController):
 
     model: Model = None
     path_model = None
-    service_name: str = None
 
     # Route Helpers
 
@@ -291,7 +290,7 @@ class ListModelControllerMixin:
         ordering_parameters = kwargs.pop("ordering_fields", None)
         if ordering_parameters:
             ordering_fields = ordering_parameters.ordering
-        return await request.env[self.service_name].read(
+        return await request.env[self.model].read(
             query_parameters, ordering=ordering_fields
         )
 
@@ -353,7 +352,7 @@ class RetrieveModelControllerMixin:
         request: HttpRequest,
         path_parameters: t.Optional[BaseModel],
     ) -> Model:
-        queryset = await request.env[self.service_name].read(
+        queryset = await request.env[self.model].read(
             filters=path_parameters.model_dump() if path_parameters else None,
             fields=self._retrieve_orm_fields(),
         )
@@ -413,7 +412,7 @@ class CreateModelControllerMixin:
         request_body: BaseModel,
     ) -> Model:
         try:
-            instances = request.env[self.service_name].create(
+            instances = request.env[self.model].create(
                 [model_instance_to_dict(request_body, exclude_unset=False)]
             )
             return instances[0] if instances else None
@@ -471,7 +470,7 @@ class UpdateModelControllerMixin:
     ) -> Model:
         try:
             filters = path_parameters.model_dump() if path_parameters else {}
-            count, queryset = request.env[self.service_name].update(
+            count, queryset = request.env[self.model].update(
                 filters, model_instance_to_dict(request_body, exclude_unset=True)
             )
             if count == 0:
@@ -528,7 +527,7 @@ class DeleteModelControllerMixin:
         path_parameters: t.Optional[BaseModel],
     ) -> None:
         filters = path_parameters.model_dump() if path_parameters else {}
-        count = request.env[self.service_name].delete(filters)
+        count = request.env[self.model].delete(filters)
         if count == 0:
             raise HttpError(
                 status_code=404,

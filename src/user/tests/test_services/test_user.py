@@ -8,6 +8,7 @@ from core.services import Environment
 from core.services.exceptions import ServiceValidationMultiError
 from user import choices
 from user.models import User, UserRole
+from user.services import UserService
 
 USER_ID1 = "14041cce-8719-4637-92b1-51c4ade4b643"
 USER_ID2 = "1fea2c88-abd2-4144-a71b-368b45671231"
@@ -37,8 +38,12 @@ class TestUserService(TestCase):
         )
         cls.user2.roles.set([cls.role1, cls.role3])
 
-        cls.env = Environment(user=cls.user, language="en-us")
-        cls.service_name = "user.User"
+    def setUp(self):
+        super().setUp()
+        # A fresh environment per test: it memoizes the acting user's roles, so
+        # sharing one across tests would carry a stale access cache over.
+        self.env = Environment(user=self.user, language="en-us")
+        self.service = self.env.get(UserService)
 
     # ------------------------------------------
     # Tests Create
@@ -63,7 +68,7 @@ class TestUserService(TestCase):
     )
     def test_create_valid(self, payload, query_count):
         with self.assertNumQueries(query_count):
-            self.env[self.service_name].create(payload)
+            self.service.create(payload)
 
     @parameterized.expand(
         [
@@ -85,7 +90,7 @@ class TestUserService(TestCase):
     def test_create_invalid(self, payload, query_count):
         with self.assertNumQueries(query_count):
             with self.assertRaises(ServiceValidationMultiError):
-                self.env[self.service_name].create(payload)
+                self.service.create(payload)
 
     # ------------------------------------------
     # Tests Read
@@ -116,7 +121,7 @@ class TestUserService(TestCase):
     )
     def test_read_valid(self, filters, fields, query_count, expected_count):
         with self.assertNumQueries(query_count):
-            qs = async_to_sync(self.env[self.service_name].read)(filters, fields=fields)
+            qs = async_to_sync(self.service.read)(filters, fields=fields)
             self.assertEqual(qs.count(), expected_count)
 
     # ------------------------------------------
@@ -144,7 +149,7 @@ class TestUserService(TestCase):
     )
     def test_update_valid(self, filters, data, query_count, affected_row):
         with self.assertNumQueries(query_count):
-            count, queryset = self.env[self.service_name].update(filters, data)
+            count, queryset = self.service.update(filters, data)
             self.assertEqual(count, affected_row)
 
     @parameterized.expand(
@@ -169,7 +174,7 @@ class TestUserService(TestCase):
     def test_update_invalid(self, filters, data, query_count):
         with self.assertNumQueries(query_count):
             with self.assertRaises(ServiceValidationMultiError):
-                self.env[self.service_name].update(filters, data)
+                self.service.update(filters, data)
 
     # ------------------------------------------
     # Tests Delete
@@ -193,5 +198,5 @@ class TestUserService(TestCase):
     )
     def test_delete_valid(self, filters, query_count, affected_row):
         with self.assertNumQueries(query_count):
-            count = self.env[self.service_name].delete(filters)
+            count = self.service.delete(filters)
             self.assertEqual(count, affected_row)

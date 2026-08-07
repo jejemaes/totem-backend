@@ -17,6 +17,9 @@ BASE_RULE_ID = '__base_rule__'
 
 class Context(BaseModel):
     user: Optional[User] = None
+    # Roles of `user`, when the caller already has them. `None` means "not
+    # provided, fetch them"; an empty list means "this user has no role".
+    roles: Optional[list] = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -152,9 +155,11 @@ async def apply_access_rules(queryset: models.QuerySet, operation: str, context:
         :param action: operation (string) to check
     """
     # Extract role of current context (API token ignores role rules)
-    roles = []
-    if context.user:
-        roles = [userrole async for userrole in context.user.roles.all()]
+    roles = context.roles
+    if roles is None:
+        roles = []
+        if context.user:
+            roles = [userrole async for userrole in context.user.roles.all()]
 
     rule_groups = []
     for role in roles:

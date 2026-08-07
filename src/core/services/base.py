@@ -1,5 +1,6 @@
 import functools
 import typing
+
 from .registry import ServiceRegistry
 
 if typing.TYPE_CHECKING:
@@ -9,32 +10,24 @@ if typing.TYPE_CHECKING:
 class ServiceMeta(type):
     def __new__(cls, name, bases, namespace):
         new_class = super().__new__(cls, name, bases, namespace)
-        if new_class.name != "__unknown__":
-            ServiceRegistry.register(new_class)
+        # `register` ignores services without a model: the registry is keyed by
+        # model class, so only model-bound services are addressable.
+        ServiceRegistry.register(new_class)
         return new_class
 
 
 class Service(metaclass=ServiceMeta):
 
-    name = "__unknown__"
+    model = None
 
-    def __init__(self, env: "Environment", args: tuple, kwargs: dict):
+    def __init__(self, env: "Environment"):
         self.env = env
-        self.args = args
-        self.kwargs = kwargs
 
     def with_context(self, **kwargs) -> "Service":
-        """Return a new service instance with the given context values updated."""
-        context = self.env.context.copy()
+        """Return the same service on a new environment with the given context values updated."""
+        context = dict(self.env.context)
         context.update(kwargs)
-
-        new_env = self.env(
-            user=self.env.user,
-            language=self.env.language,
-            tz=self.env.tz,
-            context=context,
-        )
-        return self.__class__(new_env, self.args, self.kwargs)
+        return self.env(context=context).get(self.__class__)
 
     @functools.cached_property
     def user(self):
