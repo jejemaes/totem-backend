@@ -122,8 +122,8 @@ class TestUserService(TestCase):
             ),  # username already exists
             (
                 {"username": "haddock", "email": "haddock@lune.com", "roles": ["NOT_EXISTING"]},
-                5,
-            ),  # role does not exist
+                2,
+            ),  # role does not exist: rejected before any transaction is opened
             (
                 {
                     "username": "haddock",
@@ -221,8 +221,8 @@ class TestUserService(TestCase):
             (
                 {"username": "Tintin"},
                 {"roles": ["NOT_EXISTING"]},
-                5,
-            ),  # role nonexistent
+                2,
+            ),  # role nonexistent: rejected before any transaction is opened
             (
                 {"username": "Tintin"},
                 {"roles": ["CAT1_TEST2", "CAT1_TEST1"]},

@@ -42,6 +42,15 @@ class ServiceValidationError(Exception):
         return self._message_dict
 
 
+class RelationNotFound(ServiceValidationError):
+    """A relation value does not exist, or is not visible to the acting user.
+
+    Deliberately does not distinguish the two, and its message must not either:
+    telling them apart would leak the existence of records outside the caller's
+    scope. Being a `ServiceValidationError` it aggregates like any field error.
+    """
+
+
 class ServiceValidationMultiError(Exception):
     def __init__(self, errors: t.Dict[t.Union[str, int], t.Union[t.List[str], ServiceValidationError]], code: t.Optional[str]=None):
         super().__init__(errors, code)

@@ -9,7 +9,11 @@ from pydantic import BaseModel
 
 from user.access_policy import Context as AccessContext, apply_access_rules
 
-from .exceptions import ServiceValidationError, ServiceValidationMultiError
+from .exceptions import (
+    RelationNotFound,
+    ServiceValidationError,
+    ServiceValidationMultiError,
+)
 from .generics import check_concrete, generic_args_for
 from .registry import ServiceRegistry
 
@@ -147,7 +151,39 @@ class ServiceBase(Service, t.Generic[ModelT]):
         context = AccessContext(user=self.env.user, roles=await self.env.get_access_roles())
         return await apply_access_rules(queryset, operation, context)
 
-    def to_internal_values(
+    async def _resolve_relation(self, field, values: t.Iterable) -> t.Dict:
+        """Map each given value to its related instance, honouring access rules.
+
+        Goes through the related model's *service* rather than its manager, which is
+        what turns the check from "this pk exists" into "this pk exists and the
+        acting user may see it". A value that is unknown, ill-typed, or simply out of
+        the user's scope is absent from the result, and the caller reports all three
+        the same way -- distinguishing them would leak existence.
+
+        Raises if the related model has no service: that is a configuration error,
+        and silently falling back to the manager would resolve relations with no
+        access rules at all, which is exactly the hole this closes.
+        """
+        related_model = field.related_model
+        service = self.env[related_model]
+
+        # The generated input schemas type m2m pks as `str` regardless of the real
+        # field, so coerce before comparing -- otherwise a UUID pk would never match.
+        pk_field = related_model._meta.pk
+        coerced = {}
+        for value in values:
+            try:
+                coerced[value] = pk_field.to_python(value)
+            except exceptions.ValidationError:
+                continue  # ill-typed: reported like any unknown value
+
+        instances = await service.browse(coerced.values())
+        by_pk = {instance.pk: instance async for instance in instances}
+        return {
+            value: by_pk[pk] for value, pk in coerced.items() if pk in by_pk
+        }
+
+    async def to_internal_values(
         self, data: t.List[BaseModel], exclude_unset: bool = False
     ) -> t.List[t.Dict]:
         # convert input in list of dict
@@ -200,26 +236,16 @@ class ServiceBase(Service, t.Generic[ModelT]):
                 many_to_many.setdefault(m2m_fname, set())
                 many_to_many[m2m_fname] |= set(item.get(m2m_fname) or [])
 
-        # fetch relations to minimize the number of queries.
-        # TODO (step 5): go through `env[related_model].browse()` so that relations
-        # are resolved with the acting user's access rules instead of bypassing them.
+        # Resolve relations through their own service, one query per field.
         many_to_many_instances = {}
         for fname, values in many_to_many.items():
             field = self.model._meta.get_field(fname)
-            related_model = field.related_model
-            related_instances = related_model.objects.filter(pk__in=values)
-            many_to_many_instances[fname] = {
-                instance.pk: instance for instance in related_instances
-            }
+            many_to_many_instances[fname] = await self._resolve_relation(field, values)
 
         foreign_key_instances = {}
         for fname, values in foreign_key.items():
             field = self.model._meta.get_field(fname)
-            related_model = field.related_model
-            related_instances = related_model.objects.filter(pk__in=values)
-            foreign_key_instances[fname] = {
-                instance.pk: instance for instance in related_instances
-            }
+            foreign_key_instances[fname] = await self._resolve_relation(field, values)
 
         # convert data to internal values, replacing relational fields values with the corresponding instances.
         result = []
@@ -244,14 +270,17 @@ class ServiceBase(Service, t.Generic[ModelT]):
                     values[fname] = valid_values
 
                     if invalid_values:
-                        suberror.add_message(
-                            f"Invalid value(s) for field '{fname}': {','.join(invalid_values)}",
+                        # Same wording whether the value is unknown, ill-typed or
+                        # merely out of the user's scope: see `RelationNotFound`.
+                        suberror = RelationNotFound(
+                            f"Invalid value(s) for field '{fname}': "
+                            f"{','.join(str(v) for v in invalid_values)}",
                             key=fname,
                         )
 
                 elif fname in foreign_key_instances:
                     if fval not in foreign_key_instances[fname]:
-                        suberror.add_message(
+                        suberror = RelationNotFound(
                             f"Invalid value for field '{fname}': {fval}",
                             key=fname,
                         )

@@ -56,20 +56,22 @@ class CreateMixin(t.Generic[CreateT]):
             self._input_values(item, self.create_schema, exclude_unset=False)
             for item in data
         ]
+        # Relations are resolved here, in the async phase, because they go through the
+        # related services. Reads before the transaction, writes inside it.
+        internal_data = await self.to_internal_values(values)
         scoped_queryset = await self.apply_access_rules(self.get_queryset(), "create")
         return await sync_to_async(self._create_atomic, thread_sensitive=True)(
-            values, scoped_queryset
+            internal_data, scoped_queryset
         )
 
     def _create_atomic(
-        self, data: t.List[dict], scoped_queryset: models.QuerySet
+        self, internal_data: t.List[dict], scoped_queryset: models.QuerySet
     ) -> t.List[models.Model]:
         with transaction.atomic():
             queryset = self.get_queryset()
 
             # Validate data
             error = ServiceValidationMultiError({}, code="creation_invalid_data")
-            internal_data = self.to_internal_values(data)
             for index, internal_values in enumerate(internal_data):
                 try:
                     self.validate_data(internal_values, None)
@@ -220,13 +222,15 @@ class UpdateMixin(t.Generic[UpdateT]):
         effects of its own.
         """
         values = self._input_values(data, self.update_schema, exclude_unset=True)
+        # Relations are resolved here, in the async phase: see `create`.
+        internal_values = (await self.to_internal_values([values]))[0]
         scoped_queryset = await self.apply_access_rules(self.get_queryset(), "update")
         return await sync_to_async(self._update_atomic, thread_sensitive=True)(
-            scoped_queryset, filters, values
+            scoped_queryset, filters, internal_values
         )
 
     def _update_atomic(
-        self, scoped_queryset: models.QuerySet, filters: BaseModel, data: dict
+        self, scoped_queryset: models.QuerySet, filters: BaseModel, internal_values: dict
     ) -> t.Tuple[int, models.QuerySet]:
         pks = []
         with transaction.atomic():
@@ -236,8 +240,6 @@ class UpdateMixin(t.Generic[UpdateT]):
             if filters:
                 queryset = self._apply_filters(queryset, filters)
 
-            # Preprocess data
-            internal_values = self.to_internal_values([data])[0]
             update_fields = set(internal_values.keys())
 
             # Preprocess queryset to optimize which field to fetch
