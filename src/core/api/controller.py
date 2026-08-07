@@ -19,7 +19,6 @@ from core.orm.queryset import queryset_fetch_fields
 from core.schemas.utils import (
     extract_orm_fields_from_specs,
     extract_orm_fields_map,
-    model_instance_to_dict,
     schema_to_orm_fields,
 )
 from core.services import (
@@ -415,12 +414,13 @@ class CreateModelControllerMixin:
         request_body: BaseModel,
     ) -> Model:
         try:
+            # The body ninja already validated is passed straight through: it is the
+            # service's input schema, so there is nothing to convert and nothing to
+            # validate twice.
             # No refetch needed to serialize: the instance is built in memory with
             # every concrete field, and the service primes the m2m prefetch cache
             # for all relations, empty ones included.
-            instances = await request.env[self.model].create(
-                [model_instance_to_dict(request_body, exclude_unset=False)]
-            )
+            instances = await request.env[self.model].create([request_body])
             return instances[0] if instances else None
         except ServiceValidationMultiError as exc:
             raise self.service_validation_error_to_api_error(
@@ -477,7 +477,7 @@ class UpdateModelControllerMixin:
         try:
             filters = path_parameters.model_dump() if path_parameters else {}
             count, queryset = await request.env[self.model].update(
-                filters, model_instance_to_dict(request_body, exclude_unset=True)
+                filters, request_body
             )
             if count == 0:
                 raise HttpError(

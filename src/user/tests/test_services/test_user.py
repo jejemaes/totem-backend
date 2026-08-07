@@ -1,13 +1,12 @@
-from unittest.mock import patch
-
 from asgiref.sync import async_to_sync
 from django.test import TestCase
 from parameterized import parameterized
+from pydantic import ValidationError as PydanticValidationError
 
 from core.services import Environment
 from core.services.exceptions import ServiceValidationMultiError
-from user import choices
 from user.models import User, UserRole
+from user.schemas import UserCreateSchema, UserUpdateSchema
 from user.services import UserService
 
 USER_ID1 = "14041cce-8719-4637-92b1-51c4ade4b643"
@@ -46,55 +45,100 @@ class TestUserService(TestCase):
         self.service = self.env.get(UserService)
 
     # ------------------------------------------
+    # Tests Input Contract
+    # ------------------------------------------
+
+    def test_create_refuses_a_raw_dict(self):
+        """Levels 1 and 2 are guaranteed by building the schema, so a dict has no
+        guarantee attached and is rejected before any query."""
+        with self.assertNumQueries(0):
+            with self.assertRaises(TypeError):
+                async_to_sync(self.service.create)([{"username": "haddock"}])
+
+    def test_update_refuses_a_raw_dict(self):
+        with self.assertNumQueries(0):
+            with self.assertRaises(TypeError):
+                async_to_sync(self.service.update)({"id": USER_ID1}, {"email": "a@b.com"})
+
+    @parameterized.expand(
+        [
+            ("email", {"username": "x", "email": "not-an-email", "roles": []}),
+            ("user_type", {"username": "x", "email": "x@y.com", "roles": [], "user_type": "not-a-choice"}),
+            ("missing email", {"username": "x", "roles": []}),
+        ]
+    )
+    def test_invalid_field_is_rejected_when_building_the_schema(self, dummy, payload):
+        """Field-level validation happens at construction, not in the service.
+
+        Types, `choices` (converted to an Enum) and required-ness are covered there,
+        for every caller and not only the HTTP one. The service never sees the value.
+        """
+        with self.assertNumQueries(0):
+            with self.assertRaises(PydanticValidationError):
+                UserCreateSchema(**payload)
+
+    # ------------------------------------------
     # Tests Create
     # ------------------------------------------
 
     @parameterized.expand(
         [
-            ([{"username": "haddock"}], 5),
-            ([{"username": "haddock", "roles": ["CAT1_TEST1"]}], 9),
-            ([{"username": "haddock", "roles": ["CAT1_TEST2", "CAT2_TEST1"]}], 9),
+            ({"username": "haddock", "email": "haddock@lune.com", "roles": []}, 5),
             (
-                [
-                    {
-                        "username": "haddock",
-                        "email": "haddock@moulinsart.com",
-                        "roles": ["CAT1_TEST2"],
-                    }
-                ],
+                {"username": "haddock", "email": "haddock@lune.com", "roles": ["CAT1_TEST1"]},
+                9,
+            ),
+            (
+                {
+                    "username": "haddock",
+                    "email": "haddock@lune.com",
+                    "roles": ["CAT1_TEST2", "CAT2_TEST1"],
+                },
+                9,
+            ),
+            (
+                {
+                    "username": "haddock",
+                    "email": "haddock@moulinsart.com",
+                    "roles": ["CAT1_TEST2"],
+                },
                 9,
             ),
         ]
     )
     def test_create_valid(self, payload, query_count):
+        data = UserCreateSchema(**payload)
         with self.assertNumQueries(query_count):
-            async_to_sync(self.service.create)(payload)
+            async_to_sync(self.service.create)([data])
 
-    # Access rules are now read before the transactional body starts, so the roles
-    # query is paid even when the operation is rejected further down. Only the
-    # rejection paths are affected: the last case fails after the rules were read
-    # anyway, and every success count is unchanged.
+    # Access rules are read before the transactional body starts, so the roles query
+    # is paid even when the operation is rejected further down. Only rejection paths
+    # are affected; success counts above are unchanged.
     @parameterized.expand(
         [
-            ([{"username": "Tintin"}], 5),  # username already exists
             (
-                [{"username": "newuser", "email": "not-an-email"}],
-                4,
-            ),  # invalid email
+                {"username": "Tintin", "email": "tintin2@moulinsart.com", "roles": []},
+                5,
+            ),  # username already exists
             (
-                [{"username": "haddock", "roles": ["NOT_EXISTING"]}],
+                {"username": "haddock", "email": "haddock@lune.com", "roles": ["NOT_EXISTING"]},
                 5,
             ),  # role does not exist
             (
-                [{"username": "haddock", "roles": ["CAT1_TEST2", "CAT1_TEST1"]}],
+                {
+                    "username": "haddock",
+                    "email": "haddock@lune.com",
+                    "roles": ["CAT1_TEST2", "CAT1_TEST1"],
+                },
                 9,
             ),  # can not have both roles at the same time
         ]
     )
     def test_create_invalid(self, payload, query_count):
+        data = UserCreateSchema(**payload)
         with self.assertNumQueries(query_count):
             with self.assertRaises(ServiceValidationMultiError):
-                async_to_sync(self.service.create)(payload)
+                async_to_sync(self.service.create)([data])
 
     # ------------------------------------------
     # Tests Read
@@ -151,18 +195,29 @@ class TestUserService(TestCase):
             ),
         ]
     )
-    def test_update_valid(self, filters, data, query_count, affected_row):
+    def test_update_valid(self, filters, payload, query_count, affected_row):
+        data = UserUpdateSchema(**payload)
         with self.assertNumQueries(query_count):
             count, queryset = async_to_sync(self.service.update)(filters, data)
             self.assertEqual(count, affected_row)
 
+    def test_update_only_writes_the_fields_that_were_set(self):
+        """`exclude_unset` is what keeps a partial update partial.
+
+        It matters beyond query counts: `UserQuerySet.update` emits
+        `user_change_rights` when `user_type` is in the payload, which invalidates the
+        user's tokens.
+        """
+        data = UserUpdateSchema(email="tintin2@moulinsart.com")
+
+        values = self.service._input_values(
+            data, UserUpdateSchema, exclude_unset=True
+        )
+
+        self.assertEqual(values, {"email": "tintin2@moulinsart.com"})
+
     @parameterized.expand(
         [
-            (
-                {"username": "Tintin"},
-                {"email": "not-an-email"},
-                4,
-            ),  # email invalid
             (
                 {"username": "Tintin"},
                 {"roles": ["NOT_EXISTING"]},
@@ -175,7 +230,8 @@ class TestUserService(TestCase):
             ),  # incompatible roles
         ]
     )
-    def test_update_invalid(self, filters, data, query_count):
+    def test_update_invalid(self, filters, payload, query_count):
+        data = UserUpdateSchema(**payload)
         with self.assertNumQueries(query_count):
             with self.assertRaises(ServiceValidationMultiError):
                 async_to_sync(self.service.update)(filters, data)

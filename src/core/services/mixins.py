@@ -3,11 +3,11 @@
 The public surface is async, but every write runs its transactional body in a
 single sync hop. `transaction.atomic` cannot be entered from a coroutine under
 Django 5.0 (`connect`, `cursor`, `commit`, `savepoint` are all `@async_unsafe`,
-and there is no `aatomic`), and the write path sends `user_change_rights`, whose
-receivers query the database synchronously. So each write reads what it needs in
-the async phase -- access rules, and later relation resolution -- then hands a
-plain sync body to `sync_to_async`. One boundary per unit of work, and
-`transaction.atomic` keeps working unchanged inside it.
+and there is no `aatomic`), and writes emit django signals whose receivers query
+the database synchronously. So each write reads what it needs in the async phase
+-- access rules, and later relation resolution -- then hands a plain sync body to
+`sync_to_async`. One boundary per unit of work, and `transaction.atomic` keeps
+working unchanged inside it.
 
 `thread_sensitive=True` is required: it keeps the body on the calling thread, so
 it shares the connection and the enclosing test transaction, which is also what
@@ -46,10 +46,19 @@ class CreateMixin(t.Generic[CreateT]):
         # An explicit declaration on the subclass wins over the deduced one.
         cls.create_schema = cls.__dict__.get("create_schema") or args[0]
 
-    async def create(self, data: t.List[dict]) -> t.List[models.Model]:
+    async def create(self, data: t.List[CreateT]) -> t.List[models.Model]:
+        """Create one record per given input schema.
+
+        Inputs must be `create_schema` instances, not dicts: see `_input_values`.
+        Converting first means a wrong input type costs no query.
+        """
+        values = [
+            self._input_values(item, self.create_schema, exclude_unset=False)
+            for item in data
+        ]
         scoped_queryset = await self.apply_access_rules(self.get_queryset(), "create")
         return await sync_to_async(self._create_atomic, thread_sensitive=True)(
-            data, scoped_queryset
+            values, scoped_queryset
         )
 
     def _create_atomic(
@@ -200,17 +209,20 @@ class UpdateMixin(t.Generic[UpdateT]):
         cls.update_schema = cls.__dict__.get("update_schema") or args[0]
 
     async def update(
-        self, filters: BaseModel, data: dict
+        self, filters: BaseModel, data: UpdateT
     ) -> t.Tuple[int, models.QuerySet]:
         """ Update every record matching `filters` with the same data.
 
-        Only the keys present in `data` are written. That matters beyond query
-        counts: `UserQuerySet.update` emits `user_change_rights` when `user_type` is
-        part of the payload, which invalidates the user's tokens.
+        `data` must be an `update_schema` instance, not a dict: see `_input_values`.
+        Only the fields actually set on it are written. That matters beyond query
+        counts: a queryset override may react to the mere *presence* of a field in
+        the payload, so writing a field nobody asked to change can trigger side
+        effects of its own.
         """
+        values = self._input_values(data, self.update_schema, exclude_unset=True)
         scoped_queryset = await self.apply_access_rules(self.get_queryset(), "update")
         return await sync_to_async(self._update_atomic, thread_sensitive=True)(
-            scoped_queryset, filters, data
+            scoped_queryset, filters, values
         )
 
     def _update_atomic(

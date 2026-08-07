@@ -13,8 +13,9 @@ import typing as t
 def generic_args_for(cls: type, origin: type) -> t.Optional[t.Tuple]:
     """Return the arguments `cls` passed to the generic `origin`, or None.
 
-    Walks the MRO so intermediate inheritance keeps working: `StaffService(UserService)`
-    carries no `origin[...]` of its own, the parametrization lives on `UserService`.
+    Walks the MRO so intermediate inheritance keeps working: a subclass that
+    subscripts nothing itself carries no `origin[...]` of its own, the
+    parametrization lives on one of its ancestors.
     """
     for klass in cls.__mro__:
         # Read `__orig_bases__` from `__dict__` rather than with `getattr`: the

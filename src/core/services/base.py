@@ -56,7 +56,7 @@ class ServiceBase(Service, t.Generic[ModelT]):
     Owns `ModelT`, because the model is a property of the *service*, not of any
     single operation: each operation mixin owns only its own schema. Declare a
     concrete service as
-    `class UserService(CreateMixin[UserCreateSchema], ReadMixin, ServiceBase[User])`.
+    `class MyService(CreateMixin[MyCreateSchema], ReadMixin, ServiceBase[MyModel])`.
 
     Operation mixins call `get_queryset`, `apply_access_rules`, `to_internal_values`,
     `validate_data` and `_database_error_to_validation_error` from here, so they are
@@ -112,6 +112,32 @@ class ServiceBase(Service, t.Generic[ModelT]):
     # -----------------------------------------------------------------
     # Utils
     # -----------------------------------------------------------------
+
+    def _input_values(
+        self, data: BaseModel, schema: t.Type[BaseModel], exclude_unset: bool
+    ) -> t.Dict:
+        """Turn a validated input schema into a dict of ORM values.
+
+        Raw dicts are refused. Levels 1 and 2 -- types, coercion, `choices`, lengths,
+        validators -- are guaranteed by *building* the schema, so accepting a dict
+        here would reopen the hole this layer exists to close, and it would only be
+        closed on the HTTP path where ninja happens to validate first.
+
+        Values are extracted according to the *service's* declared schema, never
+        `type(data)`. A caller may legitimately hold a narrower schema over the same
+        model -- `profile_update` passes a profile schema to `update` -- and a field
+        the service does not accept must not slip through because the caller's schema
+        happened to carry it.
+        """
+        if not isinstance(data, BaseModel):
+            raise TypeError(
+                f"{type(self).__name__} expects a {schema.__name__} instance, "
+                f"got {type(data).__name__}. Build the schema so its validation runs."
+            )
+
+        declared = schema.model_fields.keys()
+        names = (data.model_fields_set & declared) if exclude_unset else declared
+        return {name: getattr(data, name) for name in names if hasattr(data, name)}
 
     async def apply_access_rules(self, queryset: models.QuerySet, operation: str):
         # Roles come from the environment, which fetches them at most once per unit
