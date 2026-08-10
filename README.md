@@ -1,4 +1,7 @@
 # totem
+
+[![Tests](https://github.com/jejemaes/totem-backend/actions/workflows/tests.yml/badge.svg)](https://github.com/jejemaes/totem-backend/actions/workflows/tests.yml)
+
 Backend for website and API of a plateform to manage scout groups.
 
 ### Tests
