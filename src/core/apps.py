@@ -29,3 +29,9 @@ class CoreConfig(AppConfig):
         from .services.registry import ServiceRegistry
 
         ServiceRegistry.validate()
+
+        # Same idea one layer up: every controller schema must be consistent with
+        # its service, and public renames must sit on the right side of the wire.
+        from .api.validation import validate_controllers
+
+        validate_controllers()
