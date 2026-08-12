@@ -39,7 +39,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         cls.url_detail = f"/api/v1/users/{USER_ID2}/"
         cls.url_profile = "/api/v1/users/me/"
         cls.payload_create = {
-            "username": "pipin",
+            "login": "pipin",
             "email": "pipin@lacomte.com",
             "last_name": "Pipin",
             "first_name": "A Hobbit",
@@ -49,7 +49,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             "roles": [],
         }
         cls.payload_update = {
-            "username": "pipin",
+            "login": "pipin",
             "email": "pipin@lacomte.com",
             "last_name": "Pipin",
             "first_name": "A Hobbit",
@@ -83,7 +83,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                 obj,
                 [
                     "id",
-                    "username",
+                    "login",
                     "email",
                     "first_name",
                     "last_name",
@@ -97,7 +97,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
 
     @parameterized.expand(
         [
-            ({"username": "elfe"}, [USER_ID4]),
+            ({"login": "elfe"}, [USER_ID4]),
             ({"email": "lacomte"}, [USER_ID1, USER_ID3]),
             ({"is_active": True}, [USER_ID1, USER_ID2, USER_ID3]),
             ({"is_active": False}, [USER_ID4]),
@@ -126,7 +126,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                 obj,
                 [
                     "id",
-                    "username",
+                    "login",
                     "email",
                     "first_name",
                     "last_name",
@@ -152,8 +152,8 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
     @parameterized.expand(
         [
             ([], ["username", "id"]),  # default
-            (["username"], ["username", "id"]),
-            (["-username"], ["-username", "id"]),
+            (["login"], ["username", "id"]),
+            (["-login"], ["-username", "id"]),
             (["email"], ["email", "id"]),
             (["-email"], ["-email", "id"]),
             (["is_active"], ["is_active", "id"]),
@@ -186,7 +186,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                 [
                     "id",
                     "roles",
-                    "username",
+                    "login",
                     "last_name",
                     "first_name",
                     "email",
@@ -197,10 +197,10 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                 ],
                 5,
             ),  # default means all fields
-            (["username"], ["id", "username"], 4),
+            (["login"], ["id", "login"], 4),
             (
-                ["username", "email", "is_active"],
-                ["id", "username", "email", "is_active"],
+                ["login", "email", "is_active"],
+                ["id", "login", "email", "is_active"],
                 4,
             ),
             (["email", "roles"], ["id", "email", "roles"], 5),
@@ -238,7 +238,8 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         [
             (["not_existing_field"],),
             (["not_existing_field", "roles"],),  # with relation
-            (["not_existing_field", "username"],),
+            (["not_existing_field", "login"],),
+            (["username"],),  # the ORM name of an aliased field is not a public token
         ]
     )
     def test_list_invalid_query_fields(self, query_fields):
@@ -286,7 +287,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                 obj,
                 [
                     "id",
-                    "username",
+                    "login",
                     "email",
                     "first_name",
                     "last_name",
@@ -365,7 +366,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
 
     @parameterized.expand(
         [
-            ({"username": None}, 422),
+            ({"login": None}, 422),
             ({"email": None}, 422),
             ({"email": "not an email"}, 422),
             ({"user_type": None}, 422),
@@ -404,7 +405,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             obj,
             [
                 "id",
-                "username",
+                "login",
                 "email",
                 "first_name",
                 "last_name",
@@ -487,7 +488,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             obj,
             [
                 "id",
-                "username",
+                "login",
                 "email",
                 "first_name",
                 "last_name",
@@ -577,7 +578,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             self.user_access_token_frodon.user,
             [
                 "id",
-                "username",
+                "login",
                 "last_name",
                 "first_name",
                 "email",
@@ -619,7 +620,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         if not fields:
             fields = [
                 "id",
-                "username",
+                "login",
                 "email",
                 "first_name",
                 "last_name",
@@ -631,8 +632,9 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             ]
         if "id" in fields:
             self.assertEqual(api_data["id"], str(obj.id))
-        if "username" in fields:
-            self.assertEqual(api_data["username"], obj.username)
+        if "login" in fields:
+            # `username` is exposed as `login` on the whole user API
+            self.assertEqual(api_data["login"], obj.username)
         if "email" in fields:
             self.assertEqual(api_data["email"], obj.email)
         if "first_name" in fields:

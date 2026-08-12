@@ -19,7 +19,8 @@ from core.orm.queryset import queryset_fetch_fields
 from core.schemas.utils import (
     extract_orm_fields_from_specs,
     extract_orm_fields_map,
-    schema_to_orm_fields,
+    schema_orm_to_public_fields,
+    schema_public_to_orm_fields,
 )
 from core.services import (
     Environment,
@@ -182,8 +183,12 @@ class BaseModelController(BaseController):
         response_schema: BaseModel,
         loc_path: t.List[str] = ["body", "request_body"],
     ) -> ValidationError:
-        """Convert a ServiceValidationMultiError to a Ninja ValidationError, with error location mapped to the response schema fields."""
-        fields_map = schema_to_orm_fields(response_schema, self.model)
+        """Convert a ServiceValidationMultiError to a Ninja ValidationError, with error location mapped to the response schema fields.
+
+        The service reports errors under ORM field names; the `loc` must speak the
+        client's language, so each one is translated to its public name.
+        """
+        fields_map = schema_orm_to_public_fields(response_schema, self.model)
 
         result = []
         for key, error_dict in exc.dict().items():
@@ -246,7 +251,11 @@ class ListModelControllerMixin:
             decorators.append(
                 query_field(
                     cls.list_query_field_class,
-                    field_map=schema_to_orm_fields(cls.list_response_schema, cls.model),
+                    # public names are the accepted `?fields=` tokens, and
+                    # `MultiChoices` translates them back to ORM names for the queryset
+                    field_map=schema_public_to_orm_fields(
+                        cls.list_response_schema, cls.model
+                    ),
                     pass_parameter="query_fields",
                 )
             )
@@ -255,7 +264,7 @@ class ListModelControllerMixin:
                 ordering(
                     cls.list_ordering,
                     field_map=cls.get_ordering_fields_map(),
-                    default_ordering_fields=cls.list_ordering_default_fields,
+                    default_ordering_fields=cls.get_ordering_default_fields(),
                     pass_parameter="ordering_fields",
                     execute_ordering=False,  # disable automatic ordering execution to let the controller handle it in the list method
                 )
@@ -264,20 +273,38 @@ class ListModelControllerMixin:
 
     @classmethod
     def get_ordering_fields_map(cls):
-        response_schema_field_map = schema_to_orm_fields(
-            cls.list_response_schema, cls.model
-        )
+        """Maps every accepted public ordering token to the ORM field it orders by.
+
+        `list_ordering_fields` is declared with ORM field names (the internal
+        contract, like every schema field). The public token of a field renamed on
+        the response schema is its alias, so `?ordering=` speaks the same language
+        as the response body. `list_ordering_fields_alias` remains an explicit
+        `{token: orm_field}` override for tokens that no response field carries.
+        """
+        orm_to_public = schema_orm_to_public_fields(cls.list_response_schema, cls.model)
         field_map = {}
         for fname in cls.list_ordering_fields:
-            alias = None
             if fname in cls.list_ordering_fields_alias:
-                alias = cls.list_ordering_fields_alias[fname]
-            elif fname in response_schema_field_map:
-                alias = response_schema_field_map[fname]
+                field_map[fname] = cls.list_ordering_fields_alias[fname]
             else:
-                alias = fname  # supposed the ordering alias has the same name as the django model one
-            field_map[fname] = alias
+                field_map[orm_to_public.get(fname, fname)] = fname
         return field_map
+
+    @classmethod
+    def get_ordering_default_fields(cls):
+        """`list_ordering_default_fields` translated to public tokens.
+
+        Defaults are declared with ORM field names but go through the same
+        validation as a client-sent `?ordering=`, which only accepts public tokens.
+        """
+        orm_to_token = {orm: token for token, orm in cls.get_ordering_fields_map().items()}
+        default_fields = []
+        for fname in cls.list_ordering_default_fields:
+            descending = fname.startswith("-")
+            name = fname[1:] if descending else fname
+            token = orm_to_token.get(name, name)
+            default_fields.append(f"-{token}" if descending else token)
+        return default_fields
 
     @classmethod
     def _annotate_list_view_function(

@@ -75,8 +75,10 @@ class TestValidateDataHook(TestCase):
         return Environment(user=self.actor).get(UserService)
 
     def create(self):
+        # Built with the wire name (`login`); the service still reads ORM names,
+        # as the `data["username"]` assertions below demonstrate.
         data = UserCreateSchema(
-            username="haddock", email="haddock@moulinsart.com", roles=[]
+            login="haddock", email="haddock@moulinsart.com", roles=[]
         )
         return async_to_sync(self.service.create)([data])
 

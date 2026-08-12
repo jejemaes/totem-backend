@@ -9,15 +9,38 @@ from core.schemas.metaclass import ModelSchema
 from functools import lru_cache
 
 
-def schema_to_orm_fields(schema: ModelSchema, model_class: models.Model) -> t.List[str]:
+def _unwrap_list_schema(schema: t.Any) -> ModelSchema:
+    "Returns the inner schema of a `List[Schema]` annotation, or the schema itself."
     if hasattr(schema, "__origin__") and (
         schema.__origin__ is list or schema.__origin__ is t.List
     ):
-        schema = schema.__args__[0]
+        return schema.__args__[0]
+    return schema
 
+
+def schema_public_to_orm_fields(
+    schema: ModelSchema, model_class: models.Model
+) -> t.Dict[str, str]:
+    """Maps the public (JSON) name of every top-level schema field to its ORM field
+    name. This is the table translating what a client says (`?fields=login`) into
+    what the queryset understands (`username`)."""
+    schema = _unwrap_list_schema(schema)
     return {
-        fname: fspec["source"]
-        for fname, fspec in extract_orm_fields_map(schema, model_class).items()
+        fspec["public"]: fspec["source"]
+        for fspec in extract_orm_fields_map(schema, model_class).values()
+    }
+
+
+def schema_orm_to_public_fields(
+    schema: ModelSchema, model_class: models.Model
+) -> t.Dict[str, str]:
+    """Maps every top-level ORM field name to its public (JSON) name. This is the
+    table translating what the service reports (an error on `username`) into what
+    the client knows (`login`)."""
+    schema = _unwrap_list_schema(schema)
+    return {
+        fspec["source"]: fspec["public"]
+        for fspec in extract_orm_fields_map(schema, model_class).values()
     }
 
 
@@ -31,27 +54,33 @@ def extract_orm_fields_map(schema: ModelSchema, model_class: models.Model) -> t.
         model_class (models.Model): The Django model class associated with the schema.
 
     Returns:
-        Dict[str, Dict]: A dictionary pydantic schema field name to their corresponding ORM model
-        field names or nested dictionaries for related fields.
+        Dict[str, Dict]: A dictionary keyed by pydantic field name, mapping to the
+        corresponding ORM model field name (`source`), the JSON-facing name
+        (`public`), and nested dictionaries for related fields.
         Example:
         ```
         {
             "roles": {
                 "source": "roles",
+                "public": "roles",
                 "fields": {
                     "id": {
-                        "source": "id"
+                        "source": "id",
+                        "public": "id"
                     },
                     "name": {
-                        "source": "name"
+                        "source": "name",
+                        "public": "name"
                     }
                 }
             },
             "id": {
-                "source": "id"
+                "source": "id",
+                "public": "id"
             },
             "username": {
-                "source": "username"
+                "source": "username",
+                "public": "login"
             },
             ...
         }
@@ -63,22 +92,28 @@ def extract_orm_fields_map(schema: ModelSchema, model_class: models.Model) -> t.
 
     orm_fields = {}
     for field_name, field_info in schema.model_fields.items():
-        orm_fname = field_info.serialization_alias or field_name
-        if orm_fname not in model_fields_map:
+        # The pydantic field name IS the Django field name: the factory keys every
+        # generated field by the model field it comes from. A public rename only
+        # lives in the aliases -- `serialization_alias` carries the JSON-facing
+        # name -- never in the field name itself.
+        if field_name not in model_fields_map:
             continue
-        model_field = model_fields_map[orm_fname]
+        model_field = model_fields_map[field_name]
 
+        field_spec = {
+            "source": field_name,
+            "public": field_info.serialization_alias or field_name,
+        }
         if model_field.is_relation:
-            orm_fields[field_name] = {"source": orm_fname, "fields": {}}
+            field_spec["fields"] = {}
             # Add related fields for foreign keys, ManyToMany, and OneToOne relationships
             if hasattr(model_field, "related_model") and model_field.related_model:
                 related_model = model_field.related_model
                 for subschema in extract_schemas_from_annotation(field_info.annotation):
-                    orm_fields[orm_fname]["fields"].update(
+                    field_spec["fields"].update(
                         extract_orm_fields_map(subschema, related_model)
                     )
-        else:
-            orm_fields[field_name] = {"source": orm_fname}
+        orm_fields[field_name] = field_spec
     return orm_fields
 
 

@@ -11,6 +11,7 @@ from user.schemas import (
     UserCreateSchema,
     UserFilterSchema,
     UserProfileSchema,
+    UserProfileUpdateSchema,
     UserSchema,
     UserUpdateSchema,
 )
@@ -60,7 +61,7 @@ class UserController(TokenHasScopePermissionModelControllerMixin, ModelControlle
     @route.patch(
         "/me/", response=UserProfileSchema, permissions=[IsAuthenticated], tags=["User"]
     )
-    async def profile_update(self, request, body: UserProfileSchema):
+    async def profile_update(self, request, body: UserProfileUpdateSchema):
         path_parameters = ProfilePathParam(id=request.auth.user.pk)
         instance = await self.update(request, path_parameters, body)
         return instance
