@@ -5,6 +5,7 @@ from django.db.models import Field as DjangoField
 from django.db.models import ManyToManyRel, ManyToOneRel, Model
 from ninja.errors import ConfigError
 from ninja.schema import Schema
+from pydantic import AliasChoices
 from pydantic import create_model as create_pydantic_model
 
 from .fields import convert_db_field
@@ -37,7 +38,9 @@ class SchemaFactory:
         if fields and exclude:
             raise ConfigError("Only one of 'fields' or 'exclude' should be set.")
 
-        key = self.get_key(model, name, fields, exclude, optional_fields, custom_fields)
+        key = self.get_key(
+            model, name, fields, exclude, optional_fields, custom_fields, extra_fields_kwargs
+        )
         if key in self.schemas:
             return self.schemas[key]
 
@@ -49,12 +52,13 @@ class SchemaFactory:
         definitions = {}
         for fld in model_fields_list:
             extra_field_infos = extra_fields_kwargs.get(fld.name, {})
+            extra_kwargs = ExtraFieldInfos(**extra_field_infos).model_dump(
+                exclude_unset=True
+            )
             python_type, field_info = convert_db_field(
                 fld,
                 optional=optional_fields and (fld.name in optional_fields),
-                extra_kwargs=ExtraFieldInfos(**extra_field_infos).model_dump(
-                    exclude_unset=True
-                ),
+                extra_kwargs=self._expand_alias(fld, extra_kwargs),
             )
             definitions[fld.name] = (python_type, field_info)
 
@@ -87,6 +91,36 @@ class SchemaFactory:
         self.schema_names.add(name)
         return schema
 
+    @staticmethod
+    def _expand_alias(fld: DjangoField, extra_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Expand a public rename (`alias`) into the pydantic aliases a response
+        schema needs.
+
+        The serialization side takes the alias, so the field goes out under its
+        public name. The validation side must NOT be the alias alone: response
+        schemas are built from ORM instances and from ORM-keyed dicts (list route),
+        so the Django field name -- and the FK `attname`, since those dicts carry
+        `<fk>_id` -- stay accepted as fallbacks.
+
+        A request-body schema wanting a strict rename declares `validation_alias`
+        directly instead (see `ExtraFieldInfos`); it passes through untouched.
+        """
+        alias = extra_kwargs.pop("alias", None)
+        if not alias:
+            return extra_kwargs
+        if "validation_alias" in extra_kwargs:
+            raise ConfigError(
+                f"Field {fld.name!r}: 'alias' and 'validation_alias' are exclusive. "
+                "Use 'alias' on a response schema, 'validation_alias' on a request one."
+            )
+        choices = [alias, fld.name]
+        attname = getattr(fld, "attname", fld.name)
+        if attname != fld.name:
+            choices.append(attname)
+        extra_kwargs["serialization_alias"] = alias
+        extra_kwargs["validation_alias"] = AliasChoices(*choices)
+        return extra_kwargs
+
     def get_key(
         self,
         model: Type[Model],
@@ -95,6 +129,7 @@ class SchemaFactory:
         exclude: Optional[List[str]],
         optional_fields: Optional[Union[List[str], str]],
         custom_fields: Optional[List[Tuple[str, str, Any]]],
+        extra_fields_kwargs: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> SchemaKey:
         "returns a hashable value for all given parameters"
         # TODO: must be a test that compares all kwargs from init to get_key
@@ -105,6 +140,7 @@ class SchemaFactory:
             str(exclude),
             str(optional_fields),
             str(custom_fields),
+            str(extra_fields_kwargs),
         )
 
     def _get_unique_name(self, name: str) -> str:

@@ -54,7 +54,7 @@ class TestRelationResolutionIsScoped(TestCase):
     def create_with_roles(self, roles):
         service = Environment(user=self.actor).get(UserService)
         data = UserCreateSchema(
-            username="haddock", email="haddock@moulinsart.com", roles=roles
+            login="haddock", email="haddock@moulinsart.com", roles=roles
         )
         return async_to_sync(service.create)([data])
 

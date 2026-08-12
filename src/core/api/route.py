@@ -62,7 +62,7 @@ class Route(object):
         description: t.Optional[str] = None,
         tags: t.Optional[t.List[str]] = None,
         deprecated: t.Optional[bool] = None,
-        by_alias: bool = False,
+        by_alias: bool = True,
         exclude_unset: bool = False,
         exclude_defaults: bool = False,
         exclude_none: bool = False,
@@ -142,7 +142,7 @@ class Route(object):
         description: t.Optional[str] = None,
         tags: t.Optional[t.List[str]] = None,
         deprecated: t.Optional[bool] = None,
-        by_alias: bool = False,
+        by_alias: bool = True,
         exclude_unset: bool = False,
         exclude_defaults: bool = False,
         exclude_none: bool = False,
@@ -255,7 +255,7 @@ class Route(object):
         description: t.Optional[str] = None,
         tags: t.Optional[t.List[str]] = None,
         deprecated: t.Optional[bool] = None,
-        by_alias: bool = False,
+        by_alias: bool = True,
         exclude_unset: bool = False,
         exclude_defaults: bool = False,
         exclude_none: bool = False,
@@ -283,7 +283,7 @@ class Route(object):
         :param description: other description of your endpoint. default: `None`
         :param tags: list of strings for grouping endpoints only for documentation purpose. default: `None`
         :param deprecated: declares an endpoint deprecated. default: `None`
-        :param by_alias: pydantic schema filters applied to `response` schema object. default: `False`
+        :param by_alias: serialize the response under the public field names (pydantic serialization aliases). Keep it homogeneous across routes sharing a schema, or their OpenAPI component clashes. default: `True`
         :param exclude_unset: pydantic schema filters applied to `response` schema object. default: `False`
         :param exclude_defaults: pydantic schema filters applied to `response` schema object. default: `False`
         :param exclude_none: pydantic schema filters applied to `response` schema object. default: `False`
@@ -330,7 +330,7 @@ class Route(object):
         description: t.Optional[str] = None,
         tags: t.Optional[t.List[str]] = None,
         deprecated: t.Optional[bool] = None,
-        by_alias: bool = False,
+        by_alias: bool = True,
         exclude_unset: bool = False,
         exclude_defaults: bool = False,
         exclude_none: bool = False,
@@ -358,7 +358,7 @@ class Route(object):
         :param description: other description of your endpoint. default: `None`
         :param tags: list of strings for grouping endpoints only for documentation purpose. default: `None`
         :param deprecated: declares an endpoint deprecated. default: `None`
-        :param by_alias: pydantic schema filters applied to `response` schema object. default: `False`
+        :param by_alias: serialize the response under the public field names (pydantic serialization aliases). Keep it homogeneous across routes sharing a schema, or their OpenAPI component clashes. default: `True`
         :param exclude_unset: pydantic schema filters applied to `response` schema object. default: `False`
         :param exclude_defaults: pydantic schema filters applied to `response` schema object. default: `False`
         :param exclude_none: pydantic schema filters applied to `response` schema object. default: `False`
@@ -406,7 +406,7 @@ class Route(object):
         description: t.Optional[str] = None,
         tags: t.Optional[t.List[str]] = None,
         deprecated: t.Optional[bool] = None,
-        by_alias: bool = False,
+        by_alias: bool = True,
         exclude_unset: bool = False,
         exclude_defaults: bool = False,
         exclude_none: bool = False,
@@ -434,7 +434,7 @@ class Route(object):
         :param description: other description of your endpoint. default: `None`
         :param tags: list of strings for grouping endpoints only for documentation purpose. default: `None`
         :param deprecated: declares an endpoint deprecated. default: `None`
-        :param by_alias: pydantic schema filters applied to `response` schema object. default: `False`
+        :param by_alias: serialize the response under the public field names (pydantic serialization aliases). Keep it homogeneous across routes sharing a schema, or their OpenAPI component clashes. default: `True`
         :param exclude_unset: pydantic schema filters applied to `response` schema object. default: `False`
         :param exclude_defaults: pydantic schema filters applied to `response` schema object. default: `False`
         :param exclude_none: pydantic schema filters applied to `response` schema object. default: `False`
@@ -482,7 +482,7 @@ class Route(object):
         description: t.Optional[str] = None,
         tags: t.Optional[t.List[str]] = None,
         deprecated: t.Optional[bool] = None,
-        by_alias: bool = False,
+        by_alias: bool = True,
         exclude_unset: bool = False,
         exclude_defaults: bool = False,
         exclude_none: bool = False,
@@ -511,7 +511,7 @@ class Route(object):
         :param description: other description of your endpoint. default: `None`
         :param tags: list of strings for grouping endpoints only for documentation purpose. default: `None`
         :param deprecated: declares an endpoint deprecated. default: `None`
-        :param by_alias: pydantic schema filters applied to `response` schema object. default: `False`
+        :param by_alias: serialize the response under the public field names (pydantic serialization aliases). Keep it homogeneous across routes sharing a schema, or their OpenAPI component clashes. default: `True`
         :param exclude_unset: pydantic schema filters applied to `response` schema object. default: `False`
         :param exclude_defaults: pydantic schema filters applied to `response` schema object. default: `False`
         :param exclude_none: pydantic schema filters applied to `response` schema object. default: `False`
@@ -559,7 +559,7 @@ class Route(object):
         description: t.Optional[str] = None,
         tags: t.Optional[t.List[str]] = None,
         deprecated: t.Optional[bool] = None,
-        by_alias: bool = False,
+        by_alias: bool = True,
         exclude_unset: bool = False,
         exclude_defaults: bool = False,
         exclude_none: bool = False,
@@ -588,7 +588,7 @@ class Route(object):
          :param description: other description of your endpoint. default: `None`
          :param tags: list of strings for grouping endpoints only for documentation purpose. default: `None`
          :param deprecated: declares an endpoint deprecated. default: `None`
-         :param by_alias: pydantic schema filters applied to `response` schema object. default: `False`
+         :param by_alias: serialize the response under the public field names (pydantic serialization aliases). Keep it homogeneous across routes sharing a schema, or their OpenAPI component clashes. default: `True`
          :param exclude_unset: pydantic schema filters applied to `response` schema object. default: `False`
          :param exclude_defaults: pydantic schema filters applied to `response` schema object. default: `False`
          :param exclude_none: pydantic schema filters applied to `response` schema object. default: `False`
@@ -637,7 +637,7 @@ class Route(object):
         description: t.Optional[str] = None,
         tags: t.Optional[t.List[str]] = None,
         deprecated: t.Optional[bool] = None,
-        by_alias: bool = False,
+        by_alias: bool = True,
         exclude_unset: bool = False,
         exclude_defaults: bool = False,
         exclude_none: bool = False,
@@ -667,7 +667,7 @@ class Route(object):
         :param description: other description of your endpoint. default: `None`
         :param tags: list of strings for grouping endpoints only for documentation purpose. default: `None`
         :param deprecated: declares an endpoint deprecated. default: `None`
-        :param by_alias: pydantic schema filters applied to `response` schema object. default: `False`
+        :param by_alias: serialize the response under the public field names (pydantic serialization aliases). Keep it homogeneous across routes sharing a schema, or their OpenAPI component clashes. default: `True`
         :param exclude_unset: pydantic schema filters applied to `response` schema object. default: `False`
         :param exclude_defaults: pydantic schema filters applied to `response` schema object. default: `False`
         :param exclude_none: pydantic schema filters applied to `response` schema object. default: `False`

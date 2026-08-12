@@ -24,6 +24,9 @@ class UserDisplayNameSchema(ModelSchema):
     class Meta:
         model = User
         fields = ["id", "username"]
+        extra_fields_kwargs = {
+            "username": {"alias": "login"},
+        }
 
 
 class UserSchema(ModelSchema):
@@ -63,6 +66,10 @@ class UserCreateSchema(ModelSchema):
             "avatar",
             "roles",
         ]
+        extra_fields_kwargs = {
+            # request body: `validation_alias` so ONLY "login" is accepted
+            "username": {"validation_alias": "login"},
+        }
 
 
 class UserUpdateSchema(ModelSchema):
@@ -79,6 +86,9 @@ class UserUpdateSchema(ModelSchema):
             "roles",
         ]
         optional_fields = "__all__"
+        extra_fields_kwargs = {
+            "username": {"validation_alias": "login"},
+        }
 
 
 class UserProfileSchema(ModelSchema):
@@ -94,6 +104,31 @@ class UserProfileSchema(ModelSchema):
             "avatar",
         ]
         optional_fields = "__all__"
+        extra_fields_kwargs = {
+            "username": {"alias": "login"},
+        }
+
+
+class UserProfileUpdateSchema(ModelSchema):
+    """Body of the profile update. Distinct from `UserProfileSchema`: a schema
+    cannot be both a strict request body and readable from an ORM instance, since
+    the former forbids the Django field name on input while the latter requires it.
+    """
+
+    class Meta:
+        model = User
+        fields = [
+            "username",
+            "last_name",
+            "first_name",
+            "email",
+            "language",
+            "avatar",
+        ]
+        optional_fields = "__all__"
+        extra_fields_kwargs = {
+            "username": {"validation_alias": "login"},
+        }
 
 
 # ----------------------------------------------------
@@ -102,11 +137,11 @@ class UserProfileSchema(ModelSchema):
 
 
 class UserFilterSchema(FilterSchema):
-    username: Optional[str] = Field(
+    login: Optional[str] = Field(
         None,
         q="username__icontains",
-        title="Username",
-        description="Search term in the username.",
+        title="Login",
+        description="Search term in the login.",
     )
     email: Optional[str] = Field(
         None,

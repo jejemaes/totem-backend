@@ -10,7 +10,24 @@ from typing_extensions import get_args, get_origin
 
 
 class ExtraFieldInfos(BaseModel):
+    """Per-field overrides accepted in `Meta.extra_fields_kwargs`.
+
+    Renaming a field for the public API (DRF-style) uses one of two keys,
+    depending on which side of the wire the schema sits on:
+
+    * `alias` -- for a schema returned in responses. The field serializes under
+      the alias, while validation still accepts the Django field name so the
+      schema can be built from ORM instances and ORM-keyed dicts (list route).
+    * `validation_alias` -- for a request-body schema. The body accepts ONLY the
+      alias; the pydantic field name stays the Django field name, which is what
+      the service layer reads.
+
+    Either way the pydantic field name remains the Django field name: services,
+    querysets and the schema factory all key on it, only the JSON surface changes.
+    """
+
     alias: t.Optional[str] = None
+    validation_alias: t.Optional[str] = None
     title: t.Optional[str] = None
     description: t.Optional[str] = None
     pattern: t.Optional[str] = None
@@ -41,7 +58,7 @@ class AnyObject:
         return value
 
 
-SchemaKey = t.Tuple[t.Type[Model], str, int, str, str, str, str]
+SchemaKey = t.Tuple[t.Type[Model], str, str, str, str, str, str]
 
 T = t.TypeVar("T")
 

@@ -9,6 +9,7 @@ from django.core.validators import MaxLengthValidator
 from django.db import models
 from django.db.models.fields import Field
 from pydantic import UUID4, AnyUrl, EmailStr, IPvAnyAddress
+from pydantic import Field as create_pydantic_field
 from pydantic.fields import FieldInfo as PydanticField
 from pydantic_core import PydanticUndefined
 
@@ -114,7 +115,11 @@ def _get_pydantic_fieldinfo_from_field(
 
     return (
         python_type,
-        PydanticField(**field_infos),
+        # `pydantic.Field(...)`, not a raw `FieldInfo(...)`: a raw instance keeps
+        # aliases and constraints as inert metadata that never reaches the compiled
+        # core schema -- an alias set this way would show in `model_fields` yet have
+        # no effect on validation or serialization.
+        create_pydantic_field(**field_infos),
     )
 
 
@@ -273,7 +278,7 @@ def convert_field_to_datetime(
     field: Field, optional: bool = False, extra_kwargs: dict = None
 ) -> t.Tuple[t.Type, PydanticField]:
     return _get_pydantic_fieldinfo_from_field(
-        datetime.datetime, field, optional=optional
+        datetime.datetime, field, optional=optional, extra_kwargs=extra_kwargs
     )
 
 
@@ -294,7 +299,7 @@ def convert_field_to_timedelta(
     field: Field, optional: bool = False, extra_kwargs: dict = None
 ) -> t.Tuple[t.Type, PydanticField]:
     return _get_pydantic_fieldinfo_from_field(
-        datetime.timedelta, field, optional=optional
+        datetime.timedelta, field, optional=optional, extra_kwargs=extra_kwargs
     )
 
 
@@ -338,6 +343,7 @@ def convert_field_to_many_to_many(
         str,  # don't care about the type here, just want field infos
         field,
         optional=optional,
+        extra_kwargs=extra_kwargs,
     )
     return t.List[python_type], field_info
 

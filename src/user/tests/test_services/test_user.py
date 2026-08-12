@@ -62,9 +62,11 @@ class TestUserService(TestCase):
 
     @parameterized.expand(
         [
-            ("email", {"username": "x", "email": "not-an-email", "roles": []}),
-            ("user_type", {"username": "x", "email": "x@y.com", "roles": [], "user_type": "not-a-choice"}),
-            ("missing email", {"username": "x", "roles": []}),
+            ("email", {"login": "x", "email": "not-an-email", "roles": []}),
+            ("user_type", {"login": "x", "email": "x@y.com", "roles": [], "user_type": "not-a-choice"}),
+            ("missing email", {"login": "x", "roles": []}),
+            # `username` is renamed on the wire: the schema only accepts `login`
+            ("orm name refused", {"username": "x", "email": "x@y.com", "roles": []}),
         ]
     )
     def test_invalid_field_is_rejected_when_building_the_schema(self, dummy, payload):
@@ -83,14 +85,14 @@ class TestUserService(TestCase):
 
     @parameterized.expand(
         [
-            ({"username": "haddock", "email": "haddock@lune.com", "roles": []}, 5),
+            ({"login": "haddock", "email": "haddock@lune.com", "roles": []}, 5),
             (
-                {"username": "haddock", "email": "haddock@lune.com", "roles": ["CAT1_TEST1"]},
+                {"login": "haddock", "email": "haddock@lune.com", "roles": ["CAT1_TEST1"]},
                 9,
             ),
             (
                 {
-                    "username": "haddock",
+                    "login": "haddock",
                     "email": "haddock@lune.com",
                     "roles": ["CAT1_TEST2", "CAT2_TEST1"],
                 },
@@ -98,7 +100,7 @@ class TestUserService(TestCase):
             ),
             (
                 {
-                    "username": "haddock",
+                    "login": "haddock",
                     "email": "haddock@moulinsart.com",
                     "roles": ["CAT1_TEST2"],
                 },
@@ -117,16 +119,16 @@ class TestUserService(TestCase):
     @parameterized.expand(
         [
             (
-                {"username": "Tintin", "email": "tintin2@moulinsart.com", "roles": []},
+                {"login": "Tintin", "email": "tintin2@moulinsart.com", "roles": []},
                 5,
             ),  # username already exists
             (
-                {"username": "haddock", "email": "haddock@lune.com", "roles": ["NOT_EXISTING"]},
+                {"login": "haddock", "email": "haddock@lune.com", "roles": ["NOT_EXISTING"]},
                 2,
             ),  # role does not exist: rejected before any transaction is opened
             (
                 {
-                    "username": "haddock",
+                    "login": "haddock",
                     "email": "haddock@lune.com",
                     "roles": ["CAT1_TEST2", "CAT1_TEST1"],
                 },
@@ -188,8 +190,8 @@ class TestUserService(TestCase):
             ),  # user nonexistent --> no row updated
             ({"id": USER_ID1}, {"roles": ["CAT1_TEST2", "CAT2_TEST1"]}, 8, 1),
             (
-                {"username": "Tintin"},
-                {"username": "tintin_updated", "roles": ["CAT1_TEST2"]},
+                {"username": "Tintin"},  # filters speak ORM, only payloads use `login`
+                {"login": "tintin_updated", "roles": ["CAT1_TEST2"]},
                 9,
                 1,
             ),
