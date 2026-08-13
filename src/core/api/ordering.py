@@ -5,7 +5,7 @@ from functools import wraps
 from operator import attrgetter, itemgetter
 from typing import Any, Callable, List, Optional, Tuple, Type, Union
 
-from django.db.models import QuerySet
+from django.db.models import Model, QuerySet
 from django.http import HttpRequest
 from ninja import P, Query, Schema
 from ninja.constants import NOT_SET
@@ -13,11 +13,13 @@ from ninja.utils import contribute_operation_args, is_async_callable
 from pydantic import ConfigDict
 
 from core.schemas.types import DelimiterList, MultiChoices
+from core.schemas.utils import schema_orm_to_public_fields
 from core.orm.queryset import queryset_order_by_fields
 
 __all__ = [
     "OrderingBase",
     "Ordering",
+    "ListControllerOrdering",
     "ordering",
 ]
 
@@ -43,13 +45,32 @@ class Ordering(OrderingBase):
     def __init__(
         self,
         pass_parameter: Optional[str] = None,
-        field_map: Optional[dict[str, str]] = None,
-        default_ordering_fields: Optional[List[str]] = ["pk"],
+        schema: Optional[Any] = None,
+        model: Optional[Type[Model]] = None,
+        ordering_fields: Optional[List[str]] = None,
+        default_ordering_fields: Optional[List[str]] = None,
     ) -> None:
+
         super().__init__(pass_parameter=pass_parameter)
-        self.field_map = field_map or {}
-        self.default_ordering_fields = default_ordering_fields or ["pk"]
-        self.Input = self.create_input()  # type:ignore
+
+        orm_to_public = schema_orm_to_public_fields(schema, model) if schema else {}
+        field_map = {
+            orm_to_public.get(fname, fname): fname for fname in (ordering_fields or [])
+        }
+
+        # defaults are declared with ORM field names but go through the same validation as a
+        # client-sent `?ordering=`, which only accepts public tokens
+        orm_to_token = {orm: token for token, orm in field_map.items()}
+        translated_defaults = []
+        for fname in default_ordering_fields or []:
+            descending = fname.startswith("-")
+            name = fname[1:] if descending else fname
+            token = orm_to_token.get(name, name)
+            translated_defaults.append(f"-{token}" if descending else token)
+
+        self.field_map = field_map
+        self.default_ordering_fields = translated_defaults or ["pk"]
+        self.Input = self.create_input()  # type: ignore
 
     def create_input(self) -> Type[Input]:
         if not self.field_map:
@@ -74,7 +95,7 @@ class Ordering(OrderingBase):
                     default=",".join(self.default_ordering_fields),
                     description=f"Comma separated list of fields to order by. Prefix with '-' for descending order. Possible values are {','.join(quoted_fnames)}.",
                 ),
-            ]  # type:ignore[type-arg,valid-type]
+            ]  # type: ignore[type-arg,valid-type]
 
         return DynamicInput
 
@@ -100,6 +121,16 @@ class Ordering(OrderingBase):
                         for o in ordering_
                     ],
                 )
+        return items
+
+
+class ListControllerOrdering(Ordering):
+
+    def ordering_queryset(
+        self, items: Union[QuerySet, List], ordering_input: Ordering.Input
+    ) -> Union[QuerySet, List]:
+        """Do nothing, as the purpose of the ListControllerOrdering is to pass the ordering
+        parameter to the controller, not to order the queryset."""
         return items
 
 
@@ -137,7 +168,6 @@ def ordering(func_or_pgn_class: Any = NOT_SET, **orderator_params: Any) -> Calla
 def _inject_ordering(
     func: Callable,
     ordering_class: Type[Union[OrderingBase]],
-    execute_ordering=True,
     **orderator_params: Any,
 ) -> Callable:
     orderator = ordering_class(**orderator_params)
@@ -151,10 +181,9 @@ def _inject_ordering(
 
             items = await func(request, **kwargs)
 
-            if execute_ordering:
-                items = await orderator.ordering_queryset(
-                    items, ordering_input=ordering_params
-                )
+            items = orderator.ordering_queryset(items, ordering_input=ordering_params)
+            if inspect.isawaitable(items):
+                items = await items
             return items
 
     else:
@@ -167,10 +196,7 @@ def _inject_ordering(
 
             items = func(request, **kwargs)
 
-            if execute_ordering:
-                items = orderator.ordering_queryset(
-                    items, ordering_input=ordering_params
-                )
+            items = orderator.ordering_queryset(items, ordering_input=ordering_params)
             return items
 
     contribute_operation_args(
