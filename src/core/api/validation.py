@@ -13,7 +13,6 @@ from django.core.exceptions import ImproperlyConfigured
 from pydantic import AliasChoices
 
 from core.schemas.utils import _unwrap_list_schema
-from core.services.registry import ServiceRegistry
 
 from .controller import BaseModelController
 
@@ -66,7 +65,7 @@ def _iter_controllers(base=BaseModelController, seen=None):
 
 
 def _check_request_schemas(controller):
-    service_class = ServiceRegistry.get_service_class(controller.model)
+    service_class = controller.service
     for request_attr, service_attr in REQUEST_TO_SERVICE_SCHEMA:
         request_schema = getattr(controller, request_attr, None)
         if request_schema is None:

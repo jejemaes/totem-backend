@@ -7,7 +7,6 @@ from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.access_policy import access_policy
 from user.access_rights import get_all_permission
-from user.models import UserRole
 from user.schemas import (
     AccessRuleSchema,
     PermissionSchema,
@@ -18,6 +17,7 @@ from user.security import (
     TokenHasScopePermission,
     TokenHasScopePermissionModelControllerMixin,
 )
+from user.services import UserRoleService
 
 
 class UserRoleController(
@@ -26,7 +26,7 @@ class UserRoleController(
     BaseModelController,
 ):
     api = api_v1
-    model = UserRole
+    service = UserRoleService
 
     path_prefix = "/user-roles/"
     auth = [OAuthTokenAuthentication()]

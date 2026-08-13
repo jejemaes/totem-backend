@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from types import FunctionType
 
 import pydantic
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import ImproperlyConfigured, PermissionDenied
 from django.db.models import Model, QuerySet
 from django.http import HttpRequest
 from django.conf import settings
@@ -24,6 +24,7 @@ from core.schemas.utils import (
 )
 from core.services import (
     Environment,
+    ServiceBase,
     ServiceValidationMultiError,
 )
 
@@ -98,8 +99,24 @@ class BaseController:
 
 class BaseModelController(BaseController):
 
-    model: Model = None
+    model: t.Optional[t.Type[Model]] = None
+    service: t.ClassVar[t.Optional[t.Type[ServiceBase]]] = None
     path_model = None
+
+    def __init_subclass__(cls) -> None:
+        # Deduced before `super().__init_subclass__()`: that call (on
+        # `BaseController`) builds the router immediately, and every CRUD mixin's
+        # `add_routes_to` reads `cls.model` to decide whether to register a route.
+        if cls.service is not None:
+            declared_model = cls.__dict__.get("model")
+            if declared_model and declared_model is not cls.service.model:
+                raise ImproperlyConfigured(
+                    f"{cls.__name__}: declares model={declared_model._meta.label} but "
+                    f"service {cls.service.__name__} serves "
+                    f"{cls.service.model._meta.label}."
+                )
+            cls.model = declared_model or cls.service.model
+        super().__init_subclass__()
 
     # Route Helpers
 
@@ -298,7 +315,7 @@ class ListModelControllerMixin:
         ordering_parameters = kwargs.pop("ordering_fields", None)
         if ordering_parameters:
             ordering_fields = ordering_parameters.ordering
-        return await request.env[self.model].read(
+        return await request.env.get(self.service).read(
             query_parameters, ordering=ordering_fields
         )
 
@@ -346,7 +363,7 @@ class RetrieveModelControllerMixin:
         request: HttpRequest,
         path_parameters: t.Optional[BaseModel],
     ) -> Model:
-        queryset = await request.env[self.model].read(
+        queryset = await request.env.get(self.service).read(
             filters=path_parameters.model_dump() if path_parameters else None,
             fields=self._response_orm_fields(self.retrieve_response_schema),
         )
@@ -412,7 +429,7 @@ class CreateModelControllerMixin:
             # No refetch needed to serialize: the instance is built in memory with
             # every concrete field, and the service primes the m2m prefetch cache
             # for all relations, empty ones included.
-            instances = await request.env[self.model].create([request_body])
+            instances = await request.env.get(self.service).create([request_body])
             return instances[0] if instances else None
         except ServiceValidationMultiError as exc:
             raise self.service_validation_error_to_api_error(
@@ -468,7 +485,7 @@ class UpdateModelControllerMixin:
     ) -> Model:
         try:
             filters = path_parameters.model_dump() if path_parameters else {}
-            count, queryset = await request.env[self.model].update(
+            count, queryset = await request.env.get(self.service).update(
                 filters, request_body
             )
             if count == 0:
@@ -531,7 +548,7 @@ class DeleteModelControllerMixin:
         path_parameters: t.Optional[BaseModel],
     ) -> None:
         filters = path_parameters.model_dump() if path_parameters else {}
-        count = await request.env[self.model].delete(filters)
+        count = await request.env.get(self.service).delete(filters)
         if count == 0:
             raise HttpError(
                 status_code=404,
