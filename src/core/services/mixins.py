@@ -24,7 +24,7 @@ from django.db.utils import DatabaseError
 from ninja import FilterSchema
 from pydantic import BaseModel
 
-from core.orm.queryset import queryset_fetch_fields, queryset_order_by_fields
+from core.orm.queryset import queryset_fetch_fields
 
 from .exceptions import ServiceValidationError, ServiceValidationMultiError
 from .generics import check_concrete, generic_args_for
@@ -150,13 +150,10 @@ class ReadMixin:
     be usable as the target of a relation.
     """
 
-    # Configuration
-    ordering_fields_nulls_last = "__all__"  # list of orm field names that should be ordered with nulls last, or '__all__' to apply to all fields.
-
     async def read(
         self,
         filters: t.Union[BaseModel, FilterSchema, t.Dict] = None,
-        ordering=None,
+        ordering: t.List[str] = None,
         fields: t.List[str] = None,
     ) -> models.QuerySet:
         """ Read records from the database applying access rules, filters, pagination, ordering and fields selection.
@@ -164,7 +161,7 @@ class ReadMixin:
                 - a pydantic model with the filter fields defined, the model_dump of the pydantic model will be used as kwargs for filtering the queryset
                 - a ninja FilterSchema instance, the `filter` method of the FilterSchema will be used to filter the queryset
                 - a dict with the filter fields and values, the dict will be used as lookups for filtering the queryset
-            :param ordering: list of fields to order by, should be a subset of the model fields
+            :param ordering: list of ORM field names to order by (`-` prefix for descending), see `ServiceBase.apply_ordering`
             :param fields: list of fields to select (model field name or relational lookup `my_fk_field__field_on_relation`),
                 should be a subset of the model fields.
 
@@ -180,7 +177,7 @@ class ReadMixin:
             queryset = self._apply_filters(queryset, filters)
         # apply ordering
         if ordering:
-            queryset = self._read_apply_ordering(queryset, ordering)
+            queryset = self.apply_ordering(queryset, ordering)
         # apply fields selection
         if fields:
             queryset = self._read_apply_fields(queryset, fields)
@@ -188,14 +185,6 @@ class ReadMixin:
 
     def _read_apply_fields(self, queryset: models.QuerySet, field_lookups: t.List[str]) -> models.QuerySet:
         return queryset_fetch_fields(queryset, field_lookups)
-
-    def _read_apply_ordering(self, queryset: models.QuerySet, ordering_fields: t.List[str]) -> models.QuerySet:
-        return queryset_order_by_fields(
-            queryset,
-            ordering_fields,
-            add_pk=True,
-            null_last_fields=self.ordering_fields_nulls_last,
-        )
 
 
 class UpdateMixin(t.Generic[UpdateT]):

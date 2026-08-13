@@ -280,7 +280,7 @@ class ListModelControllerMixin:
                 ordering(
                     cls.list_ordering,
                     schema=cls.list_response_schema,
-                    model=cls.model,
+                    service=cls.service,
                     ordering_fields=cls.list_ordering_fields,
                     default_ordering_fields=cls.list_ordering_default_fields,
                     pass_parameter="ordering_fields",
