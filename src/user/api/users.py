@@ -5,7 +5,6 @@ from ninja import FilterSchema, Schema
 from core.api import ModelController, Route, route
 from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
-from user.models import User
 from user.schemas import (
     ProfilePathParam,
     UserCreateSchema,
@@ -16,11 +15,12 @@ from user.schemas import (
     UserUpdateSchema,
 )
 from user.security import IsAuthenticated, TokenHasScopePermissionModelControllerMixin
+from user.services import UserService
 
 
 class UserController(TokenHasScopePermissionModelControllerMixin, ModelController):
     api = api_v1
-    model = User
+    service = UserService
 
     path_prefix = "/users/"
     auth = [OAuthTokenAuthentication()]
