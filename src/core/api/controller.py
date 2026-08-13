@@ -27,7 +27,7 @@ from core.services import (
     ServiceValidationMultiError,
 )
 
-from .ordering import Ordering, OrderingBase, ordering
+from .ordering import ListControllerOrdering, OrderingBase, ordering
 from .pagination import PageNumberPagination, AsyncPaginationBase, paginate
 from .query_fields import QueryField, QueryFieldBase, query_field
 from .route import MAGIC_ROUTE_ATTR, Route  # pragma: no cover
@@ -215,10 +215,9 @@ class ListModelControllerMixin:
 
     list_response_schema: Schema = None
     list_filter_schema: FilterSchema = None
-    list_ordering: t.Optional[t.Type[OrderingBase]] = Ordering
+    list_ordering: t.Optional[t.Type[OrderingBase]] = ListControllerOrdering
     list_ordering_fields: t.List[str] = []
     list_ordering_default_fields: t.List[str] = []
-    list_ordering_fields_alias: t.Dict[str, str] = {}
     list_pagination: t.Optional[t.Type[AsyncPaginationBase]] = PageNumberPagination
     list_query_field_class: t.Optional[t.Type[QueryFieldBase]] = QueryField
 
@@ -263,48 +262,14 @@ class ListModelControllerMixin:
             decorators.append(
                 ordering(
                     cls.list_ordering,
-                    field_map=cls.get_ordering_fields_map(),
-                    default_ordering_fields=cls.get_ordering_default_fields(),
+                    schema=cls.list_response_schema,
+                    model=cls.model,
+                    ordering_fields=cls.list_ordering_fields,
+                    default_ordering_fields=cls.list_ordering_default_fields,
                     pass_parameter="ordering_fields",
-                    execute_ordering=False,  # disable automatic ordering execution to let the controller handle it in the list method
                 )
             )
         return decorators
-
-    @classmethod
-    def get_ordering_fields_map(cls):
-        """Maps every accepted public ordering token to the ORM field it orders by.
-
-        `list_ordering_fields` is declared with ORM field names (the internal
-        contract, like every schema field). The public token of a field renamed on
-        the response schema is its alias, so `?ordering=` speaks the same language
-        as the response body. `list_ordering_fields_alias` remains an explicit
-        `{token: orm_field}` override for tokens that no response field carries.
-        """
-        orm_to_public = schema_orm_to_public_fields(cls.list_response_schema, cls.model)
-        field_map = {}
-        for fname in cls.list_ordering_fields:
-            if fname in cls.list_ordering_fields_alias:
-                field_map[fname] = cls.list_ordering_fields_alias[fname]
-            else:
-                field_map[orm_to_public.get(fname, fname)] = fname
-        return field_map
-
-    @classmethod
-    def get_ordering_default_fields(cls):
-        """`list_ordering_default_fields` translated to public tokens.
-
-        Defaults are declared with ORM field names but go through the same
-        validation as a client-sent `?ordering=`, which only accepts public tokens.
-        """
-        orm_to_token = {orm: token for token, orm in cls.get_ordering_fields_map().items()}
-        default_fields = []
-        for fname in cls.list_ordering_default_fields:
-            descending = fname.startswith("-")
-            name = fname[1:] if descending else fname
-            token = orm_to_token.get(name, name)
-            default_fields.append(f"-{token}" if descending else token)
-        return default_fields
 
     @classmethod
     def _annotate_list_view_function(
