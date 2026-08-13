@@ -5,7 +5,7 @@ from functools import wraps
 from operator import attrgetter, itemgetter
 from typing import Any, Callable, List, Optional, Tuple, Type, Union
 
-from django.db.models import Model, QuerySet
+from django.db.models import QuerySet
 from django.http import HttpRequest
 from ninja import P, Query, Schema
 from ninja.constants import NOT_SET
@@ -15,6 +15,9 @@ from pydantic import ConfigDict
 from core.schemas.types import DelimiterList, MultiChoices
 from core.schemas.utils import schema_orm_to_public_fields
 from core.orm.queryset import queryset_order_by_fields
+
+if t.TYPE_CHECKING:
+    from core.services import ServiceBase
 
 __all__ = [
     "OrderingBase",
@@ -34,7 +37,7 @@ class OrderingBase(ABC):
 
     @abstractmethod
     def ordering_queryset(
-        self, items: Union[QuerySet, List], ordering_input: Any
+        self, items: Union[QuerySet, List], ordering_input: Any, request: Optional[HttpRequest] = None
     ) -> Union[QuerySet, List]: ...
 
 
@@ -46,12 +49,15 @@ class Ordering(OrderingBase):
         self,
         pass_parameter: Optional[str] = None,
         schema: Optional[Any] = None,
-        model: Optional[Type[Model]] = None,
+        service: Optional[Type["ServiceBase"]] = None,
         ordering_fields: Optional[List[str]] = None,
         default_ordering_fields: Optional[List[str]] = None,
     ) -> None:
 
         super().__init__(pass_parameter=pass_parameter)
+
+        self.service = service
+        model = service.model if service is not None else None
 
         orm_to_public = schema_orm_to_public_fields(schema, model) if schema else {}
         field_map = {
@@ -100,11 +106,16 @@ class Ordering(OrderingBase):
         return DynamicInput
 
     def ordering_queryset(
-        self, items: Union[QuerySet, List], ordering_input: Input
+        self, items: Union[QuerySet, List], ordering_input: Input, request: Optional[HttpRequest] = None
     ) -> Union[QuerySet, List]:
         ordering_ = ordering_input.ordering
         if ordering_:
             if isinstance(items, QuerySet):
+                if self.service is not None and request is not None:
+                    # "nulls last" is the service's call alone (`ordering_fields_nulls_last`,
+                    # see `ServiceBase.apply_ordering`) -- never something this decorator
+                    # or a controller could override per field.
+                    return request.env.get(self.service).apply_ordering(items, ordering_)
                 return queryset_order_by_fields(items, ordering_)
             elif isinstance(items, list) and items:
 
@@ -127,7 +138,7 @@ class Ordering(OrderingBase):
 class ListControllerOrdering(Ordering):
 
     def ordering_queryset(
-        self, items: Union[QuerySet, List], ordering_input: Ordering.Input
+        self, items: Union[QuerySet, List], ordering_input: Ordering.Input, request: Optional[HttpRequest] = None
     ) -> Union[QuerySet, List]:
         """Do nothing, as the purpose of the ListControllerOrdering is to pass the ordering
         parameter to the controller, not to order the queryset."""
@@ -181,7 +192,7 @@ def _inject_ordering(
 
             items = await func(request, **kwargs)
 
-            items = orderator.ordering_queryset(items, ordering_input=ordering_params)
+            items = orderator.ordering_queryset(items, ordering_input=ordering_params, request=request)
             if inspect.isawaitable(items):
                 items = await items
             return items
@@ -196,7 +207,7 @@ def _inject_ordering(
 
             items = func(request, **kwargs)
 
-            items = orderator.ordering_queryset(items, ordering_input=ordering_params)
+            items = orderator.ordering_queryset(items, ordering_input=ordering_params, request=request)
             return items
 
     contribute_operation_args(

@@ -7,6 +7,7 @@ from django.db.utils import DatabaseError
 from ninja import FilterSchema
 from pydantic import BaseModel
 
+from core.orm.queryset import queryset_order_by_fields
 from user.access_policy import Context as AccessContext, apply_access_rules
 
 from .exceptions import (
@@ -70,6 +71,11 @@ class ServiceBase(Service, t.Generic[ModelT]):
     model: t.ClassVar[t.Type[models.Model]]
 
     ValidationError = ServiceValidationError
+
+    # List of ORM field names that should be ordered with nulls last, or "__all__"
+    # to apply to all fields. Lives here, not on `ReadMixin`, so it also governs
+    # `apply_ordering` when called from outside `read()` (see `core.api.ordering`).
+    ordering_fields_nulls_last = "__all__"
 
     def __init_subclass__(cls, **kwargs):
         # Unconditional, and first: python only calls the closest
@@ -320,6 +326,21 @@ class ServiceBase(Service, t.Generic[ModelT]):
         elif isinstance(filters, dict):
             return queryset.filter(**filters)
         return queryset
+
+    def apply_ordering(
+        self, queryset: models.QuerySet, ordering: t.List[str]
+    ) -> models.QuerySet:
+        """Order `queryset` by the given ORM field names (`-` prefix for descending).
+
+        Public, not just `read()`'s business: the generic `@ordering` decorator
+        (`core.api.ordering.Ordering.ordering_queryset`) calls this directly on
+        whatever queryset a decorated view returns, so that "nulls last" stays a
+        decision only the service makes (`ordering_fields_nulls_last`) -- never the
+        controller, which has no way to override it per field.
+        """
+        return queryset_order_by_fields(
+            queryset, ordering, add_pk=True, null_last_fields=self.ordering_fields_nulls_last,
+        )
 
     def _database_error_to_validation_error(self, exc: DatabaseError):
         error_message = str(exc)
