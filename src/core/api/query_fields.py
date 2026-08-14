@@ -12,10 +12,15 @@ from pydantic import ConfigDict
 
 from core.orm.queryset import queryset_fetch_fields
 from core.schemas.types import DelimiterList, MultiChoices
+from core.schemas.utils import schema_public_to_orm_fields
+
+if t.TYPE_CHECKING:
+    from core.services import ServiceBase
 
 __all__ = [
     "QueryFieldBase",
     "QueryField",
+    "ListControllerQueryField",
     "query_field",
 ]
 
@@ -32,7 +37,7 @@ class QueryFieldBase(ABC):
 
     @abstractmethod
     def querying_field_queryset(
-        self, items: t.Union[QuerySet, t.List], query_fields: Input
+        self, items: t.Union[QuerySet, t.List], query_fields: Input, request: t.Optional[HttpRequest] = None
     ) -> t.Union[QuerySet, t.List]: ...
 
 
@@ -43,11 +48,16 @@ class QueryField(QueryFieldBase):
 
     def __init__(
         self,
-        field_map: t.Dict[str, str] = None,
         pass_parameter: t.Optional[str] = None,
+        schema: t.Optional[t.Any] = None,
+        service: t.Optional[t.Type["ServiceBase"]] = None,
     ) -> None:
         super().__init__(pass_parameter=pass_parameter)
-        self.field_map = field_map or {}
+
+        self.service = service
+        model = service.model if service is not None else None
+
+        self.field_map = schema_public_to_orm_fields(schema, model) if schema else {}
         self.Input = self.create_input()
 
     def create_input(
@@ -78,10 +88,22 @@ class QueryField(QueryFieldBase):
         return DynamicInput
 
     def querying_field_queryset(
-        self, items: t.Union[QuerySet, t.List], query_fields: Input
+        self, items: t.Union[QuerySet, t.List], query_fields: Input, request: t.Optional[HttpRequest] = None
     ) -> t.Union[QuerySet, t.List]:
         if isinstance(items, QuerySet):
+            if self.service is not None and request is not None:
+                return request.env.get(self.service).apply_query_fields(items, query_fields.fields)
             return queryset_fetch_fields(items, query_fields.fields)
+        return items
+
+
+class ListControllerQueryField(QueryField):
+
+    def querying_field_queryset(
+        self, items: t.Union[QuerySet, t.List], query_fields: QueryField.Input, request: t.Optional[HttpRequest] = None
+    ) -> t.Union[QuerySet, t.List]:
+        """Do nothing, as the purpose of the ListControllerQueryField is to pass the
+        query_fields parameter to the controller, not to select fields on the queryset."""
         return items
 
 
@@ -129,7 +151,10 @@ def _inject_query_field(
                 kwargs[querier.pass_parameter] = queryfield_params
 
             result = await func(request, **kwargs)
-            return querier.querying_field_queryset(result, queryfield_params)
+            result = querier.querying_field_queryset(result, queryfield_params, request=request)
+            if inspect.isawaitable(result):
+                result = await result
+            return result
 
     else:
 
@@ -140,7 +165,7 @@ def _inject_query_field(
                 kwargs[querier.pass_parameter] = queryfield_params
 
             result = func(request, **kwargs)
-            return querier.querying_field_queryset(result, queryfield_params)
+            return querier.querying_field_queryset(result, queryfield_params, request=request)
 
     contribute_operation_args(
         view_with_query_field,

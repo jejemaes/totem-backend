@@ -24,8 +24,6 @@ from django.db.utils import DatabaseError
 from ninja import FilterSchema
 from pydantic import BaseModel
 
-from core.orm.queryset import queryset_fetch_fields
-
 from .exceptions import ServiceValidationError, ServiceValidationMultiError
 from .generics import check_concrete, generic_args_for
 
@@ -163,7 +161,7 @@ class ReadMixin:
                 - a dict with the filter fields and values, the dict will be used as lookups for filtering the queryset
             :param ordering: list of ORM field names to order by (`-` prefix for descending), see `ServiceBase.apply_ordering`
             :param fields: list of fields to select (model field name or relational lookup `my_fk_field__field_on_relation`),
-                should be a subset of the model fields.
+                should be a subset of the model fields, see `ServiceBase.apply_query_fields`.
 
             Note: as pagination alters the result format, it can not be handled here.
             The returned queryset is not evaluated; see `browse` about consuming it
@@ -180,11 +178,8 @@ class ReadMixin:
             queryset = self.apply_ordering(queryset, ordering)
         # apply fields selection
         if fields:
-            queryset = self._read_apply_fields(queryset, fields)
+            queryset = self.apply_query_fields(queryset, fields)
         return queryset
-
-    def _read_apply_fields(self, queryset: models.QuerySet, field_lookups: t.List[str]) -> models.QuerySet:
-        return queryset_fetch_fields(queryset, field_lookups)
 
 
 class UpdateMixin(t.Generic[UpdateT]):
