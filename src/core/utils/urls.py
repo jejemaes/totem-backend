@@ -3,6 +3,16 @@ from urllib import parse
 from django.utils.encoding import force_str
 
 
+def ensure_trailing_slash(url: str) -> str:
+    """
+    Given a URL, make sure its path part ends with a slash, and return the new URL.
+    """
+    (scheme, netloc, path, query, fragment) = parse.urlsplit(force_str(url))
+    if not path.endswith("/"):
+        path += "/"
+    return parse.urlunsplit((scheme, netloc, path, query, fragment))
+
+
 def replace_query_param(url: str, key: str, val: int) -> str:
     """
     Given a URL and a key/val pair, set or replace an item in the query
