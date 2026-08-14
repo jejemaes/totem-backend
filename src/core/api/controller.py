@@ -20,7 +20,6 @@ from core.schemas.utils import (
     extract_orm_fields_from_specs,
     extract_orm_fields_map,
     schema_orm_to_public_fields,
-    schema_public_to_orm_fields,
 )
 from core.services import (
     Environment,
@@ -30,7 +29,7 @@ from core.services import (
 
 from .ordering import ListControllerOrdering, OrderingBase, ordering
 from .pagination import PageNumberPagination, AsyncPaginationBase, paginate
-from .query_fields import QueryField, QueryFieldBase, query_field
+from .query_fields import ListControllerQueryField, QueryFieldBase, query_field
 from .route import MAGIC_ROUTE_ATTR, Route  # pragma: no cover
 
 
@@ -236,7 +235,7 @@ class ListModelControllerMixin:
     list_ordering_fields: t.List[str] = []
     list_ordering_default_fields: t.List[str] = []
     list_pagination: t.Optional[t.Type[AsyncPaginationBase]] = PageNumberPagination
-    list_query_field_class: t.Optional[t.Type[QueryFieldBase]] = QueryField
+    list_query_field_class: t.Optional[t.Type[QueryFieldBase]] = ListControllerQueryField
 
     @classmethod
     def add_routes_to(cls, router) -> None:
@@ -267,11 +266,8 @@ class ListModelControllerMixin:
             decorators.append(
                 query_field(
                     cls.list_query_field_class,
-                    # public names are the accepted `?fields=` tokens, and
-                    # `MultiChoices` translates them back to ORM names for the queryset
-                    field_map=schema_public_to_orm_fields(
-                        cls.list_response_schema, cls.model
-                    ),
+                    schema=cls.list_response_schema,
+                    service=cls.service,
                     pass_parameter="query_fields",
                 )
             )
@@ -315,8 +311,14 @@ class ListModelControllerMixin:
         ordering_parameters = kwargs.pop("ordering_fields", None)
         if ordering_parameters:
             ordering_fields = ordering_parameters.ordering
+
+        fields = None
+        query_fields_parameters = kwargs.pop("query_fields", None)
+        if query_fields_parameters:
+            fields = query_fields_parameters.fields
+
         return await request.env.get(self.service).read(
-            query_parameters, ordering=ordering_fields
+            query_parameters, ordering=ordering_fields, fields=fields
         )
 
 

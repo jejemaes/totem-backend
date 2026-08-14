@@ -7,7 +7,7 @@ from django.db.utils import DatabaseError
 from ninja import FilterSchema
 from pydantic import BaseModel
 
-from core.orm.queryset import queryset_order_by_fields
+from core.orm.queryset import queryset_fetch_fields, queryset_order_by_fields
 from user.access_policy import Context as AccessContext, apply_access_rules
 
 from .exceptions import (
@@ -341,6 +341,17 @@ class ServiceBase(Service, t.Generic[ModelT]):
         return queryset_order_by_fields(
             queryset, ordering, add_pk=True, null_last_fields=self.ordering_fields_nulls_last,
         )
+
+    def apply_query_fields(
+        self, queryset: models.QuerySet, fields: t.List[str]
+    ) -> models.QuerySet:
+        """Restrict `queryset` to the given ORM field lookups (`.only()`/`prefetch_related()`).
+
+        Public for the same reason as `apply_ordering`: the generic `@query_field`
+        decorator (`core.api.query_fields.QueryField.querying_field_queryset`) calls
+        this directly on whatever queryset a decorated view returns.
+        """
+        return queryset_fetch_fields(queryset, fields)
 
     def _database_error_to_validation_error(self, exc: DatabaseError):
         error_message = str(exc)
