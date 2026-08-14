@@ -13,7 +13,7 @@ from pydantic import Field
 from pydantic.networks import AnyUrl
 
 from core.orm.queryset import model_instance_to_dict
-from core.utils.urls import remove_query_param, replace_query_param
+from core.utils.urls import ensure_trailing_slash, remove_query_param, replace_query_param
 
 logger = logging.getLogger()
 
@@ -82,7 +82,7 @@ class PageNumberPagination(AsyncPaginationBase):
         current_page_number = pagination.page
         paginator = self.paginator_class(queryset, pagination.page_size)
         try:
-            url = request.build_absolute_uri()
+            url = ensure_trailing_slash(request.build_absolute_uri())
             page: Page = await sync_to_async(paginator.page)(current_page_number)
             return await self.get_paginated_response(base_url=url, page=page)
         except InvalidPage as exc:  # pragma: no cover
