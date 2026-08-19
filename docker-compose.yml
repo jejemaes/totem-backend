@@ -55,6 +55,7 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf
     networks:
       - totem-backend-network
+      - totem-saas-network
 
 volumes:
   db-data:
