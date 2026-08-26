@@ -83,6 +83,14 @@ def model_instance_to_dict(instance) -> t.Dict[str, t.Any]:
     for key, value in instance.__dict__.items():
         if key not in ["_state", "_prefetched_objects_cache"]:
             values[key] = value
+    # Forward relations (foreign key, one-to-one) resolved by `Prefetch` or
+    # `select_related` land in the field cache, and nowhere else: `__dict__` only
+    # holds the raw `<fname>_id`, and the prefetch cache only holds the reverse and
+    # many-to-many ones. Without this a nested foreign key silently vanishes from
+    # every list payload, while retrieve/create/update -- which serialize the
+    # instance itself rather than this dict -- keep it.
+    for key, value in instance._state.fields_cache.items():
+        values[key] = model_instance_to_dict(value) if value is not None else None
     for key, value in instance.__dict__.get("_prefetched_objects_cache", {}).items():
         values[key] = [model_instance_to_dict(i) for i in value]
     return values

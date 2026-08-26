@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from core.orm.queryset import queryset_fetch_fields
 from core.schemas.utils import (
+    _unwrap_list_schema,
     extract_orm_fields_from_specs,
     extract_orm_fields_map,
     schema_orm_to_public_fields,
@@ -178,7 +179,9 @@ class BaseModelController(BaseController):
     # Response loading
 
     @classmethod
-    def _response_orm_fields(cls, response_schema: Schema) -> t.List[str]:
+    def _response_orm_fields(
+        cls, response_schema: Schema, field_names: t.Optional[t.List[str]] = None
+    ) -> t.List[str]:
         """ORM lookups covering every field the given response schema will read.
 
         Passing them to `read()` (or to `queryset_fetch_fields`) makes the queryset
@@ -187,9 +190,18 @@ class BaseModelController(BaseController):
         serializes the returned instance outside of any `sync_to_async`, so a
         deferred field or an unresolved relation would raise
         `SynchronousOnlyOperation` there, out of reach of the service.
+
+        `field_names` restricts the expansion to a subset of the schema, named by
+        ORM field name. A relation is always expanded down to the fields its
+        sub-schema reads: asked for `country`, the caller needs `country__code` and
+        `country__name` too, otherwise `queryset_fetch_fields` has no sub-field to
+        prefetch and drops the relation entirely.
         """
+        response_schema = _unwrap_list_schema(response_schema)
         orm_field_map = extract_orm_fields_map(response_schema, cls.model)
-        return extract_orm_fields_from_specs(orm_field_map, list(orm_field_map.keys()))
+        if field_names is None:
+            field_names = list(orm_field_map.keys())
+        return extract_orm_fields_from_specs(orm_field_map, field_names)
 
     # Error Handling
 
@@ -315,7 +327,12 @@ class ListModelControllerMixin:
         fields = None
         query_fields_parameters = kwargs.pop("query_fields", None)
         if query_fields_parameters:
-            fields = query_fields_parameters.fields
+            # `query_fields.fields` names top-level ORM fields only. They must be
+            # expanded the same way the retrieve route does it, or a relation with a
+            # nested schema would never be fetched.
+            fields = self._response_orm_fields(
+                self.list_response_schema, query_fields_parameters.fields
+            )
 
         return await request.env.get(self.service).read(
             query_parameters, ordering=ordering_fields, fields=fields
