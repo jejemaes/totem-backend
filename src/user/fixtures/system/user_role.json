@@ -4,7 +4,7 @@
     "pk": "USERTYPE_ADMIN",
     "fields": {
         "name": "Administrator",
-        "permissions": "[\"totem.user.create\", \"totem.user.read\", \"totem.user.update\", \"totem.user.delete\", \"totem.userrole.read\", \"totem.country.read\"]",
+        "permissions": "[\"totem.user.create\", \"totem.user.read\", \"totem.user.update\", \"totem.user.delete\", \"totem.userrole.read\", \"totem.country.read\", \"totem.contact.create\", \"totem.contact.read\", \"totem.contact.update\", \"totem.contact.delete\", \"totem.contacttag.create\", \"totem.contacttag.read\", \"totem.contacttag.update\", \"totem.contacttag.delete\"]",
         "rules": "[\"user_manage_all_user\"]"
     }
 },
@@ -13,7 +13,7 @@
     "pk": "USERTYPE_INTERNAL",
     "fields": {
         "name": "Internal User",
-        "permissions": "[\"totem.user.read\", \"totem.user.update\", \"totem.userrole.read\", \"totem.country.read\"]",
+        "permissions": "[\"totem.user.read\", \"totem.user.update\", \"totem.userrole.read\", \"totem.country.read\", \"totem.contact.read\", \"totem.contacttag.read\"]",
         "rules": "[\"user_manage_own_profile\"]"
     }
 },
