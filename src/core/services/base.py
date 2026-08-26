@@ -285,7 +285,13 @@ class ServiceBase(Service, t.Generic[ModelT]):
                         )
 
                 elif fname in foreign_key_instances:
-                    if fval not in foreign_key_instances[fname]:
+                    if fval is None:
+                        # Not a relation to resolve: an unset nullable foreign key.
+                        # `create` builds its values with `exclude_unset=False`, so
+                        # every optional relation of the schema reaches this loop,
+                        # None included.
+                        values[fname] = None
+                    elif fval not in foreign_key_instances[fname]:
                         suberror = RelationNotFound(
                             f"Invalid value for field '{fname}': {fval}",
                             key=fname,
