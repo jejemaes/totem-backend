@@ -118,3 +118,39 @@ class CleanupFileModelMixin(models.Model):
         for item in file_paths:
             if item:  # exclude None or empty string
                 storage.delete(item)
+
+
+# ------------------------------------------------
+# Address
+# ------------------------------------------------
+
+class AddressMixin(models.Model):
+    """Postal address fields, flattened on the model that inherits it.
+
+    One address per record: enough for the current need, and the abstraction
+    leaves the door open to move to a dedicated table later without touching the
+    models that use it today.
+    """
+
+    number = models.CharField(
+        "Number", max_length=32, null=True, blank=True, help_text="Street number, not necessarily numeric (12A, 3 bis, ...).")
+    street = models.CharField(
+        "Street", max_length=255, null=True, blank=True)
+    zip = models.CharField(
+        "Zip", max_length=32, null=True, blank=True)
+    city = models.CharField(
+        "City", max_length=255, null=True, blank=True)
+    country = models.ForeignKey(
+        'base.Country',
+        verbose_name="Country",
+        # A relation declared on an abstract model needs a reverse accessor per
+        # concrete subclass, otherwise the second model inheriting this mixin
+        # clashes with the first one.
+        related_name="%(app_label)s_%(class)s_set",
+        null=True,
+        blank=True,
+        on_delete=models.PROTECT,
+    )
+
+    class Meta:
+        abstract = True

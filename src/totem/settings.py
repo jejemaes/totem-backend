@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     "oauth",
     "user",
     "website",
+    "contact",
     # `core` must be last since it autodiscover `api` module
     # of each app, and generate schema on the fly (all models and
     # other auto loading stuff).
