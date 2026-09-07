@@ -10,7 +10,10 @@ from parameterized import parameterized
 from pydantic import AnyUrl, EmailStr, IPvAnyAddress  # , Json
 from pydantic.fields import FieldInfo
 
+from contact.models import Contact
 from core.schemas.fields import convert_db_field
+from user.models import UserRoleRelation
+from website.models import Menu, Page
 
 
 class TestSchemaFieldConverter(TestCase):
@@ -618,3 +621,48 @@ class TestSchemaFieldConverter(TestCase):
                         if hasattr(metadata, attr):
                             values[attr] = getattr(metadata, attr)
         return values
+
+
+class TestRelationFieldConverter(TestCase):
+    """A relation is represented by the primary key of what it points at, but it
+    is not that primary key: only the type and the value constraints are shared.
+    """
+
+    def test_a_relation_does_not_inherit_the_default_of_its_target_pk(self):
+        # `Page.user` points at `User`, whose pk defaults to `uuid.uuid4`.
+        # Inheriting that default gave the relation a `default_factory`, so a
+        # payload omitting the author got a freshly generated pk that relation
+        # resolution then rejected as unknown -- the field was impossible to
+        # omit, and a nullable relation impossible to leave unset.
+        _, field_info = convert_db_field(Page._meta.get_field("user"))
+
+        self.assertIsNone(field_info.default_factory)
+        self.assertIsNone(field_info.default)
+        self.assertFalse(field_info.is_required())
+
+    def test_a_self_relation_does_not_inherit_the_default_of_its_target_pk(self):
+        # The same, on the relation that made it visible: without this a root
+        # menu item -- one with no parent -- could not be created at all.
+        _, field_info = convert_db_field(Menu._meta.get_field("parent"))
+
+        self.assertIsNone(field_info.default_factory)
+        self.assertIsNone(field_info.default)
+
+    def test_a_relation_is_described_by_itself_not_by_its_target_pk(self):
+        _, field_info = convert_db_field(Page._meta.get_field("user"))
+
+        self.assertEqual(field_info.title, "Author")
+        self.assertNotEqual(field_info.title, "Id")
+
+    def test_a_relation_keeps_the_value_constraints_of_its_target_pk(self):
+        # `Contact.country` points at `Country`, whose pk is a two-character
+        # code: that bound constrains the submitted value whichever relation
+        # carries it, so unlike the default it must survive.
+        _, field_info = convert_db_field(Contact._meta.get_field("country"))
+
+        self.assertIn(MaxLen(2), field_info.metadata)
+
+    def test_a_required_relation_stays_required(self):
+        _, field_info = convert_db_field(UserRoleRelation._meta.get_field("user"))
+
+        self.assertTrue(field_info.is_required())
