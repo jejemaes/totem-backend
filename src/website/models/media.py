@@ -8,7 +8,34 @@ from base.models.mixins import CleanupFileQuerysetMixin, CleanupFileModelMixin
 
 
 class MediaQuerySet(CleanupFileQuerysetMixin, models.QuerySet):
-    pass
+
+    def bulk_create(self, objs, *args, **kwargs):
+        """Derive `checksum`, `mimetype` and `name` from the uploaded file.
+
+        It has to happen before the INSERT: that is where `FileField.pre_save`
+        commits the file to storage, and after that `content.name` holds the
+        stored path, not the uploaded filename. `Model.save()` -- and with it
+        the admin form's `clean()`, the only caller of `precompute_values`
+        today -- is never called on the service write path.
+        """
+        objs = list(objs)
+        for obj in objs:
+            if obj.checksum:
+                continue  # explicitly provided by the caller
+            file = obj.content
+            if not file:
+                continue  # let the NOT NULL constraint report it
+            filename = file.name
+            file.seek(0)
+            bin_data = file.read()
+            # Mandatory, not defensive: `PublicMediaFileSystemStorage._save`
+            # reads the stream again to derive the `FileReference.store_path`
+            # and never rewinds. A cursor left at EOF makes it hash `b""` and
+            # file every upload under the SHA1 of the empty string.
+            file.seek(0)
+            for fname, value in Media.precompute_values(bin_data, filename).items():
+                setattr(obj, fname, value)
+        return super().bulk_create(objs, *args, **kwargs)
 
 
 class Media(CleanupFileModelMixin, models.Model):

@@ -1,17 +1,21 @@
 
-from website.models import Page
-from website.models import Widget
+from website.choices import WIDGET_POSITION_HOMEPAGE_PREFIX
+from website.services import PageService, WidgetService
 from website.views.mixins import TemplateResponseMixin, WebsiteRenderContextMixin, View, DetailRecordTemplateWebsiteView
-from website.website_widget import RendererWidgetRegistry
 
 
 class PageView(DetailRecordTemplateWebsiteView):
 
-    queryset = Page.objects.filter(is_published=True)
+    service = PageService
     lookup_field = 'slug'
     lookup_url_kwarg = 'slug'
     template_name = 'website/page.html'
     context_object_name = 'page'
+
+    async def read_records(self, service, filters):
+        # "Publicly visible" is the service's definition, not this view's: the
+        # last-updated-pages widget must see exactly the same set.
+        return await service.read_published(filters=filters)
 
 
 class HomePageView(TemplateResponseMixin, WebsiteRenderContextMixin, View):
@@ -21,10 +25,9 @@ class HomePageView(TemplateResponseMixin, WebsiteRenderContextMixin, View):
 
     async def get_website_context_data(self):
         context = await super().get_website_context_data()
-
-        widget_qs = Widget.objects.filter(position__startswith='HOMEPAGE_')
-        context['homepage_widgets'] = RendererWidgetRegistry(widget_qs)
-
+        context['homepage_widgets'] = await self.env.get(
+            WidgetService
+        ).read_render_registry(WIDGET_POSITION_HOMEPAGE_PREFIX)
         return context
 
     async def get(self, request, *args, **kwargs):
