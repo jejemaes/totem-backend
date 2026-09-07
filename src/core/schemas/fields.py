@@ -49,6 +49,20 @@ def _get_enum_choices(
         yield name, value, description
 
 
+def _unwrap_optional(python_type: t.Type) -> t.Type:
+    """Strip the `Optional[...]` that converting a primary key always adds.
+
+    A primary key is `primary_key=True`, which `_get_pydantic_fieldinfo_from_field`
+    treats as nullable. Borrowing that type for a relation would make every
+    foreign key nullable regardless of its own `null`.
+    """
+    if t.get_origin(python_type) is t.Union:
+        args = [arg for arg in t.get_args(python_type) if arg is not type(None)]
+        if len(args) == 1:
+            return args[0]
+    return python_type
+
+
 def _get_pydantic_fieldinfo_from_field(
     python_type: t.Type, field: Field, optional: bool, extra_kwargs: t.Dict = None
 ) -> t.Tuple[t.Type, PydanticField]:
@@ -323,11 +337,38 @@ def convert_field_to_uuid(
 def convert_field_to_many_to_one(
     field: Field, optional: bool = False, extra_kwargs: dict = None
 ) -> t.Tuple[t.Type, PydanticField]:
+    """Represent a relation by the primary key of what it points at.
+
+    The *type* comes from the target's primary key, but the *default* is the
+    relation's own business. Inheriting the pk's default handed a foreign key
+    pointing at a `uuid.uuid4` (or `generate_ulid`) primary key a
+    `default_factory` of its own, so a relation nobody set was filled with a
+    freshly generated pk -- which relation resolution then rejected as unknown,
+    making the field impossible to omit. A relation nobody set is unset.
+    """
     pk_field = field.related_model._meta.pk  # pylint: disable=protected-access
-    python_type, field_info = convert_db_field(
-        pk_field, optional=optional, extra_kwargs=extra_kwargs
+    # Only the type and the value constraints are borrowed. The field info cannot
+    # be borrowed and then corrected: pydantic 2 rebuilds a `FieldInfo` from the
+    # attributes set at construction (`_attributes_set`), so assigning to
+    # `.default` or `.default_factory` afterwards never reaches the compiled
+    # schema.
+    python_type, _ = convert_db_field(pk_field)
+
+    # The target's primary key does constrain the *value* -- a country code is
+    # two characters long whichever relation points at it -- so its
+    # validator-derived constraints are carried over. Its default, title,
+    # description and nullability describe the primary key, not the relation,
+    # and are not. An explicit `extra_fields_kwargs` still wins over both.
+    pk_constraints, _ = convert_validators(pk_field.validators)
+    if extra_kwargs:
+        pk_constraints.update(extra_kwargs)
+
+    return _get_pydantic_fieldinfo_from_field(
+        _unwrap_optional(python_type),
+        field,
+        optional=optional,
+        extra_kwargs=pk_constraints or None,
     )
-    return python_type, field_info
 
 
 # Many-to-Many relation
