@@ -1,4 +1,8 @@
+from django.db.models import Model, Q
+
 from user.access_rights import register_permission
+from user.access_policy import BaseRule
+from website.models import Page
 
 # ---------------------------------------------------------
 # Define Scopes
@@ -16,3 +20,20 @@ register_permission("totem.websitemenu.create", "Create Website Menu Items", is_
 register_permission("totem.websitemenu.read", "Read Website Menu Items", is_public=True)
 register_permission("totem.websitemenu.update", "Update Website Menu Items", is_public=True)
 register_permission("totem.websitemenu.delete", "Delete Website Menu Items", is_public=True)
+
+# ---------------------------------------------------------
+# Access rules
+# ---------------------------------------------------------
+
+
+class WebsiteManageOwnPageRule(BaseRule):
+    identifier: str = "website_manage_own_page"
+    model: Model = Page
+    name: str = "Manage Own Page"
+    description: str = "Manage only the Page you are author of."
+    operations = ["create", "read", "update", "delete"]
+
+    def scope_filter(self, context) -> Q:
+        if context.user:
+            return Q(user_id=context.user.pk)
+        return Q()

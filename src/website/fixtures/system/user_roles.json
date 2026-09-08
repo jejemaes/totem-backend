@@ -1,0 +1,20 @@
+[
+{
+    "model": "user.userrole",
+    "pk": "WEBSITE_ADMIN",
+    "fields": {
+        "name": "Administrator",
+        "permissions": "[\"totem.websitepage.create\", \"totem.websitepage.read\", \"totem.websitepage.update\", \"totem.websitepage.delete\", \"totem.websitemenu.create\", \"totem.websitemenu.read\", \"totem.websitemenu.update\", \"totem.websitemenu.delete\"]",
+        "rules": "[]"
+    }
+},
+{
+    "model": "user.userrole",
+    "pk": "WEBSITE_USER",
+    "fields": {
+        "name": "Restricted User",
+        "permissions": "[\"totem.websitepage.create\", \"totem.websitepage.read\", \"totem.websitepage.update\", \"totem.websitepage.delete\", \"totem.websitemenu.read\", \"totem.websitemenu.update\"]",
+        "rules": "[\"website_manage_own_page\"]"
+    }
+}
+]

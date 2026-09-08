@@ -8,7 +8,7 @@ class WebsiteConfig(AppConfig):
     name = "website"
 
     populate_dependencies = ["user"]
-    populate_fixtures = ["page", "menu", "website"]
+    populate_fixtures = ["user_roles", "page", "menu", "website"]
 
     def populate_system(self, size, **kwargs):
         Website = apps.get_model('website', 'Website')
