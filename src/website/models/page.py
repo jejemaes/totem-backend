@@ -18,6 +18,7 @@ class PageQuerySet(WebsitePublishedQuerySet):
 
 
 class Page(WebsitePublishedMixin):
+    id = fields.ULIDField("ID", primary_key=True)
     title = models.CharField(
         "Title", max_length=256, null=False, blank=False)
     content = fields.HtmlField(

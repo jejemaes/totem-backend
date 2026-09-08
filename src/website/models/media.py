@@ -1,9 +1,9 @@
-import uuid
 import hashlib
 import mimetypes
 from django.db import models
 
 from base.files.storages import PublicMediaFileSystemStorage
+from core.orm.fields import ULIDField
 from base.models.mixins import CleanupFileQuerysetMixin, CleanupFileModelMixin
 
 
@@ -39,9 +39,7 @@ class MediaQuerySet(CleanupFileQuerysetMixin, models.QuerySet):
 
 
 class Media(CleanupFileModelMixin, models.Model):
-    id = models.UUIDField(
-        default=uuid.uuid4, editable=False, null=False, primary_key=True
-    )
+    id = ULIDField("ID", primary_key=True)
     name = models.CharField(
         "Name", max_length=256, null=False, blank=False, help_text="Path in the filestore"
     )

@@ -1,14 +1,10 @@
-import uuid
-
 from django.db import models
 
 from core.orm import fields
 
 
 class Website(models.Model):
-    id = models.UUIDField(
-        default=uuid.uuid4, editable=False, null=False, primary_key=True
-    )
+    id = fields.ULIDField("ID", primary_key=True)
     name = models.CharField(
         "Name", max_length=256, null=False, blank=False
     )

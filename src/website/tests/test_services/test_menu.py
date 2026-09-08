@@ -67,7 +67,10 @@ class TestMenuService(TestCase):
         with self.assertRaises(ServiceValidationMultiError) as ctx:
             self._create(
                 name="Child",
-                parent="14041cce-4b1a-4c6d-8f3e-000000000000",
+                # Well-formed but absent: `MenuCreateSchema.parent` borrows the
+                # constraints of the target primary key, so a string longer than
+                # 26 characters would be rejected before the service runs.
+                parent="01ARZ3NDEKTSV4RRFFQ69G5FAV",
                 link="/a/",
             )
 
