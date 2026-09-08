@@ -3,6 +3,7 @@ from django.test import TestCase
 from parameterized import parameterized
 
 from core.orm import fields
+from core.orm.validators import HTMLValidator
 
 HTML_WITH_STYLE = """
 <div id="root">
@@ -33,7 +34,7 @@ class TestHTMLField(TestCase):
             (
                 True,
                 """<script>console.log('hi');</script><p onclick="alert('yolo')">this is a test</p>""",
-                False,  # no root element
+                True,  # sibling top-level blocks are normal HTML
             ),
             (
                 True,
@@ -134,3 +135,67 @@ class TestHTMLField(TestCase):
         else:
             with self.assertRaises(ValidationError):
                 f.clean(value, None)
+
+
+class TestHTMLFieldParsing(TestCase):
+    """What the field accepts as *shape*, independently of the allowlists.
+
+    The validator used to parse with `lxml.etree`, the XML parser, so ordinary
+    HTML was refused: sibling top-level blocks, an unclosed `<br>`, `&nbsp;`.
+    Worse, a comment raised `TypeError` and an XML declaration `ValueError` --
+    neither a `ValidationError`, so both surfaced as a 500 instead of a form
+    error.
+    """
+
+    @parameterized.expand(
+        [
+            ("sibling top level blocks", "<p>a</p><p>b</p>"),
+            ("html entity", "<div>a&nbsp;b</div>"),
+            ("void element not self closed", "<div><br>text</div>"),
+            ("comment", "<div>a<!-- an inert comment -->b</div>"),
+            # With an `encoding` the XML parser raised `ValueError`, which the
+            # `except XMLSyntaxError` did not catch -- so a 500, not a form error.
+            ("xml declaration", '<?xml version="1.0" encoding="utf-8"?><div>x</div>'),
+            ("bare text", "hello"),
+        ]
+    )
+    def test_accepted_shapes(self, dummy, value):
+        f = fields.HtmlField()
+
+        # The validator never rewrites: what is given is what is stored.
+        self.assertEqual(f.clean(value, None), value)
+
+    @parameterized.expand(
+        [
+            ("script inside", "<div><script>alert(1)</script></div>"),
+            # The synthetic parent added to support sibling blocks must not let
+            # a top-level node escape the walk.
+            ("script at top level", "<script>alert(1)</script>"),
+            ("unknown attribute", '<div data-x="1">y</div>'),
+            ("unknown tag", "<div><totem-widget/></div>"),
+            ("style outside the whitelist", '<p style="not-existing: 14px">x</p>'),
+        ]
+    )
+    def test_still_rejected(self, dummy, value):
+        f = fields.HtmlField()
+
+        with self.assertRaises(ValidationError):
+            f.clean(value, None)
+
+    @parameterized.expand([("empty", ""), ("none", None)])
+    def test_the_validator_ignores_an_absent_value(self, dummy, value):
+        # Tested on the validator and not through `Field.clean`: whether a blank
+        # value is acceptable is decided by `null`/`blank` on the field, and the
+        # validator must simply not choke on it.
+        HTMLValidator()(value)  # must not raise
+
+    def test_a_comment_never_crashes_the_validator(self):
+        # Regression guard: `root.iter()` also yields comments, whose `.tag` is
+        # the *function* `etree.Comment`. It landed in the rejected-tags set,
+        # and `",".join(...)` then raised `TypeError`.
+        f = fields.HtmlField()
+
+        try:
+            f.clean("<div><!-- x --></div>", None)
+        except ValidationError:
+            pass  # a verdict is acceptable; a TypeError is not
