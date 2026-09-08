@@ -1,7 +1,7 @@
 from django.db import models
 from django.utils import timezone
 
-from core import fields
+from core.orm import fields
 from website.models.mixins import WebsitePublishedMixin, WebsitePublishedQuerySet
 
 

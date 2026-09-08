@@ -2,7 +2,7 @@ from django.db import models
 from django.utils.translation import gettext_lazy as _
 from ulid import ULID
 
-from core.validators import HTML_DEFAULT_ATTRS, HTML_DEFAULT_TAGS, HTMLValidator
+from core.orm.validators import HTML_DEFAULT_ATTRS, HTML_DEFAULT_TAGS, HTMLValidator
 
 
 def generate_ulid() -> str:
