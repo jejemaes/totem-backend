@@ -89,7 +89,11 @@ class MenuFilterSchema(FilterSchema):
         title="Root",
         description="Identifier of an ancestor: returns the whole subtree below it.",
     )
-    page: Optional[str] = Field(
+    # `target_page` and not `page`: the list route flattens every query
+    # parameter into one signature, where `page` and `page_size` already belong
+    # to `PageNumberPagination.Input`. A filter of that name makes ninja refuse
+    # to build the operation at import time.
+    target_page: Optional[str] = Field(
         None,
         q="page__id",
         title="Target Page",
