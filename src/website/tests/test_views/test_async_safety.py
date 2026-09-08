@@ -27,14 +27,18 @@ class TestWebsiteAsyncSafety(WebsiteViewTestMixin, TransactionTestCase):
 
     def setUp(self):
         super().setUp()
-        self.page = self.build_page(slug="tresor")
-        self.menu = self.build_menu_tree(page=self.page)
-        self.website = self.build_website(menu=self.menu)
-        self.build_widget("FOOTER_1")
-        self.build_widget(
-            "FOOTER_2", widget_type="last_update_page", param_limit_item=3
+        self.page = self.build_page(
+            slug="tresor", content=f"<div><p>x</p>{self.marker(attrs={'limit': 3})}</div>"
         )
-        self.build_widget("HOMEPAGE_1")
+        self.homepage = self.build_page(
+            slug="home", content=f"<div>{self.marker()}</div>"
+        )
+        self.menu = self.build_menu_tree(page=self.page)
+        self.website = self.build_website(
+            menu=self.menu,
+            homepage=self.homepage,
+            footer=f"<div>{self.marker()}</div>",
+        )
 
     async def test_the_homepage_render_is_async_safe(self):
         response = await HomePageView.as_view()(self.build_request("/"))

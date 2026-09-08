@@ -3,6 +3,7 @@ from unittest.mock import patch
 from django.test import Client, TestCase
 from django.urls import reverse
 
+from website.models import Page, Website
 from website.services import PageService
 from website.views import PageView
 
@@ -62,9 +63,11 @@ class TestPageView(WebsiteViewTestMixin, TestCase):
         )
 
     def test_render_makes_no_query(self):
-        self.build_widget("FOOTER_1")
-        self.build_widget(
-            "FOOTER_2", widget_type="last_update_page", param_limit_item=3
+        Page.objects.filter(pk=self.page.pk).update(
+            content=f"<div><p>x</p>{self.marker(attrs={'limit': 3})}</div>"
+        )
+        Website.objects.filter(pk=self.website.pk).update(
+            footer=f"<div>{self.marker()}</div>"
         )
 
         response = self.get_unrendered_response(PageView, self._url(), slug="tresor")

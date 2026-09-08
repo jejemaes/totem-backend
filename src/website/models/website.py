@@ -20,6 +20,10 @@ class Website(models.Model):
     meta_description = models.TextField("Meta Description", null=True, blank=True)
 
     menu = models.ForeignKey('website.Menu', verbose_name="Main Menu", null=True, blank=True, on_delete=models.SET_NULL, help_text="Parent item as the main menu of the website.")
+    # `PROTECT`, like `Menu.page`: the page the site opens on should not be
+    # deletable out from under it. Nullable because a freshly provisioned system
+    # has no content yet -- which is why `/` must degrade rather than 404.
+    homepage = models.ForeignKey('website.Page', verbose_name="Homepage", null=True, blank=True, on_delete=models.PROTECT, related_name="+", help_text="Page rendered at the root of the website.")
 
     footer = fields.HtmlField("Footer Content", null=True, blank=True, allow_widget=True)
 

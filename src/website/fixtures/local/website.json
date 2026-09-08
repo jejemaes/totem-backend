@@ -1,14 +1,15 @@
 [
-{
-    "model": "website.website",
-    "pk": "7a49103e-c0a8-4b24-af4f-fbced54c0263",
-    "fields": {
-        "name": "My Website",
-        "headline": "My Website Headline",
-        "meta_authors": null,
-        "meta_description": "",
-        "menu": "2fbbf28c-9add-4234-a86d-b54620bba96b",
-        "footer": null
+    {
+        "model": "website.website",
+        "pk": "7a49103e-c0a8-4b24-af4f-fbced54c0263",
+        "fields": {
+            "name": "My Website",
+            "headline": "My Website Headline",
+            "meta_authors": null,
+            "meta_description": "",
+            "menu": "2fbbf28c-9add-4234-a86d-b54620bba96b",
+            "footer": "<div><p>Scout group, since 1910.</p><t-widget name=\"last-page\" attrs='{\"limit\": 2}'></t-widget></div>",
+            "homepage": 4
+        }
     }
-}
 ]

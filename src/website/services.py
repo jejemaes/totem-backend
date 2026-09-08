@@ -6,17 +6,14 @@ from core.services import (
     UpdateMixin,
 )
 from core.utils.tree import HierarchyTree
-from website.models import Media, Menu, Page, Widget
+from website.models import Media, Menu, Page
 from website.schemas import (
     MediaCreateSchema,
     MenuCreateSchema,
     MenuUpdateSchema,
     PageCreateSchema,
     PageUpdateSchema,
-    WidgetCreateSchema,
-    WidgetUpdateSchema,
 )
-from website.website_widget import RendererWidgetRegistry, get_widget_type
 
 
 class PageService(
@@ -133,78 +130,6 @@ class MenuService(
         # `Website.menu` pointing at a child yields no root at all. Never index
         # into this blindly, which is what used to raise `IndexError` in the view.
         return roots[0] if roots else None
-
-
-class WidgetService(
-    CreateMixin[WidgetCreateSchema],
-    ReadMixin,
-    UpdateMixin[WidgetUpdateSchema],
-    DeleteMixin,
-    ServiceBase[Widget],
-):
-    """Carries the rule `Widget.clean()` holds.
-
-    `clean()` is only ever called by a ModelForm, so the admin enforces the
-    widget-type parameter rules and every other caller does not.
-    """
-
-    # The `param_*` fields, plus the type that decides which of them are legal.
-    _widget_type_fields = ("widget_type", "param_content", "param_limit_item")
-
-    def validate_data(self, data, instance):
-        # An update carries only the fields actually set, so the rule has to be
-        # evaluated on the merge of the payload and the stored row: changing the
-        # type alone must still be checked against the parameters already there.
-        values = {}
-        for fname in self._widget_type_fields:
-            if fname in data:
-                values[fname] = data[fname]
-            else:
-                values[fname] = getattr(instance, fname, None) if instance else None
-
-        # `choices` made the schema field an `Enum` whose members subclass
-        # `str`. `.value` keeps the registry lookup readable; never `str()`,
-        # which would yield "WidgetTypeEnum.CUSTOM_HTML".
-        raw_type = values["widget_type"]
-        widget_type = getattr(raw_type, "value", raw_type)
-        values["widget_type"] = widget_type
-
-        widget_type_instance = get_widget_type(widget_type)
-        if widget_type_instance is None:
-            # Unreachable through a schema -- the field is a `choices` enum
-            # built from this very registry -- but reachable from a fixture or a
-            # data migration, where `Widget.clean()` raises a bare
-            # `AttributeError` today.
-            raise self.ValidationError(
-                f"Unknown widget type {widget_type!r}.", key="widget_type"
-            )
-
-        errors = widget_type_instance.get_validation_errors(values)
-        if errors:
-            raise self.ValidationError(errors)
-
-    async def read_render_registry(self, position_prefix):
-        """The widgets of one area, rendered, keyed by position.
-
-        Everything a widget needs from the database is read *here*, in the async
-        phase and through the services, because `RendererWidgetRegistry` is
-        consumed while the template renders -- where a query would run outside
-        any `sync_to_async` hop the service could open, and outside the access
-        rules entirely.
-        """
-        queryset = await self.read(filters={"position__startswith": position_prefix})
-        widgets = [widget async for widget in queryset]
-
-        render_data = {}
-        for widget in widgets:
-            widget_type_instance = get_widget_type(widget.widget_type)
-            if widget_type_instance is None:
-                continue  # a stale type in the database renders as an empty slot
-            render_data[widget.pk] = await widget_type_instance.aget_render_data(
-                widget, self.env
-            )
-
-        return RendererWidgetRegistry(widgets, render_data)
 
 
 class MediaService(

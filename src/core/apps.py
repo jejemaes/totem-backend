@@ -20,6 +20,11 @@ class CoreConfig(AppConfig):
         # populated by importing every `api.py` file. This is not the case with controllers.
         autodiscover_modules('api')
 
+        # The widget classes any app contributes, keyed by id in
+        # `core.html_widget`. `core` is last in `INSTALLED_APPS`, so every app
+        # has been loaded by the time this runs.
+        autodiscover_modules('html_widget')
+
         # Also, need to load all services defined
         autodiscover_modules("services")
 

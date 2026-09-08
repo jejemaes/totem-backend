@@ -8,6 +8,17 @@ from lxml import etree
 from lxml import html as lxml_html
 from lxml.html import defs
 
+# The marker format and the registry live with the widgets. This module enforces
+# the format but does not own it, and `core.html_widget` never imports back --
+# `models -> orm.fields -> orm.validators -> html_widget` stays a straight line.
+from core.html_widget import (
+    WIDGET_ATTRS_ATTR,
+    WIDGET_MAX_COUNT,
+    WIDGET_NAME_ATTR,
+    WIDGET_TAG,
+    get_widget,
+)
+
 
 def validate_unique_choice_array(array):
     if len(list(array)) != len(set(array)):
@@ -28,32 +39,6 @@ HTML_DEFAULT_TAGS = (
     - defs.nonstandard_tags  # blink, marquee
     - defs.top_level_tags  # html, body, head, frameset
 )
-
-
-# ----------------------------------------------------------------------------
-# Widget markers
-# ----------------------------------------------------------------------------
-
-# A widget is stored in the HTML as an inert marker element, expanded server
-# side at render time:
-#
-#     <t-widget name="last-page" attrs='{"limit":5}'></t-widget>
-#
-# The element and its `attrs` are only accepted on the fields that opt in with
-# `allow_widget`. `name` needs no opt-in, being already in `defs.safe_attrs`.
-#
-# One JSON attribute rather than one attribute per parameter: the allowlist is
-# an explicit list, so `attrs` is a single entry to add, once and for all -- a
-# new kind of widget will never have to touch this module again. It also keeps
-# the parameter types (`5` stays an integer).
-WIDGET_TAG = "t-widget"
-WIDGET_NAME_ATTR = "name"
-WIDGET_ATTRS_ATTR = "attrs"
-
-# A page renders its widgets one at a time, so the cost is linear in their
-# number. Bounded at write time, so a page cannot be authored into a
-# performance cliff that only shows up in production.
-WIDGET_MAX_COUNT = 20
 
 
 @deconstructible
@@ -234,11 +219,11 @@ class HTMLValidator:
         return messages
 
     def _validate_widgets(self, nodes):
-        """Shape of the widget markers: is this usable by the renderer at all?
+        """The widget markers: usable by the renderer, and by the right widget.
 
-        Deliberately not *semantics*: whether `name` designates a known kind of
-        widget, and whether `attrs` satisfies that kind's own schema, is checked
-        where the widget registry lives.
+        Shape -- a `name`, an `attrs` that is a JSON object, no nesting, not too
+        many -- and semantics: `name` designates a registered widget, and
+        `attrs` satisfies that widget's own `attribute_schema`.
 
         Each kind of problem is reported once, however many markers carry it --
         same convention as the sets above.
@@ -253,6 +238,7 @@ class HTMLValidator:
 
         is_nested = False
         misses_name = False
+        unknown_names = set()
         invalid_attrs = set()
 
         for node in nodes:
@@ -268,18 +254,26 @@ class HTMLValidator:
             name = (node.get(WIDGET_NAME_ATTR) or "").strip()
             if not name:
                 misses_name = True
+                continue
+
+            widget = get_widget(name)
+            if widget is None:
+                unknown_names.add(name)
+                continue
 
             # No `attrs` at all is fine: a widget whose parameters all have
             # defaults needs none.
             raw_attrs = node.get(WIDGET_ATTRS_ATTR)
-            if raw_attrs is not None:
-                try:
-                    parsed = json.loads(raw_attrs)
-                except ValueError:
-                    invalid_attrs.add(name or "?")
-                else:
-                    if not isinstance(parsed, dict):
-                        invalid_attrs.add(name or "?")
+            try:
+                parsed = json.loads(raw_attrs) if raw_attrs else {}
+                if not isinstance(parsed, dict):
+                    raise ValueError("not a JSON object")
+                widget.validate_attributes(parsed)
+            except ValueError:
+                # Covers a malformed JSON string, a JSON value that is not an
+                # object, and `pydantic.ValidationError` -- which subclasses
+                # `ValueError`.
+                invalid_attrs.add(name)
 
         if is_nested:
             messages.append(
@@ -287,10 +281,13 @@ class HTMLValidator:
             )
         if misses_name:
             messages.append(str(_("A widget must have a non-empty 'name'.")))
+        if unknown_names:
+            messages.append(
+                _("Unknown widget: %s") % (",".join(sorted(unknown_names)))
+            )
         if invalid_attrs:
             messages.append(
-                _("Widget parameters must be a JSON object: %s")
-                % (",".join(sorted(invalid_attrs)))
+                _("Invalid widget parameters: %s") % (",".join(sorted(invalid_attrs)))
             )
 
         return messages
