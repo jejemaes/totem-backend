@@ -4,6 +4,7 @@ from django.core.exceptions import ValidationError
 from django.utils.deconstruct import deconstructible
 from django.utils.translation import gettext_lazy as _
 from lxml import etree
+from lxml import html as lxml_html
 from lxml.html import defs
 
 
@@ -118,15 +119,27 @@ class HTMLValidator:
             self.allowed_attrs |= {"style"}
 
     def __call__(self, value):
+        if not value:
+            # Whether blank is acceptable is the field's business (`blank`), not
+            # the validator's.
+            return
+
         try:
-            root = etree.fromstring(value)
-            rejected_tags, rejected_attrs, rejected_style_items, has_rejected_class = (
-                self._validate_etree(root)
-            )
-        except etree.XMLSyntaxError as exc:
+            # The *HTML* parser, not `etree.fromstring`. HTML authored by a
+            # human -- or emitted by a rich-text editor -- is not well-formed
+            # XML: sibling top-level blocks, `<br>`, `&nbsp;` and comments are
+            # all normal, and the XML parser rejected every one of them.
+            # `create_parent` adds a synthetic root so a fragment with several
+            # top-level elements parses; see `_validate_etree` about skipping it.
+            root = lxml_html.fragment_fromstring(value, create_parent="div")
+        except (etree.LxmlError, ValueError) as exc:
             raise ValidationError(
                 _("Syntax error, this is not a parsable HTML code.")
             ) from exc
+
+        rejected_tags, rejected_attrs, rejected_style_items, has_rejected_class = (
+            self._validate_etree(root)
+        )
 
         messages = []
         if rejected_tags:
@@ -148,7 +161,16 @@ class HTMLValidator:
         rejected_attrs = set()
         rejected_style_items = set()
         has_rejected_class = False
-        for node in root.iter():
+        # `iterdescendants` and not `iter`: the root is the synthetic wrapper
+        # added by `fragment_fromstring`, which is not authored content and must
+        # not be checked against the allowlist.
+        #
+        # `etree.Element` restricts the walk to elements, so comments and
+        # processing instructions never reach the tag check. Their `.tag` is a
+        # *function*, not a string: it used to land in `rejected_tags` and make
+        # `",".join(...)` raise `TypeError` -- a 500 -- instead of a
+        # `ValidationError`. Comments are inert, so they are simply allowed.
+        for node in root.iterdescendants(etree.Element):
             if node.tag not in self.allowed_tags:
                 rejected_tags.add(node.tag)
 
