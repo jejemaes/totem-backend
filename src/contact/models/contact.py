@@ -2,7 +2,7 @@ from django.db import models
 from django.utils import timezone
 
 from base.models.mixins import AddressMixin
-from core.fields import ULIDField
+from core.orm.fields import ULIDField
 
 
 class ContactQuerySet(models.QuerySet):

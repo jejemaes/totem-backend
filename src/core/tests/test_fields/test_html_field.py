@@ -2,7 +2,7 @@ from django.core.exceptions import ValidationError
 from django.test import TestCase
 from parameterized import parameterized
 
-from core import fields
+from core.orm import fields
 
 HTML_WITH_STYLE = """
 <div id="root">

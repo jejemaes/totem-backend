@@ -1,7 +1,7 @@
 from django.core import validators
 from django.db import models
 
-from core import fields
+from core.orm import fields
 from website import choices
 from website.website_widget import get_widget_type, get_widget_type_choices
 

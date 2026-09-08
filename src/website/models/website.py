@@ -2,7 +2,7 @@ import uuid
 
 from django.db import models
 
-from core import fields
+from core.orm import fields
 
 
 class Website(models.Model):
