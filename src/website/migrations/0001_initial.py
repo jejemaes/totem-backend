@@ -3,7 +3,6 @@
 import core.orm.fields
 import django.core.validators
 import django.db.models.deletion
-import uuid
 from django.conf import settings
 from django.db import migrations, models
 
@@ -35,7 +34,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='Page',
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
+                ('id', core.orm.fields.ULIDField(default=core.orm.fields.generate_ulid, editable=False, max_length=26, primary_key=True, serialize=False, verbose_name='ID')),
                 ('slug', models.SlugField(help_text='URL part identifying the page.', max_length=256, verbose_name='Slug')),
                 ('is_published', models.BooleanField(default=False, help_text='Is published on the website.', verbose_name='Is Published')),
                 ('date_published', models.DateTimeField(blank=True, help_text='Date of the last publication of the document.', null=True, verbose_name='Publication Date')),
@@ -52,7 +51,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='Menu',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', core.orm.fields.ULIDField(default=core.orm.fields.generate_ulid, editable=False, max_length=26, primary_key=True, serialize=False, verbose_name='ID')),
                 ('name', models.CharField(max_length=256, verbose_name='Title')),
                 ('parent_path', models.CharField(editable=False, help_text='Use to fetch all menu tree at once.', max_length=256, verbose_name='Parent Path')),
                 ('create_date', models.DateTimeField(auto_now_add=True, verbose_name='Create Date')),
@@ -70,7 +69,7 @@ class Migration(migrations.Migration):
         migrations.CreateModel(
             name='Website',
             fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
+                ('id', core.orm.fields.ULIDField(default=core.orm.fields.generate_ulid, editable=False, max_length=26, primary_key=True, serialize=False, verbose_name='ID')),
                 ('name', models.CharField(max_length=256, verbose_name='Name')),
                 ('headline', models.CharField(max_length=256, verbose_name='Headline')),
                 ('meta_authors', models.CharField(blank=True, max_length=256, null=True, verbose_name='Meta Author')),

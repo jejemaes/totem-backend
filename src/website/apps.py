@@ -1,6 +1,6 @@
 from django.apps import AppConfig, apps
 
-DEFAULT_WEBSITE_ID = "7a49103e-c0a8-4b24-af4f-fbced54c0263"
+DEFAULT_WEBSITE_ID = "01M209K5BNS12QRPHXFWVJNVD1"
 
 
 class WebsiteConfig(AppConfig):

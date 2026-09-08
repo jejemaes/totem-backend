@@ -39,3 +39,20 @@ class TestPageModel(TestCase):
 
         page.refresh_from_db()
         self.assertGreater(page.update_date, before)
+
+
+class TestPagePrimaryKey(TestCase):
+
+    def test_primary_key_is_a_ulid(self):
+        page = Page.objects.create(title="Page", slug="page", content="<p>x</p>")
+
+        self.assertEqual(len(page.pk), 26)
+        self.assertTrue(page.pk.isalnum())
+
+    def test_primary_keys_sort_in_creation_order(self):
+        first = Page.objects.create(title="First", slug="first", content="<p>x</p>")
+        second = Page.objects.create(title="Second", slug="second", content="<p>x</p>")
+
+        # This is the whole point of a ULID over a UUID4, and what makes the
+        # implicit ordering added by `queryset_order_by_fields` meaningful.
+        self.assertLess(first.pk, second.pk)

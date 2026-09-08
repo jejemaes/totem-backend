@@ -1,8 +1,8 @@
-import uuid
-
 from django.core.exceptions import EmptyResultSet
 from django.db import connection, models
 from django.db.models import Q
+
+from core.orm.fields import ULIDField
 
 
 class MenuQuerySet(models.QuerySet):
@@ -48,9 +48,7 @@ class MenuQuerySet(models.QuerySet):
 
 
 class Menu(models.Model):
-    id = models.UUIDField(
-        default=uuid.uuid4, editable=False, null=False, primary_key=True
-    )
+    id = ULIDField("ID", primary_key=True)
     name = models.CharField(
         "Title", max_length=256, null=False, blank=False)
     parent = models.ForeignKey('website.Menu', null=True, blank=True, related_name="children", on_delete=models.PROTECT)
