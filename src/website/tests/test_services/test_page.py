@@ -1,4 +1,5 @@
 from asgiref.sync import async_to_sync
+from parameterized import parameterized
 from django.db.models import ProtectedError
 from django.test import TestCase
 from pydantic import ValidationError as PydanticValidationError
@@ -109,6 +110,39 @@ class TestPageService(TestCase):
             PageCreateSchema(
                 title="Page", slug="page", content="<script>alert(1)</script>"
             )
+
+    # ------------------------------------------
+    # Tests Widget Markers
+    # ------------------------------------------
+
+    def test_a_widget_marker_is_accepted_in_the_content(self):
+        # `Page.content` opts in with `allow_widget`, so the marker survives all
+        # the way to the database.
+        content = '<div><t-widget name="last-page" attrs=\'{"limit":5}\'/></div>'
+
+        pages = async_to_sync(self.service.create)([
+            PageCreateSchema(title="Page", slug="page", content=content)
+        ])
+
+        self.assertEqual(Page.objects.get(pk=pages[0].pk).content, content)
+
+    @parameterized.expand(
+        [
+            ("attrs is not json", '<div><t-widget name="x" attrs="nope"/></div>'),
+            ("name is absent", "<div><t-widget/></div>"),
+            (
+                "marker inside a marker",
+                '<div><t-widget name="a"><t-widget name="b"/></t-widget></div>',
+            ),
+        ]
+    )
+    def test_a_malformed_widget_marker_is_refused(self, dummy, content):
+        # The structural consequence of inline parameters: they are validated
+        # when the *page* is saved, not when a widget row is. The field
+        # validator becomes a pydantic validator on the schema, through
+        # `convert_validators`, so the service path is covered too.
+        with self.assertRaises(PydanticValidationError):
+            PageCreateSchema(title="Page", slug="page", content=content)
 
     # ------------------------------------------
     # Tests Update

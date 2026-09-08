@@ -25,6 +25,7 @@ class HtmlFieldMixin:
         allow_javascript=False,
         allow_style_attr=True,
         allow_class_attr=True,
+        allow_widget=False,
         allowed_tags=HTML_DEFAULT_TAGS,
         allowed_attrs=HTML_DEFAULT_ATTRS,
         **kwargs
@@ -33,6 +34,7 @@ class HtmlFieldMixin:
             allow_javascript=allow_javascript,
             allow_style_attr=allow_style_attr,
             allow_class_attr=allow_class_attr,
+            allow_widget=allow_widget,
             allowed_tags=allowed_tags,
             allowed_attrs=allowed_attrs,
         )
