@@ -21,7 +21,7 @@ class Page(WebsitePublishedMixin):
     title = models.CharField(
         "Title", max_length=256, null=False, blank=False)
     content = fields.HtmlField(
-        "Content", null=False, blank=False, help_text="HTML content")
+        "Content", null=False, blank=False, allow_widget=True, help_text="HTML content")
     update_date = models.DateTimeField("Update Date", auto_now=True)
     user = models.ForeignKey('user.User', verbose_name="Author", null=True, blank=True, on_delete=models.SET_NULL, help_text="Author of the web page.")
 

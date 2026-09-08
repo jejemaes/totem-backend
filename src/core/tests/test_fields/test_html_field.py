@@ -3,7 +3,7 @@ from django.test import TestCase
 from parameterized import parameterized
 
 from core.orm import fields
-from core.orm.validators import HTMLValidator
+from core.orm.validators import HTMLValidator, WIDGET_MAX_COUNT
 
 HTML_WITH_STYLE = """
 <div id="root">
@@ -199,3 +199,98 @@ class TestHTMLFieldParsing(TestCase):
             f.clean("<div><!-- x --></div>", None)
         except ValidationError:
             pass  # a verdict is acceptable; a TypeError is not
+
+
+class TestHTMLFieldWidgetMarker(TestCase):
+    """The `<t-widget>` marker, opted into per field with `allow_widget`.
+
+    Only the *shape* is checked here: is the marker usable by the renderer at
+    all. Whether `name` designates a known kind of widget, and whether `attrs`
+    satisfies that kind's schema, belongs where the widget registry lives.
+    """
+
+    MARKER = '<div><t-widget name="last-page" attrs=\'{"limit":5}\'></t-widget></div>'
+
+    def test_the_marker_is_refused_by_default(self):
+        # `allow_widget` defaults to False, so the tag is simply not in the
+        # allowlist: no separate rule needed to keep widgets out of a field that
+        # never renders them.
+        f = fields.HtmlField()
+
+        with self.assertRaises(ValidationError):
+            f.clean(self.MARKER, None)
+
+    def test_the_marker_is_accepted_when_the_field_opts_in(self):
+        f = fields.HtmlField(allow_widget=True)
+
+        self.assertEqual(f.clean(self.MARKER, None), self.MARKER)
+
+    def test_opting_in_does_not_widen_anything_else(self):
+        f = fields.HtmlField(allow_widget=True)
+
+        with self.assertRaises(ValidationError):
+            f.clean('<div><t-widget name="x"/><script>alert(1)</script></div>', None)
+
+    @parameterized.expand(
+        [
+            ("no attrs at all", '<div><t-widget name="x"></t-widget></div>'),
+            ("self closing", '<div><t-widget name="x"/></div>'),
+            ("empty attrs object", '<div><t-widget name="x" attrs=\'{}\'></t-widget></div>'),
+            # Content between the tags is a fallback, kept for when the widget
+            # is gone -- the renderer replaces it.
+            ("fallback content", '<div><t-widget name="x"><p>fallback</p></t-widget></div>'),
+            ("inside a paragraph", '<div><p>before <t-widget name="x"/> after</p></div>'),
+        ]
+    )
+    def test_accepted_markers(self, dummy, value):
+        f = fields.HtmlField(allow_widget=True)
+
+        self.assertEqual(f.clean(value, None), value)
+
+    @parameterized.expand(
+        [
+            ("attrs is not json", '<div><t-widget name="x" attrs="not json"></t-widget></div>'),
+            ("attrs is not an object", '<div><t-widget name="x" attrs=\'[1,2]\'></t-widget></div>'),
+            ("name is absent", "<div><t-widget></t-widget></div>"),
+            ("name is blank", '<div><t-widget name="  "></t-widget></div>'),
+        ]
+    )
+    def test_rejected_markers(self, dummy, value):
+        f = fields.HtmlField(allow_widget=True)
+
+        with self.assertRaises(ValidationError):
+            f.clean(value, None)
+
+    def test_a_marker_inside_a_marker_is_refused(self):
+        # Not a safety problem -- expansion is single-pass, so it can neither
+        # loop nor escape. But the renderer replaces the outer marker and
+        # discards its subtree, so the inner one would silently vanish: better
+        # said here than surprising at render time.
+        f = fields.HtmlField(allow_widget=True)
+
+        with self.assertRaises(ValidationError) as ctx:
+            f.clean('<div><t-widget name="a"><t-widget name="b"/></t-widget></div>', None)
+
+        self.assertIn("inside another widget", str(ctx.exception))
+
+    def test_the_number_of_markers_is_bounded(self):
+        # A page renders its widgets one at a time, so the cost is linear in
+        # their number. The bound is what keeps a page from being authored into
+        # a performance cliff.
+        f = fields.HtmlField(allow_widget=True)
+        marker = '<t-widget name="x"/>'
+
+        f.clean(f"<div>{marker * WIDGET_MAX_COUNT}</div>", None)  # must not raise
+
+        with self.assertRaises(ValidationError):
+            f.clean(f"<div>{marker * (WIDGET_MAX_COUNT + 1)}</div>", None)
+
+    def test_every_problem_is_reported_at_once(self):
+        # The checks accumulate instead of stopping at the first: an author
+        # fixing one message should not discover the next on the next save.
+        f = fields.HtmlField(allow_widget=True)
+
+        with self.assertRaises(ValidationError) as ctx:
+            f.clean('<div><t-widget attrs="not json"/><span data-x="1"/></div>', None)
+
+        self.assertEqual(len(ctx.exception.messages), 3)
