@@ -1,7 +1,7 @@
 from django.test import Client, TestCase
 from django.urls import reverse
 
-from website.models import Website
+from website.models import Page, Website
 from website.views import HomePageView
 
 from .common import WebsiteViewTestMixin
@@ -12,8 +12,9 @@ class TestHomePageView(WebsiteViewTestMixin, TestCase):
     def setUp(self):
         super().setUp()
         self.page = self.build_page()
+        self.homepage = self.build_page(slug="home", content="<div><p>hello</p></div>")
         self.menu = self.build_menu_tree(page=self.page)
-        self.website = self.build_website(menu=self.menu)
+        self.website = self.build_website(menu=self.menu, homepage=self.homepage)
 
     def test_homepage_renders(self):
         response = Client().get(reverse("homepage"))
@@ -45,6 +46,36 @@ class TestHomePageView(WebsiteViewTestMixin, TestCase):
 
         self.assertEqual(response.status_code, 200)
 
+    def test_homepage_without_a_homepage_page(self):
+        # A freshly provisioned system has a `Website` row but no content: `/`
+        # must still answer, with the hero alone.
+        Website.objects.filter(pk=self.website.pk).update(homepage=None)
+
+        response = Client().get(reverse("homepage"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Moulinsart")
+
+    def test_homepage_with_an_unpublished_homepage(self):
+        # Unpublishing the homepage must not 404 the root of the site.
+        Page.objects.filter(pk=self.homepage.pk).update(is_published=False)
+
+        response = Client().get(reverse("homepage"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "hello")
+
+    def test_the_homepage_content_is_rendered(self):
+        response = Client().get(reverse("homepage"))
+
+        self.assertContains(response, "hello")
+
+    def test_the_homepage_page_can_not_be_deleted_while_the_site_points_at_it(self):
+        from django.db.models import ProtectedError
+
+        with self.assertRaises(ProtectedError):
+            self.homepage.delete()
+
     def test_homepage_with_a_menu_root_that_is_not_a_root(self):
         # The subtree filter matches nothing, so there is no root to index into
         # -- which used to be an `IndexError`.
@@ -63,10 +94,11 @@ class TestHomePageView(WebsiteViewTestMixin, TestCase):
         # The point of the whole refactor. The template renders outside any
         # `sync_to_async` hop, so anything left lazy here queries the database
         # past the service layer and past its access rules.
-        self.build_widget("FOOTER_1")
-        self.build_widget("HOMEPAGE_1")
-        self.build_widget(
-            "HOMEPAGE_2", widget_type="last_update_page", param_limit_item=3
+        Page.objects.filter(pk=self.homepage.pk).update(
+            content=f"<div><p>hello</p>{self.marker(attrs={'limit': 3})}</div>"
+        )
+        Website.objects.filter(pk=self.website.pk).update(
+            footer=f"<div>{self.marker()}</div>"
         )
 
         response = self.get_unrendered_response(HomePageView, "/")

@@ -4,7 +4,6 @@ import core.orm.fields
 import django.core.validators
 import django.db.models.deletion
 import uuid
-import website.website_widget
 from django.conf import settings
 from django.db import migrations, models
 
@@ -23,7 +22,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('title', models.CharField(max_length=256, verbose_name='Title')),
-                ('widget_type', models.CharField(choices=website.website_widget.get_widget_type_choices, max_length=64, verbose_name='Type')),
+                ('widget_type', models.CharField(max_length=64, verbose_name='Type')),
                 ('position', models.CharField(choices=[('FOOTER_1', 'Footer 1'), ('FOOTER_2', 'Footer 2'), ('FOOTER_3', 'Footer 3'), ('FOOTER_4', 'Footer 4'), ('HOMEPAGE_1', 'Homepage 1'), ('HOMEPAGE_2', 'Homepage 2'), ('HOMEPAGE_3', 'Homepage 3'), ('HOMEPAGE_4', 'Homepage 4')], max_length=64, verbose_name='Position')),
                 ('param_content', core.orm.fields.HtmlField(blank=True, null=True, verbose_name='HTML Content')),
                 ('param_limit_item', models.IntegerField(blank=True, help_text='Used to limit the number of item to display in the widget.', null=True, validators=[django.core.validators.MaxValueValidator(10)], verbose_name='Max Item to Display')),

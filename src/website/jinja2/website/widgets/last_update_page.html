@@ -1,5 +1,5 @@
 <div>
-	<h5>{{ title }}</h5>
+	{% if heading %}<h5>{{ heading }}</h5>{% endif %}
 	<div>
 		<ul class="">
           {% for page in pages %}

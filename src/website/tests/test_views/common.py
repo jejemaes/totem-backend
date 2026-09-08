@@ -1,7 +1,7 @@
 from asgiref.sync import async_to_sync
 from django.test import RequestFactory
 
-from website.models import Menu, Page, Website, Widget
+from website.models import Menu, Page, Website
 
 
 class WebsiteViewTestMixin:
@@ -13,9 +13,13 @@ class WebsiteViewTestMixin:
     time" can be asserted at all.
     """
 
-    def build_website(self, menu=None):
+    def build_website(self, menu=None, homepage=None, footer=None):
         return Website.objects.create(
-            name="Moulinsart", headline="<p>Le domaine</p>", menu=menu
+            name="Moulinsart",
+            headline="<p>Le domaine</p>",
+            menu=menu,
+            homepage=homepage,
+            footer=footer,
         )
 
     def build_menu_tree(self, page=None):
@@ -25,23 +29,20 @@ class WebsiteViewTestMixin:
             Menu.objects.create(name="Page", parent=root, page=page, sequence=20)
         return root
 
-    def build_page(self, slug="tresor", published=True):
+    def build_page(self, slug="tresor", published=True, content=None):
         return Page.objects.create(
             title="Le Trésor de Rackham",
             slug=slug,
-            content="<p>Mille sabords</p>",
+            content=content or "<p>Mille sabords</p>",
             is_published=published,
         )
 
-    def build_widget(self, position, widget_type="custom_html", **kwargs):
-        values = {"param_content": "<p>Bloc</p>"} if widget_type == "custom_html" else {}
-        values.update(kwargs)
-        return Widget.objects.create(
-            title=f"Widget {position}",
-            widget_type=widget_type,
-            position=position,
-            **values,
-        )
+    def marker(self, name="last-page", attrs=None):
+        """A widget marker, as an author would write it in the content."""
+        import json
+
+        rendered_attrs = f" attrs='{json.dumps(attrs)}'" if attrs else ""
+        return f'<t-widget name="{name}"{rendered_attrs}></t-widget>'
 
     def build_request(self, path):
         return RequestFactory().get(path)

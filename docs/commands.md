@@ -47,7 +47,6 @@ Local Data can be generated with a few commands:
  - For User: `docker-compose exec django ./manage.py dumpdata user.User -o user/fixtures/local/user.json --format json --indent 4`
  - For Website Page: `docker-compose exec django ./manage.py dumpdata website.Page -o website/fixtures/local/page.json --format json --indent 4`
  - For Website Menu: `docker-compose exec django ./manage.py dumpdata website.Menu -o website/fixtures/local/menu.json --format json --indent 4`
- - For Website Widget: `docker-compose exec django ./manage.py dumpdata website.Widget -o website/fixtures/local/widget.json --format json --indent 4`
 
 ### Tests
 

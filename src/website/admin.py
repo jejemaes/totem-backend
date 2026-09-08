@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django import forms
 
-from website.models import Page, Media, Menu, Website, Widget
+from website.models import Page, Media, Menu, Website
 
 
 # -------------------------------------
@@ -84,13 +84,3 @@ class WebsiteAdmin(admin.ModelAdmin):
 
 
 admin.site.register(Website, WebsiteAdmin)
-
-# -------------------------------------
-# Widget
-# -------------------------------------
-
-class WidgetAdmin(admin.ModelAdmin):
-    list_display = ("title", "widget_type", "position")
-
-
-admin.site.register(Widget, WidgetAdmin)

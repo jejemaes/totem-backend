@@ -4,10 +4,10 @@ from django.db.models import Manager, QuerySet
 from django.http import Http404
 from django.views.generic.base import TemplateResponseMixin, View
 
+from core.html_widget import expand_widgets
 from core.views.mixins import EnvironmentViewMixin
-from website.choices import WIDGET_POSITION_FOOTER_PREFIX
 from website.models import Website
-from website.services import MenuService, WidgetService
+from website.services import MenuService
 
 #-----------------------------------------
 # Simple Rendering Helpers
@@ -71,8 +71,11 @@ class WebsiteRenderContextMixin(EnvironmentViewMixin, RenderContextMixin):
             # no main menu -- the branch the code already took when `menu_id`
             # was unset.
             'menu_nodes': menu_root.children if menu_root is not None else [],
-            'widgets': await self.env.get(WidgetService).read_render_registry(
-                WIDGET_POSITION_FOOTER_PREFIX
+            # The footer used to be four fixed widget slots. It is now one
+            # `HtmlField` the author lays out, widget markers included -- one
+            # content mechanism instead of two.
+            'footer': await expand_widgets(
+                website.footer if website is not None else "", self.env
             ),
         }
 
