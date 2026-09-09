@@ -28,6 +28,11 @@ register_permission("totem.websitemedia.create", "Create Website Medias", is_pub
 register_permission("totem.websitemedia.read", "Read Website Medias", is_public=True)
 register_permission("totem.websitemedia.delete", "Delete Website Medias", is_public=True)
 
+# Read-only: the list of widget kinds comes from the code, so there is nothing
+# to create, update or delete. `websitewidget` follows the convention above --
+# and `widget` on its own is exactly the kind of name another app would claim.
+register_permission("totem.websitewidget.read", "Read Website Widget Types", is_public=True)
+
 # ---------------------------------------------------------
 # Access rules
 # ---------------------------------------------------------
