@@ -1,0 +1,13 @@
+<div>
+	{% if heading %}<h5>{{ heading }}</h5>{% endif %}
+	{% if nodes %}
+	<ul>
+		{% for node in nodes recursive %}
+			<li{% if css_class %} class="{{ css_class }}"{% endif %}>
+				<a href="{{ node.data.url }}"{% if node.data.new_window %} target="_blank"{% endif %}>{{ node.data.name }}</a>
+				{% if node.children %}<ul>{{ loop(node.children) }}</ul>{% endif %}
+			</li>
+		{% endfor %}
+	</ul>
+	{% endif %}
+</div>

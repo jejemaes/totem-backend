@@ -1,5 +1,7 @@
 import mimetypes
 
+from django.core import exceptions
+
 from core.services import (
     CreateMixin,
     DeleteMixin,
@@ -108,9 +110,28 @@ class MenuService(
         `Menu.url` dereferences `page.slug` and is evaluated while the template
         renders, out of reach of any `sync_to_async` hop, so the relation is
         resolved by this very query.
+
+        Works at any depth. The prefix filter used to be `root_pk` itself, which
+        only ever matched when `root_pk` was a top-level item: a `parent_path`
+        starts at the top of the tree, so an inner node is the prefix of
+        nothing. Reading the root's own path first costs one query and makes a
+        `Website.menu` -- or a side-menu widget -- pointing at an inner item
+        return its subtree instead of None.
         """
+        root_queryset = await self.browse([root_pk])
+        try:
+            # `only`: the path is all this first query is for, the rows
+            # themselves come back with the subtree.
+            root = await root_queryset.only("parent_path").afirst()
+        except (TypeError, ValueError, exceptions.ValidationError):
+            # An ill-typed pk is "no such menu", not a crash: the caller may be
+            # a widget marker carrying whatever string an author typed.
+            return None
+        if root is None:
+            return None
+
         queryset = await self.read(
-            filters={"parent_path__startswith": str(root_pk)},
+            filters={"parent_path__startswith": root.parent_path},
             ordering=["sequence"],
         )
         # Narrowing a service queryset is allowed: access rules are already
@@ -124,14 +145,19 @@ class MenuService(
         tree = HierarchyTree()
         # One materialization hop, then a purely synchronous tree build.
         async for menu in queryset:
-            tree.insert(menu.pk, menu.parent_id, menu)
+            # The root's own parent sits *outside* the subtree, so it is
+            # inserted as a root itself: `HierarchyTree.insert` would otherwise
+            # stand in an empty placeholder node for that parent, and the
+            # placeholder -- not the root -- is what has no parent.
+            parent_pk = None if menu.pk == root.pk else menu.parent_id
+            tree.insert(menu.pk, parent_pk, menu)
 
-        roots = tree.get_roots()
-        # `get_roots()` returns [] on an empty tree, and the prefix filter
-        # matches nothing when `root_pk` is not a top-level item -- a
-        # `Website.menu` pointing at a child yields no root at all. Never index
-        # into this blindly, which is what used to raise `IndexError` in the view.
-        return roots[0] if roots else None
+        # Looked up by pk rather than through `get_roots()`: an access rule
+        # hiding an intermediate item leaves a placeholder behind, and
+        # `get_roots()` walks a dict, so which of the two it yields first is not
+        # ours to decide. `.get` and not `[]`: the queryset comes back empty when
+        # the root exists but the tree read is denied.
+        return tree.node_map.get(root.pk)
 
 
 class MediaService(

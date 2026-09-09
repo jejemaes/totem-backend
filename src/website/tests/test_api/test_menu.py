@@ -141,9 +141,10 @@ class MenuAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(response.json()["count"], 5)
 
     def test_list_filter_by_root_only_matches_a_top_level_item(self):
-        # `root` is a `parent_path__startswith`, and a path always starts at a
-        # top-level item, so an inner node is not a prefix of anything. Same
-        # limitation as `MenuService.read_tree`, asserted so it stays known.
+        # `root` is a `parent_path__startswith` on the pk itself, and a path
+        # always starts at a top-level item, so an inner node is not a prefix of
+        # anything. Asserted so the limitation stays known -- `read_tree` used to
+        # share it and no longer does: it filters on the root's own path.
         response = self.do_api_request(
             self.url, "GET", self.token, params={"root": self.activities.pk}
         )
