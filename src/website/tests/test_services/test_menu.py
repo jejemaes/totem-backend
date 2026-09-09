@@ -196,21 +196,38 @@ class TestMenuService(TestCase):
             [n.data.pk for n in root_node.children[0].children], [grandchild.pk]
         )
 
-    def test_the_tree_is_none_when_the_root_has_no_item(self):
-        # `read_tree` on a pk that is not a top-level item matches nothing, and
-        # on an empty table there is no root at all. Indexing blindly into
-        # `get_roots()` is what used to raise `IndexError` in the view.
+    def test_the_tree_reads_back_a_subtree_rooted_on_an_inner_item(self):
+        # A `parent_path` starts at a top-level item, so filtering on the pk
+        # itself only ever matched a top-level root -- a `Website.menu`, or a
+        # side-menu widget, pointing at an inner item read nothing at all.
         child = self._create(name="Child", parent=str(self.root.pk), link="/a/")
+        grandchild = self._create(name="Grandchild", parent=str(child.pk), link="/b/")
 
-        self.assertIsNone(async_to_sync(self.service.read_tree)(child.pk))
+        child_node = async_to_sync(self.service.read_tree)(child.pk)
 
-    def test_the_tree_resolves_the_target_page_in_one_query(self):
+        self.assertEqual(child_node.data.pk, child.pk)
+        # A root of its own tree, even though the record has a parent: the
+        # parent sits outside the subtree that was asked for.
+        self.assertIsNone(child_node.parent)
+        self.assertEqual(
+            [n.data.pk for n in child_node.children], [grandchild.pk]
+        )
+
+    def test_the_tree_is_none_when_the_root_does_not_exist(self):
+        # Never index blindly into the result: that is what used to raise
+        # `IndexError` in the view.
+        self.assertIsNone(async_to_sync(self.service.read_tree)(None))
+        self.assertIsNone(async_to_sync(self.service.read_tree)("not-a-ulid"))
+
+    def test_the_tree_resolves_the_target_page_in_two_queries(self):
         # `Menu.url` reads `page.slug` while the template renders, out of reach
         # of any `sync_to_async` hop, so the relation must come back with the
-        # tree -- hence `select_related` and not a second query per node.
+        # tree -- hence `select_related` and not a second query per node. Two
+        # queries and not one: the root's own `parent_path` is what the subtree
+        # is filtered on, and it takes a read to know it.
         self._create(name="Child", parent=str(self.root.pk), page=self.page.pk)
 
-        with self.assertNumQueries(1):
+        with self.assertNumQueries(2):
             root_node = async_to_sync(self.service.read_tree)(self.root.pk)
             for node in root_node.children:
                 node.data.url
