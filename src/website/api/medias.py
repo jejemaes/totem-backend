@@ -120,15 +120,6 @@ class MediaController(
         return view_func
 
     async def create(self, request, path_parameters, content):
-        """Wraps the upload in the service's input schema by hand.
-
-        The service extracts along `create_schema` and refuses a raw dict, so
-        the file cannot simply be forwarded.
-
-        Defining this here also takes the method out of the shared mutable
-        `CreateModelControllerMixin.create`, whose `__annotations__` every
-        controller's `_annotate_create_view_function` scribbles on.
-        """
         try:
             instances = await request.env.get(self.service).create(
                 [MediaCreateSchema(content=content)]
