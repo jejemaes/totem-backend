@@ -1,3 +1,5 @@
+import mimetypes
+
 from core.services import (
     CreateMixin,
     DeleteMixin,
@@ -160,3 +162,76 @@ class MediaService(
     `_create_atomic` calls `self.get_queryset().bulk_create(...)`, so the
     queryset override sits on the service's own write path.
     """
+
+    # NOT an allow-list, deliberately. `Media` is a general file store:
+    # `upload_to` is "website/%Y/%m", `mimetype` is a free-form column, the
+    # admin form writes through this service and its own tests file PDFs through
+    # it. Restricting this to images would narrow the model to suit its newest
+    # client -- the website's rich text editor -- and break every other writer.
+    # The editor does its own narrowing, with `accept="image/*"` plus a
+    # client-side check.
+    #
+    # What IS refused is the handful of types that EXECUTE when served. These
+    # files go out from /media/public/ on the site's own origin, with no
+    # Content-Disposition and no CSP, so an SVG or an HTML file there is a
+    # stored-XSS vector rather than a document. A security floor, not a policy
+    # about what the product accepts.
+    REFUSED_MIMETYPES = frozenset(
+        {
+            "image/svg+xml",
+            "text/html",
+            "application/xhtml+xml",
+            "application/xml",
+            "text/xml",
+        }
+    )
+
+    MAX_UPLOAD_SIZE = 5 * 1024 * 1024
+
+    def validate_data(self, data, instance):
+        """Size and executability, enforced here rather than anywhere else.
+
+        Not on the model field: adding `validators=[...]` to a FileField changes
+        its deconstruction and therefore generates a migration, for rules that
+        are policy rather than schema.
+
+        Not in the controller either: this is the one chokepoint every writer
+        goes through -- the API, the admin form, and any future service caller.
+
+        And the size check is NOT belt-and-braces. Nothing else in the stack
+        refuses a large upload: nginx allows 300M and answers with an HTML 413
+        rather than JSON, and Django's `DATA_UPLOAD_MAX_MEMORY_SIZE` excludes
+        file fields by design. Without this a 200 MB POST is accepted, streamed
+        to disk and hashed twice.
+
+        Running here also means a rejected upload writes NOTHING: this is before
+        the INSERT and before `FileField.pre_save` commits the bytes, which
+        would otherwise leave a `FileReference` row and a filestore symlink
+        behind.
+        """
+        upload = data.get("content")
+        if upload is None:
+            # `MediaCreateSchema` annotates `content` as an `UploadedFile`, so a
+            # missing or non-file value was already refused upstream.
+            return
+
+        if upload.size > self.MAX_UPLOAD_SIZE:
+            raise self.ValidationError(
+                f"The file is too large ({upload.size} bytes). "
+                f"The maximum is {self.MAX_UPLOAD_SIZE} bytes.",
+                key="content",
+            )
+
+        # Guessed from the FILENAME, deliberately, and not read from
+        # `upload.content_type`: the filename guess is what
+        # `Media.precompute_values` will actually store in the `mimetype`
+        # column, so checking anything else would let the stored value disagree
+        # with what was accepted. The declared content type is also the field a
+        # caller fully controls.
+        mimetype = mimetypes.guess_type(upload.name or "")[0]
+        if mimetype in self.REFUSED_MIMETYPES:
+            raise self.ValidationError(
+                f"A {mimetype} file cannot be uploaded: it would execute script "
+                f"when served from the site's own domain.",
+                key="content",
+            )

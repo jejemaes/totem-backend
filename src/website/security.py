@@ -21,6 +21,13 @@ register_permission("totem.websitemenu.read", "Read Website Menu Items", is_publ
 register_permission("totem.websitemenu.update", "Update Website Menu Items", is_public=True)
 register_permission("totem.websitemenu.delete", "Delete Website Menu Items", is_public=True)
 
+# `websitemedia` for the same reason as above, and more so: `media` is about as
+# generic a name as exists. No `.update`: a media is immutable server-side, so
+# MediaService exposes no update and no route would honour one.
+register_permission("totem.websitemedia.create", "Create Website Medias", is_public=True)
+register_permission("totem.websitemedia.read", "Read Website Medias", is_public=True)
+register_permission("totem.websitemedia.delete", "Delete Website Medias", is_public=True)
+
 # ---------------------------------------------------------
 # Access rules
 # ---------------------------------------------------------
