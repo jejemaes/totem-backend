@@ -1,5 +1,4 @@
 from asgiref.sync import async_to_sync
-from django.db.models import ProtectedError
 from django.test import TestCase
 
 from core.services import Environment
@@ -273,7 +272,9 @@ class TestMenuService(TestCase):
         child = self._create(name="Child", parent=str(self.root.pk), link="/a/")
 
         # `Menu.parent` is `PROTECT`; see the note in `test_page`.
-        with self.assertRaises(ProtectedError):
+        with self.assertRaises(ServiceValidationMultiError) as ctx:
             async_to_sync(self.service.delete)({"id": self.root.pk})
 
+        self.assertEqual(ctx.exception.code, "protected_error")
+        self.assertIn("Menu.parent", str(ctx.exception.dict()["__all__"]))
         self.assertTrue(Menu.objects.filter(pk=child.pk).exists())

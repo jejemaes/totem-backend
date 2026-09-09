@@ -343,7 +343,10 @@ class DeleteMixin:
 
             queryset = self._delete_preprocess(queryset)
 
-            _, deleted_dict = queryset.delete()
+            try:
+                _, deleted_dict = queryset.delete()
+            except DatabaseError as exc:
+                raise self._database_error_to_validation_error(exc) from exc
 
             self._delete_postprocess()
         return deleted_dict.get(queryset.model._meta.label, 0)

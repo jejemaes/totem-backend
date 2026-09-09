@@ -224,11 +224,13 @@ class TestPageService(TestCase):
         root = Menu.objects.create(name="Root")
         Menu.objects.create(name="Item", parent=root, page=page)
 
-        # `Menu.page` is `PROTECT`, and `DeleteMixin._delete_atomic` has no
-        # `except DatabaseError` around `queryset.delete()` -- unlike create and
-        # update -- so `ProtectedError` escapes unmapped. Asserting today's
-        # behaviour: mapping it belongs in `core`, for every service at once.
-        with self.assertRaises(ProtectedError):
+        # `Menu.page` is `PROTECT`. `_delete_atomic` maps the `ProtectedError` the
+        # collector raises through `_database_error_to_validation_error`, like every
+        # other failed write, so no raw django exception reaches a controller.
+        with self.assertRaises(ServiceValidationMultiError) as ctx:
             async_to_sync(self.service.delete)({"id": page.pk})
 
+        self.assertEqual(ctx.exception.code, "protected_error")
+        # The message names the relation that protects the page, not just the fact.
+        self.assertIn("Menu.page", str(ctx.exception.dict()["__all__"]))
         self.assertTrue(Page.objects.filter(pk=page.pk).exists())

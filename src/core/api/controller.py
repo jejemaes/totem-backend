@@ -208,15 +208,23 @@ class BaseModelController(BaseController):
     def service_validation_error_to_api_error(
         self,
         exc: ServiceValidationMultiError,
-        response_schema: BaseModel,
+        response_schema: t.Optional[BaseModel] = None,
         loc_path: t.List[str] = ["body", "request_body"],
     ) -> ValidationError:
         """Convert a ServiceValidationMultiError to a Ninja ValidationError, with error location mapped to the response schema fields.
 
         The service reports errors under ORM field names; the `loc` must speak the
         client's language, so each one is translated to its public name.
+
+        `response_schema` may be None, for a route that has no response body to
+        translate against: the delete route, whose errors are never about a field of
+        a payload it does not have. The ORM name is then used as it comes.
         """
-        fields_map = schema_orm_to_public_fields(response_schema, self.model)
+        fields_map = (
+            schema_orm_to_public_fields(response_schema, self.model)
+            if response_schema is not None
+            else {}
+        )
 
         result = []
         for key, error_dict in exc.dict().items():
@@ -567,7 +575,14 @@ class DeleteModelControllerMixin:
         path_parameters: t.Optional[BaseModel],
     ) -> None:
         filters = path_parameters.model_dump() if path_parameters else {}
-        count = await request.env.get(self.service).delete(filters)
+        try:
+            count = await request.env.get(self.service).delete(filters)
+        except ServiceValidationMultiError as exc:
+            # A delete has no request body, so the error cannot point at a field of
+            # one: `PROTECT` refuses the record itself, named by the path.
+            raise self.service_validation_error_to_api_error(
+                exc, loc_path=["path", "path_parameters"]
+            )
         if count == 0:
             raise HttpError(
                 status_code=404,
