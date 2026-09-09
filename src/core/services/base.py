@@ -202,6 +202,40 @@ class ServiceBase(Service, t.Generic[ModelT]):
                     try:
                         field = self.model._meta.get_field(key)
                         field.run_validators(val)
+                        # `run_validators` covers `validators=[...]` and nothing
+                        # else: `choices`, `null` and `blank` live in
+                        # `Field.validate()`, which is only ever reached through
+                        # `full_clean()` -- and no write path here calls it. A
+                        # client patching a `choices` field with a value outside
+                        # the vocabulary, or `null` into a NOT NULL column, would
+                        # otherwise surface as a generic integrity error, and a
+                        # value with no database constraint behind it would not
+                        # fail at all.
+                        #
+                        # Per supplied value, and *not* `instance.full_clean()`
+                        # before `bulk_create`. Both write paths pass through
+                        # here, so one place covers create and update; and the
+                        # instance is deliberately incomplete at that point,
+                        # because this codebase derives values inside
+                        # `QuerySet.bulk_create` rather than in `save()`
+                        # (`MediaQuerySet` fills `checksum`/`mimetype`/`name`
+                        # there). Cleaning the instance first reports every one
+                        # of those as blank -- an error about a field the caller
+                        # was never meant to send.
+                        #
+                        # Relational fields are skipped, and that is the whole
+                        # reason this is not a bare `field.validate()` on
+                        # everything: `ForeignKey.validate()` looks the related
+                        # row up through `_base_manager` -- unscoped -- which
+                        # would both duplicate the relation resolution below and
+                        # answer "exists" for a record the acting user may not
+                        # see, defeating the point of `RelationNotFound`.
+                        #
+                        # `model_instance=None` is safe: `Field.validate()` never
+                        # touches it, and the subclasses that do are exactly the
+                        # relational ones excluded here.
+                        if not field.is_relation:
+                            field.validate(val, None)
                     except exceptions.ValidationError as exc:
                         suberror.add_message(
                             str(exc),
