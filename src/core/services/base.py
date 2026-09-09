@@ -360,6 +360,20 @@ class ServiceBase(Service, t.Generic[ModelT]):
         return queryset_fetch_fields(queryset, fields)
 
     def _database_error_to_validation_error(self, exc: DatabaseError):
+        if isinstance(exc, models.ProtectedError):
+            # A `PROTECT` relation is refused by the collector, before any SQL, so
+            # there is no constraint name in the message for the scan below to find:
+            # it would fall through to the generic branch. `args[0]` is the sentence
+            # django formats in `deletion.PROTECT`, which already names the
+            # protecting relation as `Model.field` -- the only place that mapping is
+            # available, since `protected_objects` carries the referencing instances
+            # and not the field they point through. `str(exc)` would render the whole
+            # `args` tuple, those instances included.
+            return ServiceValidationMultiError(
+                {"__all__": ServiceValidationError(exc.args[0])},
+                code="protected_error",
+            )
+
         error_message = str(exc)
 
         errors = []

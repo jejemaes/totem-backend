@@ -10,8 +10,9 @@ from contact.schemas import (
     ContactUpdateSchema,
 )
 from contact.services import ContactService, ContactTagService
-from core.services import Environment
+from core.services import DeleteMixin, Environment, ServiceBase
 from core.services.exceptions import ServiceValidationMultiError
+from core.services.registry import ServiceRegistry
 
 
 class TestContactService(TestCase):
@@ -132,3 +133,56 @@ class TestContactTagService(TestCase):
     def test_color_lower_bound_is_rejected_by_the_schema(self):
         with self.assertRaises(PydanticValidationError):
             ContactTagCreateSchema(name="Bad", color=-1)
+
+
+class TestProtectedCountryDelete(TestCase):
+    """`Contact.country` is `PROTECT`, so a country a contact points at cannot go.
+
+    The exposure runs the other way round from the rest of this file: what the
+    relation protects is the `Country`, not the `Contact`. `CountryService` is
+    deliberately read-only -- countries come from the system fixture -- so no
+    registered service can delete one, and the delete surface has to be composed
+    here. `ServiceRegistry` keys one service per model and raises on a second one,
+    hence the swap: this service stands in for `CountryService` for the lifetime of
+    the class only.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls._registered = ServiceRegistry._by_model.pop(Country, None)
+
+        class CountryDeleteService(DeleteMixin, ServiceBase[Country]):
+            pass
+
+        cls.service_class = CountryDeleteService
+
+    @classmethod
+    def tearDownClass(cls):
+        # Declaring a service registers it for the whole process.
+        ServiceRegistry._by_model.pop(Country, None)
+        if cls._registered is not None:
+            ServiceRegistry._by_model[Country] = cls._registered
+        super().tearDownClass()
+
+    def setUp(self):
+        super().setUp()
+        self.country = Country.objects.create(code="BE", name="Belgium")
+        self.service = Environment(None).get(self.service_class)
+
+    def test_delete_a_country_a_contact_points_at_is_refused(self):
+        Contact.objects.create(last_name="Tournesol", country=self.country)
+
+        # `Country.pk` is its ISO code.
+        with self.assertRaises(ServiceValidationMultiError) as ctx:
+            async_to_sync(self.service.delete)({"code": self.country.pk})
+
+        self.assertEqual(ctx.exception.code, "protected_error")
+        self.assertIn("Contact.country", str(ctx.exception.dict()["__all__"]))
+        self.assertTrue(Country.objects.filter(pk=self.country.pk).exists())
+
+    def test_delete_an_unreferenced_country(self):
+        """The control: the mapping is what refuses the delete, not the delete itself."""
+        async_to_sync(self.service.delete)({"code": self.country.pk})
+
+        self.assertFalse(Country.objects.filter(pk=self.country.pk).exists())
