@@ -10,6 +10,7 @@ from user.models import User
 from website.models import Menu, Page
 from website.schemas import PageCreateSchema, PageFilterSchema, PageUpdateSchema
 from website.services import PageService
+from website.theme import LAYOUT_DEFAULT
 
 # A well-formed but absent v4 UUID: the schema types a relation with the target's
 # primary key type, so a malformed one would be rejected before the service runs.
@@ -234,3 +235,62 @@ class TestPageService(TestCase):
         # The message names the relation that protects the page, not just the fact.
         self.assertIn("Menu.page", str(ctx.exception.dict()["__all__"]))
         self.assertTrue(Page.objects.filter(pk=page.pk).exists())
+
+    # ------------------------------------------
+    # Layout
+    # ------------------------------------------
+
+    def test_an_unknown_layout_never_reaches_the_service(self):
+        """`choices` is why `PageService` needs no hook for this.
+
+        `core.schemas.fields` builds a pydantic `Enum` from the field's choices,
+        so the schema refuses an unknown id with a message that already names
+        every valid one -- better than anything a service hook would write. A
+        caller passing a dict instead of a schema is covered too:
+        `to_internal_values` runs `Field.validate()`, which enforces `choices`.
+        """
+        with self.assertRaises(PydanticValidationError) as ctx:
+            PageCreateSchema(
+                title="Le Hike",
+                slug="hike",
+                content="<p>x</p>",
+                layout="no-such-layout",
+            )
+
+        self.assertIn(LAYOUT_DEFAULT, str(ctx.exception))
+
+    def test_an_unknown_layout_in_a_raw_dict_is_refused_too(self):
+        with self.assertRaises(ServiceValidationMultiError) as ctx:
+            async_to_sync(self.service.to_internal_values)(
+                [{"layout": "no-such-layout"}]
+            )
+
+        self.assertIn("layout", ctx.exception.dict()[0])
+
+    def test_a_layout_the_active_theme_does_not_implement_is_still_valid(self):
+        """The asymmetry the whole feature rests on.
+
+        The vocabulary is closed; theme coverage is open and resolved with a
+        fallback when the page renders. So a page may carry a layout no
+        installed theme implements, and must stay valid -- otherwise switching
+        theme could invalidate existing pages, which is precisely what the
+        three-rung lookup exists to prevent.
+        """
+        pages = async_to_sync(self.service.create)([
+            PageCreateSchema(
+                title="Le Hike", slug="hike", content="<p>x</p>", layout="sidebar-right"
+            )
+        ])
+
+        self.assertEqual(pages[0].layout, "sidebar-right")
+
+    def test_a_null_layout_is_a_field_error(self):
+        """Caught by `to_internal_values`, so keyed by index rather than by pk."""
+        page = Page.objects.create(title="Le Hike", slug="hike", content="<p>x</p>")
+
+        with self.assertRaises(ServiceValidationMultiError) as ctx:
+            async_to_sync(self.service.update)(
+                {"id": page.pk}, PageUpdateSchema(layout=None)
+            )
+
+        self.assertIn("layout", ctx.exception.dict()[0])

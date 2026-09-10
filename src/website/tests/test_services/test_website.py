@@ -7,6 +7,7 @@ from user.models import User
 from website.models import Menu, Page, Website
 from website.schemas import WebsiteUpdateSchema
 from website.services import WebsiteService
+from website.theme import DEFAULT_THEME_ID
 
 # A well-formed but absent ULID: the schema types a relation with the target's
 # primary key type, so a malformed one would be rejected before the service runs.
@@ -147,3 +148,91 @@ class TestWebsiteService(TestCase):
         count, _ = self.update(name="Moulinsart")
 
         self.assertEqual(count, 0)
+
+    # ------------------------------------------
+    # Theme and its options
+    # ------------------------------------------
+
+    def test_an_unknown_theme_is_refused_and_lists_what_exists(self):
+        self.build_website()
+
+        with self.assertRaises(ServiceValidationMultiError) as ctx:
+            self.update(theme="no-such-theme")
+
+        messages = ctx.exception.dict()[self.website_pk()]["theme"]
+        self.assertIn("not a known theme", messages[0])
+        # The message names the alternatives: the field's own `choices` error
+        # could not, which is why this hook exists on top of it.
+        self.assertIn(DEFAULT_THEME_ID, messages[0])
+
+    def test_a_null_theme_is_a_field_error(self):
+        """`optional_fields = "__all__"` lets `null` through the schema.
+
+        Refused by `ServiceBase.to_internal_values`, which runs
+        `Field.validate()` on every supplied value -- so it is keyed by the
+        payload's **index**, not by the record's pk, and `validate_data` never
+        sees it. That is why the theme hook carries no null guard of its own:
+        it would be unreachable.
+        """
+        self.build_website()
+
+        with self.assertRaises(ServiceValidationMultiError) as ctx:
+            self.update(theme=None)
+
+        self.assertIn("theme", ctx.exception.dict()[0])
+
+    def test_a_known_theme_is_accepted(self):
+        self.build_website()
+
+        count, queryset = self.update(theme=DEFAULT_THEME_ID)
+
+        self.assertEqual(count, 1)
+        self.assertEqual(queryset.first().theme, DEFAULT_THEME_ID)
+
+    def test_switching_theme_clears_the_stored_options(self):
+        self.build_website(theme_options={"nope": 1})
+
+        self.update(theme=DEFAULT_THEME_ID)
+
+        self.assertEqual(Website.objects.get().theme_options, {})
+
+    def test_options_alone_are_validated_against_the_instance_theme(self):
+        """The cross-field case no schema can cover.
+
+        Only the options are sent, so the theme to validate them against has to
+        come from the stored record.
+        """
+        self.build_website(theme=DEFAULT_THEME_ID)
+
+        with self.assertRaises(ServiceValidationMultiError) as ctx:
+            self.update(theme_options={"nope": 1})
+
+        self.assertIn("theme_options", ctx.exception.dict()[self.website_pk()])
+
+    def test_theme_and_options_together_validate_against_the_incoming_theme(self):
+        self.build_website(theme="stale-theme")
+
+        # The stored theme does not exist, but the payload's does -- so the
+        # options are checked against the one being selected.
+        count, queryset = self.update(theme=DEFAULT_THEME_ID, theme_options={})
+
+        self.assertEqual(count, 1)
+        self.assertEqual(queryset.first().theme, DEFAULT_THEME_ID)
+
+    def test_patching_options_while_the_stored_theme_is_gone_is_refused(self):
+        """The read path degrades; a write must not persist options for a dead theme."""
+        self.build_website(theme="deleted-from-the-code")
+
+        with self.assertRaises(ServiceValidationMultiError) as ctx:
+            self.update(theme_options={"color_primary": "#fff"})
+
+        self.assertIn("theme", ctx.exception.dict()[self.website_pk()])
+
+    def website_pk(self):
+        """The key service errors are filed under on an update.
+
+        `validate_data` runs once per matched record, so its errors are keyed by
+        pk -- unlike `to_internal_values`, whose errors are keyed by the
+        payload's index.
+        """
+        return Website.objects.values_list("pk", flat=True).first()
