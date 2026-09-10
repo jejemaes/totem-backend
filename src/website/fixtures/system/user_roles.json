@@ -4,7 +4,7 @@
     "pk": "WEBSITE_ADMIN",
     "fields": {
         "name": "Administrator",
-        "permissions": "[\"totem.websitepage.create\", \"totem.websitepage.read\", \"totem.websitepage.update\", \"totem.websitepage.delete\", \"totem.websitemenu.create\", \"totem.websitemenu.read\", \"totem.websitemenu.update\", \"totem.websitemenu.delete\", \"totem.websitemedia.create\", \"totem.websitemedia.read\", \"totem.websitemedia.delete\", \"totem.website.read\", \"totem.website.update\"]",
+        "permissions": "[\"totem.websitepage.create\", \"totem.websitepage.read\", \"totem.websitepage.update\", \"totem.websitepage.delete\", \"totem.websitemenu.create\", \"totem.websitemenu.read\", \"totem.websitemenu.update\", \"totem.websitemenu.delete\", \"totem.websitemedia.create\", \"totem.websitemedia.read\", \"totem.websitemedia.delete\", \"totem.website.read\", \"totem.website.update\", \"totem.websitewidget.read\"]",
         "rules": "[]"
     }
 },
@@ -13,7 +13,7 @@
     "pk": "WEBSITE_USER",
     "fields": {
         "name": "Restricted User",
-        "permissions": "[\"totem.websitepage.create\", \"totem.websitepage.read\", \"totem.websitepage.update\", \"totem.websitepage.delete\", \"totem.websitemenu.read\", \"totem.websitemenu.update\", \"totem.websitemedia.create\", \"totem.websitemedia.read\", \"totem.website.read\"]",
+        "permissions": "[\"totem.websitepage.create\", \"totem.websitepage.read\", \"totem.websitepage.update\", \"totem.websitepage.delete\", \"totem.websitemenu.read\", \"totem.websitemenu.update\", \"totem.websitemedia.create\", \"totem.websitemedia.read\", \"totem.website.read\", \"totem.websitewidget.read\"]",
         "rules": "[\"website_manage_own_page\"]"
     }
 }
