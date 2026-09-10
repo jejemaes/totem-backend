@@ -10,13 +10,14 @@ from core.services import (
     UpdateMixin,
 )
 from core.utils.tree import HierarchyTree
-from website.models import Media, Menu, Page
+from website.models import Media, Menu, Page, Website
 from website.schemas import (
     MediaCreateSchema,
     MenuCreateSchema,
     MenuUpdateSchema,
     PageCreateSchema,
     PageUpdateSchema,
+    WebsiteUpdateSchema,
 )
 
 
@@ -261,3 +262,58 @@ class MediaService(
                 f"when served from the site's own domain.",
                 key="content",
             )
+
+
+class WebsiteService(
+    ReadMixin,
+    UpdateMixin[WebsiteUpdateSchema],
+    ServiceBase[Website],
+):
+    """The site's own settings: one row, read by every page of the public site.
+
+    No `CreateMixin` and no `DeleteMixin`, and not for taste. The row is
+    provisioned once by `WebsiteConfig.populate_system` under a fixed pk; a
+    second row would make `read_current()` pick one of two identities by pk
+    order, and deleting the only one takes `/` down. Nothing constrains the
+    table at the database level on purpose either: the only constraint that
+    really expresses "one row" is a `CheckConstraint` on the provisioned pk,
+    which would forbid `Website.objects.create(...)` -- what the model tests and
+    `WebsiteViewTestMixin.build_website` do -- and would bake an environment
+    identifier into the schema. The absence of the two mixins IS the guard,
+    which is why a test asserts it.
+
+    No access rule either: `website.security` registers none, and
+    `apply_access_rules` returns the queryset untouched for a model that has no
+    rule. That is what lets the public render path -- `user=None`, no role --
+    read the row at all. Registering a `BaseRule` for `Website` would blank the
+    whole site.
+
+    No `validate_data`: every field here is either free text or a relation, and
+    a relation is already resolved through the related service's `browse`, so it
+    is access-checked and reported as `RelationNotFound` without a hook. A
+    consequence worth naming: an author holding only `website_manage_own_page`
+    can set `homepage` to one of their own pages and to nothing else.
+
+    Publication is deliberately NOT checked. `HomePageView.get_homepage`
+    documents the opposite contract -- an unpublished or deleted homepage
+    renders the hero alone rather than a 404 -- and refusing a draft would break
+    the natural set-then-publish order.
+    """
+
+    async def read_current(self, fields=None):
+        """The website record, or None on a database that has not been populated.
+
+        `ordering=["id"]` for the same reason the view used to call `afirst()`:
+        nothing constrains the table to one row, so the read must be
+        deterministic rather than dependent on what the planner returns first.
+
+        Callers on the render path must NOT pass `fields`. It becomes an
+        `only()`, and the layout reads `name`/`headline` while the context mixin
+        reads `menu_id`, `homepage_id` and `footer`; one name missing from that
+        list is a `SynchronousOnlyOperation` raised inside the template render,
+        which is what `test_async_safety` exists to catch. The controller is the
+        one caller that may pass it, because `_response_orm_fields` derives the
+        list from the response schema instead of guessing it.
+        """
+        queryset = await self.read(ordering=["id"], fields=fields)
+        return await queryset.afirst()

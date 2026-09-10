@@ -6,8 +6,7 @@ from django.views.generic.base import TemplateResponseMixin, View
 
 from core.html_widget import expand_widgets
 from core.views.mixins import EnvironmentViewMixin
-from website.models import Website
-from website.services import MenuService
+from website.services import MenuService, WebsiteService
 
 #-----------------------------------------
 # Simple Rendering Helpers
@@ -82,17 +81,22 @@ class WebsiteRenderContextMixin(EnvironmentViewMixin, RenderContextMixin):
     async def get_website(self):
         """The website record, or None.
 
-        `Website` has no service on purpose: a singleton read with no access
-        rule of its own. Isolated in one overridable method so that swapping in
-        a `WebsiteService` later is a one-line change, and so that grepping for
-        "ORM left in the website views" returns exactly this.
-
-        `afirst()` is already an async hop, and `first()` orders by pk on an
-        unordered queryset, so the read is deterministic even though nothing
-        constrains the table to a single row. Returns None on a database that
+        Read through `WebsiteService` like every other record, so the last of the
+        ORM this module used to hold is gone. Returns None on a database that
         has not been populated yet -- callers must handle it.
+
+        No `fields=`, deliberately: it would become an `only()`, and the layout
+        reads `name`/`headline` while `get_website_context_data` reads
+        `menu_id`, `homepage_id` and `footer`. A name missing from that list
+        raises `SynchronousOnlyOperation` during the template render, well past
+        any hop this view controls -- see `read_current`.
+
+        Costs no more than the previous `Website.objects.afirst()`:
+        `apply_access_rules` returns the queryset untouched for a model with no
+        rule registered, and `Environment.get_access_roles()` issues no query
+        when `user is None`, which is every request on the public site.
         """
-        return await Website.objects.afirst()
+        return await self.env.get(WebsiteService).read_current()
 
 
 class DetailRecordTemplateWebsiteView(TemplateResponseMixin, WebsiteRenderContextMixin, View):
