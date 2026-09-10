@@ -1,0 +1,51 @@
+{
+  "skill_name": "totem-resource",
+  "evals": [
+    {
+      "id": 0,
+      "name": "readonly-ish-resource",
+      "prompt": "J'ai besoin de gérer des redirections d'URL sur le site. Ajoute un modèle Redirect dans l'app website avec le chemin source, le chemin cible et un booléen pour dire si la redirection est permanente, et expose-le à travers l'API. Une redirection se crée et se supprime, mais ne se modifie jamais : si le chemin change on en crée une nouvelle.",
+      "expected_output": "A full resource whose service composes Create/Read/Delete but not Update, and whose controller composes the CRUD mixins explicitly instead of inheriting ModelController (which would register an unscoped DELETE). Scopes registered and granted in the role fixtures.",
+      "files": [],
+      "assertions": [
+        "RedirectService composes Create, Read and Delete but NOT UpdateMixin",
+        "The controller does not inherit ModelController (mixins composed explicitly)",
+        "permission_map declares an explicit 'delete' key, so DELETE is scoped",
+        "Scopes are registered in website/security.py following totem.<app><model>.<op>",
+        "The new scopes are granted in at least one role fixture",
+        "The model uses ULIDField as its primary key",
+        "A migration file was added",
+        "Tests were written for the new resource"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "choices-and-json-fields",
+      "prompt": "Ajoute deux champs sur le modèle Website : `theme`, qui est l'identifiant du thème du site (une chaîne à choisir dans une liste définie en dur dans un module python), et `theme_options`, un dictionnaire de réglages libre propre au thème choisi. Les deux doivent être lisibles et modifiables via l'API.",
+      "expected_output": "The JSONField declared by hand on the schema and kept out of Meta.fields (a plain models.JSONField there raises ImproperlyConfigured at import). The choices callable is safe here because the vocabulary is a static module constant, and that reasoning should be visible.",
+      "files": [],
+      "assertions": [
+        "theme_options is NOT listed in any schema Meta.fields (would raise ImproperlyConfigured at import)",
+        "theme_options is declared by hand as a typed annotation on the schema",
+        "theme's choices come from a module-level constant, not an autodiscovered registry",
+        "A migration file was added",
+        "Both fields are exposed on the read and the update schema"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "api-tests-for-existing-controller",
+      "prompt": "Écris les tests d'API pour le MenuController de l'app website, en suivant les conventions de test du projet.",
+      "expected_output": "A test module following user/tests/test_api/test_user.py: CommonTestMixin + APITestCaseMixin, module-level id constants, url/url_detail in setUpTestData, per-operation sections, test_*_access_rights parameterized over (scope, status), and an _assert_api_format helper ending with the set(fields) == set(api_data.keys()) key-set assertion.",
+      "files": [],
+      "assertions": [
+        "Uses CommonTestMixin and APITestCaseMixin",
+        "Defines an _assert_api_format helper",
+        "_assert_api_format asserts the exact key set of the response (set(fields) == set(api_data.keys()))",
+        "Has permission tests parameterized over (scope, status_code)",
+        "Declares module-level id constants and url/url_detail in setUpTestData",
+        "Covers every operation the controller exposes, one section each"
+      ]
+    }
+  ]
+}
