@@ -76,8 +76,11 @@ class TestPageView(WebsiteViewTestMixin, TestCase):
         is what would catch a `BaseRule` being declared for `Website`, or the
         access machinery starting to query for anonymous callers.
         """
-        with self.assertNumQueries(3):
-            # page, website, menu tree -- one each, and nothing for the roles.
+        with self.assertNumQueries(4):
+            # The page, the website, the menu root's own `parent_path`, and the
+            # subtree -- and nothing at all for the acting user's roles. The
+            # third one is `read_tree` resolving the root before it can filter on
+            # a prefix, which is what lets `Website.menu` point at an inner item.
             Client().get(self._url())
 
     def test_the_page_is_read_through_its_service(self):
