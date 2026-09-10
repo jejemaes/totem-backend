@@ -38,6 +38,7 @@ class PageController(TokenHasScopePermissionModelControllerMixin, ModelControlle
         "is_published",
         "date_published",
         "update_date",
+        "layout",
     ]
     list_ordering_default_fields = ["title"]
 

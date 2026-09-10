@@ -41,6 +41,12 @@ register_permission("totem.websitewidget.read", "Read Website Widget Types", is_
 register_permission("totem.website.read", "Read Website Settings", is_public=True)
 register_permission("totem.website.update", "Update Website Settings", is_public=True)
 
+# Read-only, like `websitewidget` and for the same reason: the list of themes and
+# the layout vocabulary come from the code, so there is nothing to create, update
+# or delete. A restricted author needs it exactly as much as an administrator --
+# it is what populates the layout picker on a page.
+register_permission("totem.websitetheme.read", "Read Website Themes", is_public=True)
+
 # ---------------------------------------------------------
 # Access rules
 # ---------------------------------------------------------

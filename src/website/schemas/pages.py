@@ -35,6 +35,7 @@ class PageSchema(ModelSchema):
             "date_published",
             "update_date",
             "user",
+            "layout",
         ]
         optional_fields = "__all__"
 
@@ -42,13 +43,13 @@ class PageSchema(ModelSchema):
 class PageCreateSchema(ModelSchema):
     class Meta:
         model = Page
-        fields = ["title", "slug", "content", "is_published", "user"]
+        fields = ["title", "slug", "content", "is_published", "user", "layout"]
 
 
 class PageUpdateSchema(ModelSchema):
     class Meta:
         model = Page
-        fields = ["title", "slug", "content", "is_published", "user"]
+        fields = ["title", "slug", "content", "is_published", "user", "layout"]
         optional_fields = "__all__"
 
 
@@ -87,6 +88,12 @@ class PageFilterSchema(FilterSchema):
         q="user__id",
         title="Author",
         description="Identifier of the author of the page.",
+    )
+    layout: Optional[str] = Field(
+        None,
+        q="layout",
+        title="Layout",
+        description="Exact layout identifier of the page.",
     )
     search: Optional[str] = Field(
         None,

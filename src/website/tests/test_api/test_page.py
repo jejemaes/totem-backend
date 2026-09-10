@@ -268,3 +268,48 @@ class PageAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         response = self.do_api_request(url, method, self.token, data=body)
 
         self.assertEqual(response.status_code, 403)
+
+    # ------------------------------------------
+    # Layout
+    # ------------------------------------------
+
+    def test_the_layout_is_in_the_response(self):
+        response = self.do_api_request(f"{self.url}{self.hike.pk}/", "GET", self.token)
+
+        self.assertEqual(response.json()["layout"], self.hike.layout)
+
+    def test_the_layout_can_be_updated(self):
+        body = json.dumps({"layout": "narrow"})
+
+        response = self.do_api_request(
+            f"{self.url}{self.hike.pk}/", "PATCH", self.token, data=body
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["layout"], "narrow")
+
+    def test_an_unknown_layout_is_refused_with_the_valid_ids(self):
+        """The `choices` enum answers before any service hook could.
+
+        Which is why `PageService` carries no layout validation: the message
+        already names every valid id.
+        """
+        body = json.dumps({"layout": "no-such-layout"})
+
+        response = self.do_api_request(
+            f"{self.url}{self.hike.pk}/", "PATCH", self.token, data=body
+        )
+
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("full-width", json.dumps(response.json()["detail"]))
+
+    def test_pages_can_be_filtered_by_layout(self):
+        Page.objects.filter(pk=self.hike.pk).update(layout="narrow")
+
+        response = self.do_api_request(
+            self.url, "GET", self.token, params={"layout": "narrow"}
+        )
+        data = response.json()
+
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(data["results"][0]["id"], self.hike.pk)

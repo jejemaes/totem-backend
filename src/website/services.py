@@ -1,5 +1,7 @@
 import mimetypes
 
+from pydantic import ValidationError as PydanticValidationError
+
 from django.core import exceptions
 
 from core.services import (
@@ -11,6 +13,7 @@ from core.services import (
 )
 from core.utils.tree import HierarchyTree
 from website.models import Media, Menu, Page, Website
+from website.theme import DEFAULT_THEME_ID, get_theme, get_themes
 from website.schemas import (
     MediaCreateSchema,
     MenuCreateSchema,
@@ -28,13 +31,25 @@ class PageService(
     DeleteMixin,
     ServiceBase[Page],
 ):
-    """No hook needed.
+    """No hook needed, and the layout is why that is worth saying.
 
     Everything `Model.save()` used to do to a page lives on `PageQuerySet`
     (`update_date`, `date_published`), so the admin and the service share the
     same invariants instead of each carrying half of them. Slug uniqueness is
     the `page_unique_slug` constraint, which
     `_database_error_to_validation_error` turns into a validation error.
+
+    `layout` looked like it needed one, and does not. Because the field carries
+    `choices`, an unknown id is refused twice over before any hook could run:
+    `core.schemas.fields` builds a pydantic `Enum` from them, so the schema
+    rejects it with a message that already names every valid id, and for a
+    caller passing a dict instead of a schema `to_internal_values` runs
+    `Field.validate()`, which enforces `choices` too. A hook here would only
+    restate that, worse.
+
+    `Website.theme` is the opposite case and keeps its hook: it carries no
+    `choices` on purpose (an enum in the response schema would make a stale
+    stored value unserializable), and its rule is cross-field anyway.
     """
 
     async def read_published(self, filters=None, ordering=None, fields=None):
@@ -288,17 +303,64 @@ class WebsiteService(
     read the row at all. Registering a `BaseRule` for `Website` would blank the
     whole site.
 
-    No `validate_data`: every field here is either free text or a relation, and
-    a relation is already resolved through the related service's `browse`, so it
-    is access-checked and reported as `RelationNotFound` without a hook. A
-    consequence worth naming: an author holding only `website_manage_own_page`
-    can set `homepage` to one of their own pages and to nothing else.
+    `validate_data` covers the theme and its options, and nothing else: the
+    remaining fields are free text or relations, and a relation is already
+    resolved through the related service's `browse`, so it is access-checked and
+    reported as `RelationNotFound` without a hook. A consequence worth naming:
+    an author holding only `website_manage_own_page` can set `homepage` to one
+    of their own pages and to nothing else.
 
     Publication is deliberately NOT checked. `HomePageView.get_homepage`
     documents the opposite contract -- an unpublished or deleted homepage
     renders the hero alone rather than a 404 -- and refusing a draft would break
     the natural set-then-publish order.
     """
+
+    def validate_data(self, data, instance):
+        """The theme exists, and the options match *that* theme's schema.
+
+        Inherently cross-field, which is why it cannot live on the model fields:
+        the theme to validate the options against comes from the payload when
+        the request carries one, and from the stored record when only the options
+        are patched.
+        """
+        # No null/blank guard here: `ServiceBase.to_internal_values` runs
+        # `Field.validate()` on every supplied value before this hook, so a
+        # `null` from an `Optional`-typed update schema is already a field error
+        # -- keyed by the payload's index rather than by pk, which a test pins.
+        theme_id = data.get("theme") or (
+            instance.theme if instance is not None else DEFAULT_THEME_ID
+        )
+
+        if "theme" in data and get_theme(theme_id) is None:
+            raise self.ValidationError(
+                f"{theme_id!r} is not a known theme. Available: "
+                f"{', '.join(theme.id for theme in get_themes()) or 'none'}.",
+                key="theme",
+            )
+
+        if "theme_options" in data:
+            theme = get_theme(theme_id)
+            if theme is None:
+                # Patching options while the *stored* theme has disappeared from
+                # the code. Reported rather than skipped: the read path degrades
+                # (`resolve_options`), but a write must not silently persist
+                # options for a theme that no longer exists.
+                raise self.ValidationError(
+                    f"The current theme {theme_id!r} no longer exists: select a "
+                    f"theme before setting its options.",
+                    key="theme",
+                )
+            try:
+                theme.validate_options(data["theme_options"])
+            except PydanticValidationError as exc:
+                raise self.ValidationError(
+                    [
+                        f"{'.'.join(str(part) for part in err['loc']) or '__all__'}: {err['msg']}"
+                        for err in exc.errors()
+                    ],
+                    key="theme_options",
+                ) from exc
 
     async def read_current(self, fields=None):
         """The website record, or None on a database that has not been populated.

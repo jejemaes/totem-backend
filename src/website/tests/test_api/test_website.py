@@ -4,6 +4,7 @@ from parameterized import parameterized
 from core.testing import APITestCaseMixin
 from user.tests.test_api.common import CommonTestMixin
 from website.models import Menu, Page, Website
+from website.theme import DEFAULT_THEME_ID
 
 WEBSITE_ID = "01M209K5BNS12QRPHXFWVJNVD1"
 PAGE_ID = "01M209K5BNS12QRPHXFWVJNVD2"
@@ -125,6 +126,11 @@ class WebsiteAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         ({"homepage": UNKNOWN_PAGE_ID}, 422, "homepage"),
         ({"menu": UNKNOWN_PAGE_ID}, 422, "menu"),
         ({"footer": '<t-widget name="nope"></t-widget>'}, 422, "footer"),
+        ({"theme": None}, 422, "theme"),
+        ({"theme": "no-such-theme"}, 422, "theme"),
+        ({"theme": DEFAULT_THEME_ID}, 200, None),
+        ({"theme_options": {"nope": 1}}, 422, "theme_options"),
+        ({"theme_options": {}}, 200, None),
     ])
     def test_update_request_field_validation(self, extra_body, status_code, error_field):
         """`name` and `headline` are NOT NULL, everything else here is nullable.
@@ -279,6 +285,23 @@ class WebsiteAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(obj.footer, "<p>Mille sabords</p>")
         self._assert_api_format(data, obj, None)
 
+    def test_switching_theme_clears_the_stored_options(self):
+        """The values are keyed by one theme's `option_schema`.
+
+        Nothing maps them onto another theme's, so the switch drops them rather
+        than carrying dead state forward.
+        """
+        Website.objects.filter(pk=WEBSITE_ID).update(theme_options={"stale": 1})
+
+        response = self.do_api_request(
+            self.url_current, "PATCH", self.user_access_token_frodon.token,
+            data={"theme": DEFAULT_THEME_ID},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["theme_options"], {})
+        self.assertEqual(Website.objects.get(pk=WEBSITE_ID).theme_options, {})
+
     def test_current_update_not_found_on_an_unpopulated_database(self):
         Website.objects.all().delete()
 
@@ -370,6 +393,8 @@ class WebsiteAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                 "menu",
                 "homepage",
                 "footer",
+                "theme",
+                "theme_options",
             ]
 
         if "id" in fields:
@@ -384,6 +409,12 @@ class WebsiteAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             self.assertEqual(api_data["meta_description"], obj.meta_description)
         if "footer" in fields:
             self.assertEqual(api_data["footer"], obj.footer)
+        if "theme" in fields:
+            self.assertEqual(api_data["theme"], obj.theme)
+        if "theme_options" in fields:
+            # A JSON column, so the payload is the stored value verbatim -- the
+            # converter maps it to `AnyObject` rather than coercing it.
+            self.assertEqual(api_data["theme_options"], obj.theme_options)
 
         # Display-name objects rather than bare pks: the editor needs a label to
         # show. Asserting the nested shape is also what proves the relation was

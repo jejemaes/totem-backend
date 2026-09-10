@@ -44,6 +44,8 @@ class WebsiteSchema(ModelSchema):
             "menu",
             "homepage",
             "footer",
+            "theme",
+            "theme_options",
         ]
         optional_fields = "__all__"
 
@@ -59,6 +61,8 @@ class WebsiteUpdateSchema(ModelSchema):
             "menu",
             "homepage",
             "footer",
+            "theme",
+            "theme_options",
         ]
         optional_fields = "__all__"
 
@@ -72,3 +76,13 @@ class WebsiteUpdateSchema(ModelSchema):
 # `footer` is writable, and is the one field here that carries widget markers:
 # `HtmlField(allow_widget=True)` validates them at write time, so a marker
 # naming an unregistered widget is refused by the field's own validator.
+#
+# `theme_options` sits in `Meta.fields` like anything else, and is worth a note
+# only because it could not until recently: `core.schemas.fields` registered its
+# JSON converter on the postgres contrib subclass, so the `models.JSONField`
+# every model declares resolved to no converter at all and raised
+# `ImproperlyConfigured` while this class was being built. It converts to
+# `AnyObject` -- deliberately not a `Dict[str, Any]` declared by hand -- because
+# the shape a theme accepts is its `option_schema`'s business, exposed through
+# `/website/themes/`, and restating a narrower shape here would be a second
+# description of it to keep in sync.
