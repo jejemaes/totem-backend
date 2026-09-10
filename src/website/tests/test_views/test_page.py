@@ -4,7 +4,7 @@ from django.test import Client, TestCase
 from django.urls import reverse
 
 from website.models import Page, Website
-from website.services import PageService
+from website.services import PageService, WebsiteService
 from website.views import PageView
 
 from .common import WebsiteViewTestMixin
@@ -48,6 +48,37 @@ class TestPageView(WebsiteViewTestMixin, TestCase):
 
         self.assertEqual(response.context_data["page"].pk, self.page.pk)
         self.assertEqual(response.context_data["object"].pk, self.page.pk)
+
+    def test_the_website_is_read_through_its_service(self):
+        """Pins the last of the ORM out of this module.
+
+        `get_website` used to be `await Website.objects.afirst()`, the one place
+        the website views reached the database directly.
+        """
+        with patch.object(
+            WebsiteService, "read_current", wraps=WebsiteService.read_current,
+            autospec=True,
+        ) as read_current:
+            Client().get(self._url())
+
+        self.assertTrue(read_current.called)
+        # No `fields=`: it would become an `only()`, and the layout reads
+        # `name`/`headline` while the context mixin reads `menu_id`,
+        # `homepage_id` and `footer`. See `WebsiteService.read_current`.
+        self.assertIsNone(read_current.call_args.kwargs.get("fields"))
+
+    def test_the_public_path_costs_no_extra_query(self):
+        """Routing the website read through a service must stay free.
+
+        `apply_access_rules` returns the queryset untouched for a model with no
+        rule registered, and `Environment.get_access_roles()` issues no query
+        while `user is None` -- which is every request here. Pinning the count
+        is what would catch a `BaseRule` being declared for `Website`, or the
+        access machinery starting to query for anonymous callers.
+        """
+        with self.assertNumQueries(3):
+            # page, website, menu tree -- one each, and nothing for the roles.
+            Client().get(self._url())
 
     def test_the_page_is_read_through_its_service(self):
         # Pins that the view holds no queryset of its own.

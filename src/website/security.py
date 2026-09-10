@@ -33,9 +33,24 @@ register_permission("totem.websitemedia.delete", "Delete Website Medias", is_pub
 # and `widget` on its own is exactly the kind of name another app would claim.
 register_permission("totem.websitewidget.read", "Read Website Widget Types", is_public=True)
 
+# `totem.website.*`, not `totem.websitewebsite.*`: this is the one model where
+# the `<app><model>` convention above folds in on itself. No `.create` and no
+# `.delete` -- `WebsiteService` exposes neither, since the row is provisioned
+# once by `populate_system`, and registering a scope nothing enforces is how a
+# client learns to ask for a capability that does not exist.
+register_permission("totem.website.read", "Read Website Settings", is_public=True)
+register_permission("totem.website.update", "Update Website Settings", is_public=True)
+
 # ---------------------------------------------------------
 # Access rules
 # ---------------------------------------------------------
+
+
+# Nothing is registered for `Website`, and that is load-bearing rather than an
+# omission: `apply_access_rules` leaves a queryset untouched only while its
+# model has no rule, and the public render path reads the row as `user=None`
+# with no role at all. The first `BaseRule` declared for `Website` would filter
+# that read to nothing and blank every page of the site.
 
 
 class WebsiteManageOwnPageRule(BaseRule):
