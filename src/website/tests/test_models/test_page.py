@@ -1,6 +1,7 @@
 from django.test import TestCase
 
 from website.models import Page
+from website.theme import LAYOUT_DEFAULT
 
 
 class TestPageModel(TestCase):
@@ -56,3 +57,19 @@ class TestPagePrimaryKey(TestCase):
         # This is the whole point of a ULID over a UUID4, and what makes the
         # implicit ordering added by `queryset_order_by_fields` meaningful.
         self.assertLess(first.pk, second.pk)
+
+    def test_a_fresh_page_gets_the_default_layout(self):
+        page = Page.objects.create(title="Le Hike", slug="hike", content="<p>x</p>")
+
+        self.assertEqual(page.layout, LAYOUT_DEFAULT)
+
+    def test_updating_the_layout_still_stamps_the_update_date(self):
+        """Guards the interaction between the new field and `PageQuerySet.update`."""
+        page = Page.objects.create(title="Le Hike", slug="hike", content="<p>x</p>")
+        before = page.update_date
+
+        Page.objects.filter(pk=page.pk).update(layout="narrow")
+
+        page.refresh_from_db()
+        self.assertEqual(page.layout, "narrow")
+        self.assertGreater(page.update_date, before)

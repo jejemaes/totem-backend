@@ -8,7 +8,8 @@
             "title": "Le Hike",
             "slug": "hike",
             "content": "<p>This is a small content</p>",
-            "update_date": "2024-09-12T13:37:33.733Z"
+            "update_date": "2024-09-12T13:37:33.733Z",
+            "layout": "sidebar-left"
         }
     },
     {
@@ -20,7 +21,8 @@
             "title": "Le Camp",
             "slug": "camp",
             "content": "<div><p><b>Lorem Ipsum</b> is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industry's standard dummy text ever since the 1500s, when an unknown printer took a galley of type and scrambled it to make a type specimen book. It has survived not only five centuries, but also the leap into electronic typesetting, remaining essentially unchanged. It was popularised in the 1960s with the release of <i>Letraset</i> sheets containing Lorem Ipsum passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem Ipsum.</p><p><b>Lorem Ipsum</b> is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industry's standard dummy text ever since the 1500s, when an unknown printer took a galley of type and scrambled it to make a type specimen book. It has survived not only five centuries, but also the leap into electronic typesetting, remaining essentially unchanged. It was popularised in the 1960s with the release of <i>Letraset</i> sheets containing Lorem Ipsum passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem Ipsum.</p></div>",
-            "update_date": "2024-09-12T13:37:25.227Z"
+            "update_date": "2024-09-12T13:37:25.227Z",
+            "layout": "full-width"
         }
     },
     {
@@ -32,7 +34,8 @@
             "title": "Not published page",
             "slug": "todo",
             "content": "<p><b>Lorem Ipsum</b> is simply dummy text of the printing and typesetting industry. Lorem Ipsum has been the industry's standard dummy text ever since the 1500s, when an unknown printer took a galley of type and scrambled it to make a type specimen book. It has survived not only five centuries, but also the leap into electronic typesetting, remaining essentially unchanged. It was popularised in the 1960s with the release of <i>Letraset</i> sheets containing Lorem Ipsum passages, and more recently with desktop publishing software like Aldus PageMaker including versions of Lorem Ipsum.</p>",
-            "update_date": "2024-09-04T13:21:50.292Z"
+            "update_date": "2024-09-04T13:21:50.292Z",
+            "layout": "full-width"
         }
     },
     {
@@ -44,7 +47,8 @@
             "date_published": "2024-01-01T00:00:00Z",
             "title": "Welcome",
             "content": "<div><p>Welcome to the scout group website.</p><t-widget name=\"last-page\" attrs='{\"heading\": \"Latest pages\", \"limit\": 3}'></t-widget></div>",
-            "update_date": "2024-01-01T00:00:00Z"
+            "update_date": "2024-01-01T00:00:00Z",
+            "layout": "landing"
         }
     }
 ]

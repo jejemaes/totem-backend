@@ -2,6 +2,7 @@ from django.contrib import admin
 from django import forms
 
 from website.models import Page, Media, Menu, Website
+from website.theme import get_theme_choices
 
 
 # -------------------------------------
@@ -58,7 +59,10 @@ admin.site.register(Media, MediaAdmin)
 # -------------------------------------
 
 class PageAdmin(admin.ModelAdmin):
-    list_display = ("title", "slug", "is_published")
+    # `layout` needs no form of its own: the field carries `choices`, so django
+    # renders the dropdown by itself. That is the one practical difference with
+    # `Website.theme` -- see `WebsiteAdminForm`.
+    list_display = ("title", "slug", "layout", "is_published")
 
 
 admin.site.register(Page, PageAdmin)
@@ -79,8 +83,64 @@ admin.site.register(Menu, MenuAdmin)
 # Website
 # -------------------------------------
 
+class WebsiteAdminForm(forms.ModelForm):
+    """The theme dropdown, and the options reset the queryset cannot do here.
+
+    Two jobs the model field cannot do on its own.
+
+    The dropdown: `theme` carries no `choices`, because they would become a
+    pydantic `Enum` in the API *response* schema and a stored theme since
+    deleted from the code would stop being serializable instead of degrading.
+    Built here instead, per request, long after the registry is filled -- which
+    is also why it cannot be a `choices` callable on the field.
+
+    The reset: the admin writes through `Model.save()`, so
+    `WebsiteQuerySet.update` never runs and its "a theme switch clears the
+    stored options" rule would be silently missing. The same two-writer
+    situation `WebsitePublishedMixin` handles, and the same answer.
+
+    Validation itself is not duplicated -- `Website.clean()` owns it, and both
+    the service and this form end up calling `theme.validate_options`.
+    Precedent: `MediaAdminForm.clean`.
+    """
+
+    class Meta:
+        model = Website
+        fields = "__all__"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["theme"] = forms.ChoiceField(
+            choices=get_theme_choices(),
+            label=Website._meta.get_field("theme").verbose_name,
+            help_text=Website._meta.get_field("theme").help_text,
+        )
+
+    def clean(self):
+        cleaned_data = super().clean()
+        if "theme" in self.changed_data:
+            # Not `cleaned_data["theme"] != self.instance.theme`:
+            # `self.instance` has already been mutated by `_post_clean` on an
+            # edit, so it no longer holds the stored value. `changed_data`
+            # compares against the form's initial, which does.
+            cleaned_data["theme_options"] = {}
+            self.instance.theme_options = {}
+        return cleaned_data
+
+
 class WebsiteAdmin(admin.ModelAdmin):
-    list_display = ("id", "name", "headline")
+    form = WebsiteAdminForm
+    list_display = ("id", "name", "headline", "theme")
+
+    def has_add_permission(self, request):
+        # One row, provisioned by `populate_system`. A second one would make
+        # `WebsiteService.read_current()` pick between two identities by pk
+        # order.
+        return not Website.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        # Deleting the only row takes `/` down.
+        return False
 
 
 admin.site.register(Website, WebsiteAdmin)
