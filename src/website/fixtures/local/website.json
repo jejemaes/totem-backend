@@ -9,7 +9,9 @@
             "meta_description": "",
             "menu": "01M209K5BJVDJ00VFA6EY75TK1",
             "footer": "<div><p>Scout group, since 1910.</p><t-widget name=\"last-page\" attrs='{\"limit\": 2}'></t-widget></div>",
-            "homepage": "01M209K5AZA3CWE32N4JXEQAXH"
+            "homepage": "01M209K5AZA3CWE32N4JXEQAXH",
+            "theme": "default",
+            "theme_options": {}
         }
     }
 ]
