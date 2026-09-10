@@ -3,6 +3,7 @@ import typing as t
 
 from annotated_types import Ge, Gt, Le, Lt, MaxLen, MinLen
 from django.core.validators import URLValidator, slug_re
+from django.contrib.postgres import fields as psql_fields
 from django.db import models
 from django.test import TestCase
 from django.utils import timezone
@@ -12,6 +13,7 @@ from pydantic.fields import FieldInfo
 
 from contact.models import Contact
 from core.schemas.fields import convert_db_field
+from core.schemas.types import AnyObject
 from user.models import UserRoleRelation
 from website.models import Menu, Page
 
@@ -566,6 +568,53 @@ class TestSchemaFieldConverter(TestCase):
         python_type, field = convert_db_field(django_field, optional=False)
         self.assertEqual(python_type, expected_type)
         self.assertPydanticFieldEqual(field, expected_field)
+
+    # -------------------------------------------------------------
+    # JSON Field
+    # -------------------------------------------------------------
+
+    @parameterized.expand(
+        [
+            (models.JSONField(), AnyObject, FieldInfo()),
+            (
+                models.JSONField(verbose_name="my options"),
+                AnyObject,
+                FieldInfo(title="My Options"),
+            ),
+            (
+                models.JSONField(null=True),
+                t.Optional[AnyObject],
+                FieldInfo(default=None),
+            ),
+        ]
+    )
+    def test_json_field_conversion(self, django_field, expected_type, expected_field):
+        """`models.JSONField` is the one every model declares.
+
+        The converter used to be registered on
+        `django.contrib.postgres.fields.JSONField`, which in django 5 exists for
+        historical migrations only -- and is a *subclass* of the core field. So
+        `singledispatch` resolved the field models actually use to the
+        unregistered base and raised `ImproperlyConfigured` while building the
+        schema class, i.e. at import time. Listing a JSONField in a
+        `ModelSchema.Meta.fields` broke the whole app rather than one request.
+        """
+        python_type, field = convert_db_field(django_field, optional=False)
+        self.assertEqual(python_type, expected_type)
+        self.assertPydanticFieldEqual(field, expected_field)
+
+    def test_the_postgres_json_subclass_still_resolves(self):
+        """Registering the parent covers the subclass, via the MRO.
+
+        `singledispatch` walks it, so the contrib field keeps working for as
+        long as django ships it -- there is no second registration to keep in
+        sync.
+        """
+        python_type, dummy = convert_db_field(
+            psql_fields.JSONField(), optional=False
+        )
+
+        self.assertEqual(python_type, AnyObject)
 
     # -------------------------------------------------------------
     # Relational Fields (ForeignKey, OneToOne, ManyToMany)

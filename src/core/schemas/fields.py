@@ -259,6 +259,39 @@ def convert_field_to_url(
     )
 
 
+# JSON
+
+
+@convert_django_field.register(models.JSONField)
+def convert_field_to_json(
+    field: Field, optional: bool = False, extra_kwargs: dict = None
+) -> t.Tuple[t.Type, PydanticField]:
+    """Registered on `models.JSONField`, and filed here rather than with the
+    postgres contrib fields -- which is where it used to live, and the whole of
+    the bug.
+
+    `django.contrib.postgres.fields.JSONField` survives in django 5 for
+    historical migrations alone: it carries `system_check_removed_details`, so a
+    model declaring it fails `fields.E904`. Every model therefore declares
+    `models.JSONField`, and that is a *parent* of the contrib one. Registering
+    only the subclass left `singledispatch` resolving the field every model
+    actually uses to the unregistered base, i.e. to
+    `ImproperlyConfigured("Don't know how to convert the Django field ...")` --
+    raised while the schema class is being built, so at import time.
+
+    Registering the parent alone is enough: `singledispatch` walks the MRO, so
+    the contrib subclass still lands here for as long as it exists.
+
+    `AnyObject` and not `t.Dict`: a JSON column holds any json value, and
+    pydantic must not coerce or reorder what django stores verbatim. It
+    documents itself as `{"type": "object"}`. A schema that wants a narrower
+    shape enforced declares the field itself instead of leaning on this.
+    """
+    return _get_pydantic_fieldinfo_from_field(
+        AnyObject, field, optional=optional, extra_kwargs=extra_kwargs
+    )
+
+
 # Binary ??
 
 
@@ -392,15 +425,6 @@ def convert_field_to_many_to_many(
 # -----------------------------------------
 # Postgres Contrib Fields Converter
 # -----------------------------------------
-
-
-@convert_django_field.register(psql_fields.JSONField)
-def convert_field_to_json(
-    field: Field, optional: bool = False, extra_kwargs: dict = None
-) -> t.Tuple[t.Type, PydanticField]:
-    return _get_pydantic_fieldinfo_from_field(
-        AnyObject, field, optional=optional, extra_kwargs=extra_kwargs
-    )
 
 
 @convert_django_field.register(psql_fields.ArrayField)
