@@ -1,0 +1,24 @@
+{# The one layout that does NOT render the page title: the hero carries the
+   site's own identity instead, and the content owns the canvas below it. That
+   distinction is the reason `landing` exists next to `full-width`.
+
+   It is also what `/` falls back to when there is no homepage at all -- there is
+   then no title and no content, and the hero alone is a coherent page. #}
+{% extends "website/themes/default/base.html" %}
+
+{% block title %}{{ website.name if website else "" }}{% endblock %}
+
+{% block content %}
+<section class="t-hero py-5 text-center">
+  <div class="container py-5">
+    <h1 class="display-3 fw-bold">{{ website.name if website else "" }}</h1>
+    {% if website and website.headline %}
+    <p class="lead fw-normal mt-3 mb-0">{{ website.headline }}</p>
+    {% endif %}
+  </div>
+</section>
+
+<div class="container py-5">
+  <div class="t-content">{{ content }}</div>
+</div>
+{% endblock %}

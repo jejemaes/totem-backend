@@ -1,0 +1,29 @@
+{# One definition of "a menu link", called from both branches of the navbar.
+
+   It exists because there were two: the flat branch and the dropdown branch
+   each rendered their own `<a>`, the flat one had its `new_window` condition
+   inverted, and the dropdown one ignored `new_window` entirely. A fix applied
+   to one would have missed the other. #}
+{% macro menu_link(node, css_class="nav-link") %}
+<a class="{{ css_class }}" href="{{ node.data.url }}"
+   {%- if node.data.new_window %} target="_blank" rel="noopener"{% endif %}>{{ node.data.name }}</a>
+{%- endmacro %}
+
+{# The main menu as a vertical list, for the sidebar layouts.
+
+   Reuses `menu_nodes`, already in the render context for the navbar, so the two
+   sidebar layouts need no new data and no new query. An author who wants a
+   *different* menu in the page body drops a `side-menu` widget into the content
+   instead -- that widget takes a `menu_id` and can point anywhere in the tree. #}
+{% macro menu_vertical(nodes) %}
+<ul class="t-sidebar__list nav flex-column">
+  {% for node in nodes recursive %}
+  <li class="nav-item">
+    {{ menu_link(node, "nav-link px-0") }}
+    {% if node.children %}
+    <ul class="t-sidebar__list nav flex-column ms-3">{{ loop(node.children) }}</ul>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{%- endmacro %}

@@ -1,0 +1,127 @@
+{# The chrome every page of this theme inherits.
+
+   Extended by this theme's own layouts, and -- through `theme.base_template` --
+   by any template another app ships for its own records. That is what keeps a
+   new content type at one file and costs existing themes nothing.
+
+   `website` may be None on a freshly provisioned database (`HomePageView`
+   degrades to the hero alone), so every dereference of it is guarded. #}
+{% import "website/themes/default/macros.html" as menu %}
+<!doctype html>
+<html lang="en" data-bs-theme="dark">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="generator" content="Totem">
+    {% if website and website.meta_description %}
+    <meta name="description" content="{{ website.meta_description }}">
+    {% endif %}
+    {% if website and website.meta_authors %}
+    <meta name="author" content="{{ website.meta_authors }}">
+    {% endif %}
+
+    <title>{% block title %}{{ website.name if website else "" }}{% endblock %}</title>
+
+    {# Bootswatch Superhero: a drop-in Bootstrap build, so it replaces
+       bootstrap.css rather than layering on it. Pinned and hashed -- the
+       integrity values were computed against these exact jsdelivr files, and
+       must be recomputed if the version moves, or the browser silently refuses
+       the stylesheet and the site renders unstyled.
+
+       Note it `@import`s Lato from fonts.googleapis.com on its own. #}
+    <link rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/bootswatch@5.3.8/dist/superhero/bootstrap.min.css"
+          integrity="sha384-fU437/gCPFVIYQG5/RnXUGGh+prGONHn6C9GslvteaFVmNCeul6aHunWDz85bM78"
+          crossorigin="anonymous">
+
+    {# Our own layer, from collected static. It declares every `--t-*` variable
+       in `:root` with a fallback, so the block below only has to carry what an
+       author actually set. #}
+    {% for stylesheet in theme.stylesheets %}
+    <link rel="stylesheet" href="{{ static(stylesheet) }}">
+    {% endfor %}
+
+    {# Rendered in python, never by a filter: escaping cannot make a value safe
+       inside a `<style>`, so `render_css_variables` validates instead. Empty
+       when nothing is set, which is why this is conditional. #}
+    {% if theme_style %}
+    <style>{{ theme_style }}</style>
+    {% endif %}
+
+    {% block extra_style %}{% endblock %}
+  </head>
+  <body class="t-layout t-layout--{{ layout }}">
+
+    <nav class="navbar navbar-expand-md bg-dark sticky-top border-bottom" data-bs-theme="dark">
+      <div class="container">
+        <a class="navbar-brand" href="/">{{ website.name if website else "" }}</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="offcanvas"
+                data-bs-target="#offcanvas" aria-controls="offcanvas"
+                aria-label="Toggle navigation">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="offcanvas offcanvas-end" tabindex="-1" id="offcanvas"
+             aria-labelledby="offcanvasLabel">
+          <div class="offcanvas-header">
+            <h5 class="offcanvas-title" id="offcanvasLabel">{{ website.name if website else "" }}</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="offcanvas"
+                    aria-label="Close"></button>
+          </div>
+          <div class="offcanvas-body">
+            <ul class="navbar-nav flex-grow-1 justify-content-end">
+              {% for node in menu_nodes %}
+                {% if not node.children %}
+                  <li class="nav-item">{{ menu.menu_link(node) }}</li>
+                {% else %}
+                  <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle" href="#" role="button"
+                       data-bs-toggle="dropdown" aria-expanded="false">{{ node.data.name }}</a>
+                    {# Bootstrap 5 dropped submenu support (it went away in v4 ->
+                       v5), so a third level renders as a plain nested list
+                       rather than opening. Left as is: pretending otherwise
+                       would mean shipping custom submenu javascript. #}
+                    <ul class="dropdown-menu">
+                      {% for subnode in node.children recursive %}
+                        <li>
+                          {{ menu.menu_link(subnode, "dropdown-item") }}
+                          {% if subnode.children %}
+                          <ul class="dropdown-menu position-static d-block border-0">{{ loop(subnode.children) }}</ul>
+                          {% endif %}
+                        </li>
+                      {% endfor %}
+                    </ul>
+                  </li>
+                {% endif %}
+              {% endfor %}
+            </ul>
+          </div>
+        </div>
+      </div>
+    </nav>
+
+    <main class="t-main">
+      {% block content %}{% endblock %}
+    </main>
+
+    <footer class="t-footer border-top mt-5 py-4">
+      <div class="container">
+        <div class="row gy-3">
+          <div class="col-12 col-md">
+            <small class="d-block text-body-secondary">&copy; {{ website.name if website else "" }}</small>
+          </div>
+          <div class="col-12 col-md">
+            {{ footer }}
+          </div>
+        </div>
+      </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
+            integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
+            crossorigin="anonymous"></script>
+    {% for script in theme.scripts %}
+    <script src="{{ static(script) }}"></script>
+    {% endfor %}
+    {% block extra_js %}{% endblock %}
+  </body>
+</html>

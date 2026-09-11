@@ -1,0 +1,15 @@
+{# A readable single column: the measure is capped so long prose does not run
+   the full width of a desktop screen. `--t-content-max-width` is the option an
+   author can move without touching this file. #}
+{% extends "website/themes/default/base.html" %}
+
+{% block title %}{{ page.title ~ " · " ~ website.name if page and website else (page.title if page else "") }}{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+  <article class="t-narrow mx-auto">
+    {% if page %}<h1 class="display-6 fw-bold mb-4">{{ page.title }}</h1>{% endif %}
+    <div class="t-content">{{ content }}</div>
+  </article>
+</div>
+{% endblock %}

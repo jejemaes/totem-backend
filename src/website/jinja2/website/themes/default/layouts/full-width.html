@@ -1,0 +1,12 @@
+{# The default, and today's behaviour: the page title, then its content, across
+   the container. Every other layout is a deviation from this one. #}
+{% extends "website/themes/default/base.html" %}
+
+{% block title %}{{ page.title ~ " · " ~ website.name if page and website else (page.title if page else "") }}{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+  {% if page %}<h1 class="display-5 fw-bold mb-4">{{ page.title }}</h1>{% endif %}
+  <div class="t-content">{{ content }}</div>
+</div>
+{% endblock %}
