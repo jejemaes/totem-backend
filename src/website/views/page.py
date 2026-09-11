@@ -1,7 +1,12 @@
 
 from core.html_widget import expand_widgets
 from website.services import PageService
-from website.views.mixins import TemplateResponseMixin, WebsiteRenderContextMixin, View, DetailRecordTemplateWebsiteView
+from website.views.mixins import (
+    DetailRecordTemplateWebsiteView,
+    ThemeTemplateResponseMixin,
+    View,
+    WebsiteRenderContextMixin,
+)
 
 
 class PageView(DetailRecordTemplateWebsiteView):
@@ -9,8 +14,12 @@ class PageView(DetailRecordTemplateWebsiteView):
     service = PageService
     lookup_field = 'slug'
     lookup_url_kwarg = 'slug'
-    template_name = 'website/page.html'
     context_object_name = 'page'
+
+    # No `template_name`: the theme resolves the layout this page carries.
+
+    def get_layout(self):
+        return self.object.layout
 
     async def read_records(self, service, filters):
         # "Publicly visible" is the service's definition, not this view's: the
@@ -25,7 +34,7 @@ class PageView(DetailRecordTemplateWebsiteView):
         return self.check_render_context_data(context)
 
 
-class HomePageView(TemplateResponseMixin, WebsiteRenderContextMixin, View):
+class HomePageView(ThemeTemplateResponseMixin, WebsiteRenderContextMixin, View):
     """The root of the site, rendered from the page `Website.homepage` points at.
 
     One content mechanism instead of two: the homepage body is authored like any
@@ -37,18 +46,25 @@ class HomePageView(TemplateResponseMixin, WebsiteRenderContextMixin, View):
     deleted: every one of those renders the hero alone rather than a 404.
     """
 
-    template_name = 'website/homepage.html'
-    template_engine = 'jinja2'
+    # `landing` when there is no page at all: with no page there is no title
+    # and no content, only the hero -- and every other layout would render an
+    # empty `<h1>`.
+    layout = 'landing'
 
     async def get_website_context_data(self):
         context = await super().get_website_context_data()
 
-        page = await self.get_homepage(context['website'])
+        page = self.page = await self.get_homepage(context['website'])
         context['page'] = page
         context['content'] = await expand_widgets(
             page.content if page is not None else "", self.env
         )
         return context
+
+    def get_layout(self):
+        # The homepage keeps whatever layout it was authored with; `landing` is
+        # only the fallback for a site that has no homepage yet.
+        return getattr(self, 'page', None).layout if getattr(self, 'page', None) else self.layout
 
     async def get_homepage(self, website):
         if website is None or not website.homepage_id:

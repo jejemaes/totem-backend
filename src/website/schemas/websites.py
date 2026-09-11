@@ -44,6 +44,7 @@ class WebsiteSchema(ModelSchema):
             "menu",
             "homepage",
             "footer",
+            "side_bar_content",
             "theme",
             "theme_options",
         ]
@@ -61,6 +62,7 @@ class WebsiteUpdateSchema(ModelSchema):
             "menu",
             "homepage",
             "footer",
+            "side_bar_content",
             "theme",
             "theme_options",
         ]

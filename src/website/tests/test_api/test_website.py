@@ -393,6 +393,7 @@ class WebsiteAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                 "menu",
                 "homepage",
                 "footer",
+                "side_bar_content",
                 "theme",
                 "theme_options",
             ]
@@ -409,6 +410,8 @@ class WebsiteAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             self.assertEqual(api_data["meta_description"], obj.meta_description)
         if "footer" in fields:
             self.assertEqual(api_data["footer"], obj.footer)
+        if "side_bar_content" in fields:
+            self.assertEqual(api_data["side_bar_content"], obj.side_bar_content)
         if "theme" in fields:
             self.assertEqual(api_data["theme"], obj.theme)
         if "theme_options" in fields:

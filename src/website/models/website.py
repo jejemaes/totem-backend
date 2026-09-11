@@ -46,6 +46,9 @@ class Website(models.Model):
     homepage = models.ForeignKey('website.Page', verbose_name="Homepage", null=True, blank=True, on_delete=models.PROTECT, related_name="+", help_text="Page rendered at the root of the website.")
 
     footer = fields.HtmlField("Footer Content", null=True, blank=True, allow_widget=True)
+    side_bar_content = fields.HtmlField(
+        "Sidebar Content", null=True, blank=True, allow_widget=True
+    )
 
     # No `choices`, deliberately, even though the registry is complete by the
     # time schemas are built (`WebsiteConfig.ready()` runs before
