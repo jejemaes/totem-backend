@@ -1,0 +1,19 @@
+{# The default: a page header band, then the content across the container.
+   Furni leans on generous vertical rhythm, so the spacing here is the theme's
+   signature rather than decoration. #}
+{% extends "website/themes/furni/base.html" %}
+
+{% block title %}{{ page.title ~ " · " ~ website.name if page and website else (page.title if page else "") }}{% endblock %}
+
+{% block content %}
+{% if page %}
+<header class="t-pagehead">
+  <div class="container">
+    <h1 class="t-pagehead__title">{{ page.title }}</h1>
+  </div>
+</header>
+{% endif %}
+<div class="container t-section">
+  <div class="t-content">{{ content }}</div>
+</div>
+{% endblock %}

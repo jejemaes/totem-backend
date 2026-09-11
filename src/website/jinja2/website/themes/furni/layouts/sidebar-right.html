@@ -1,0 +1,27 @@
+{# `sidebar-left.html` with the columns in source order. See its comment for
+   what fills the aside and why the two files share their markup. #}
+{% extends "website/themes/furni/base.html" %}
+
+{% block title %}{{ page.title ~ " · " ~ website.name if page and website else (page.title if page else "") }}{% endblock %}
+
+{% block content %}
+{% if page %}
+<header class="t-pagehead">
+  <div class="container">
+    <h1 class="t-pagehead__title">{{ page.title }}</h1>
+  </div>
+</header>
+{% endif %}
+<div class="container t-section">
+  <div class="row g-5 t-sidebar-layout t-sidebar-layout--right">
+    <div class="col-12 col-lg-8">
+      <div class="t-content">{{ content }}</div>
+    </div>
+    <aside class="col-12 col-lg-4 t-sidebar">
+      {% block sidebar %}
+        {% if side_bar_content %}{{ side_bar_content }}{% endif %}
+      {% endblock %}
+    </aside>
+  </div>
+</div>
+{% endblock %}

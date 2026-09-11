@@ -1,0 +1,254 @@
+/* The Furni theme's own layer, over a stock Bootstrap 5.
+ *
+ * Furni's design language expressed in our rules, not its stylesheet: that file
+ * styles Furni's own markup, expects its own Bootstrap build plus tiny-slider
+ * and Font Awesome, sits on a repository with no tag and no licence, and would
+ * therefore have to be served from a moving branch. What is reproduced is the
+ * palette, Inter, the pill buttons and the generous section rhythm.
+ *
+ * Same two jobs as every theme stylesheet. Declare each `--t-*` with the value
+ * this theme ships, so the block the server injects carries only what an author
+ * changed and an unset option costs nothing. Then style the stable hooks: the
+ * layouts' `t-*` classes and the `t-widget-*` classes a widget template emits,
+ * which are the whole contract with a widget since widget templates are not
+ * theme-overridable.
+ */
+
+:root {
+  /* Furni's palette. */
+  --t-color-primary: #3b5d50;
+  --t-color-accent: #f9bf29;
+  --t-color-body-bg: #ffffff;
+  --t-font-family-base: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --t-content-max-width: 46rem;
+
+  /* Derived, so setting one colour does not mean setting five. */
+  --t-color-ink: #2f2f2f;
+  --t-color-muted: #6a6a6a;
+  --t-color-surface: #eff2f1;
+  --t-color-sage: #dce5e4;
+  --t-radius-pill: 30px;
+  --t-section-space: 7rem;
+  --t-widget-spacing: 2rem;
+}
+
+/* Push the author's choices into Bootstrap, rather than restating its rules.
+ * `color-mix` keeps hover shades in step with a primary the author changed. */
+:root {
+  --bs-primary: var(--t-color-primary);
+  --bs-body-bg: var(--t-color-body-bg);
+  --bs-body-color: var(--t-color-ink);
+  --bs-body-font-family: var(--t-font-family-base);
+  --bs-link-color: var(--t-color-primary);
+  --bs-link-hover-color: color-mix(in srgb, var(--t-color-primary) 75%, black);
+  --bs-heading-color: var(--t-color-primary);
+  --bs-border-radius: 10px;
+}
+
+body {
+  font-family: var(--t-font-family-base);
+  color: var(--t-color-ink);
+  background: var(--t-color-body-bg);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: var(--t-color-primary);
+  font-weight: 700;
+}
+
+/* Furni's most copied detail: every button is a pill, and the default is ink
+ * rather than the brand colour. */
+.btn {
+  --bs-btn-border-radius: var(--t-radius-pill);
+  font-weight: 600;
+  padding: 12px 30px;
+}
+
+.btn-primary {
+  --bs-btn-bg: var(--t-color-primary);
+  --bs-btn-border-color: var(--t-color-primary);
+  --bs-btn-hover-bg: color-mix(in srgb, var(--t-color-primary) 85%, black);
+  --bs-btn-hover-border-color: color-mix(in srgb, var(--t-color-primary) 85%, black);
+}
+
+.form-control {
+  height: 50px;
+  border-radius: 10px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Chrome
+ * ------------------------------------------------------------------------ */
+
+.t-navbar {
+  background: var(--t-color-body-bg);
+  padding-block: 1.25rem;
+  border-bottom: 1px solid var(--t-color-sage);
+}
+
+.t-navbar__brand {
+  font-weight: 800;
+  color: var(--t-color-primary);
+}
+
+.t-navbar .nav-link {
+  font-weight: 500;
+  color: var(--t-color-ink);
+  padding-inline: 1rem;
+}
+
+.t-navbar .nav-link:hover,
+.t-navbar .nav-link:focus {
+  color: var(--t-color-primary);
+}
+
+/* The accent earns its keep here and almost nowhere else: Furni uses the yellow
+ * sparingly, as a marker rather than a surface. */
+.t-navbar .nav-link:hover {
+  box-shadow: inset 0 -2px 0 var(--t-color-accent);
+}
+
+.t-footer {
+  background: var(--t-color-surface);
+  margin-top: var(--t-section-space);
+  padding-block: 4rem;
+}
+
+.t-footer__brand {
+  font-weight: 800;
+  color: var(--t-color-primary);
+  font-size: 1.25rem;
+}
+
+.t-footer__headline {
+  color: var(--t-color-muted);
+}
+
+.t-footer__legal {
+  border-top: 1px solid var(--t-color-sage);
+  color: var(--t-color-muted);
+}
+
+/* ---------------------------------------------------------------------------
+ * Layouts
+ * ------------------------------------------------------------------------ */
+
+.t-main {
+  min-height: 50vh;
+}
+
+/* The vertical rhythm is the theme's signature, so it is a variable rather than
+ * a number repeated in five layouts. */
+.t-section {
+  padding-block: var(--t-section-space);
+}
+
+.t-pagehead {
+  background: var(--t-color-surface);
+  padding-block: 3.5rem;
+}
+
+.t-pagehead__title {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3rem);
+}
+
+.t-narrow {
+  max-width: var(--t-content-max-width);
+}
+
+.t-hero {
+  background: var(--t-color-primary);
+  color: #fff;
+  padding-block: clamp(4rem, 10vw, 8rem);
+}
+
+.t-hero__title {
+  color: #fff;
+  font-size: clamp(2.5rem, 6vw, 4rem);
+  font-weight: 800;
+}
+
+.t-hero__headline {
+  color: var(--t-color-sage);
+  font-size: 1.15rem;
+  margin-top: 1.25rem;
+  margin-bottom: 0;
+}
+
+/* The offset sage panel behind Furni's hero imagery. Decorative only, which is
+ * why the element carries `aria-hidden`. */
+.t-hero__panel {
+  background: var(--t-color-sage);
+  border-radius: 16px;
+  aspect-ratio: 4 / 3;
+  opacity: 0.35;
+}
+
+@media (min-width: 992px) {
+  .t-sidebar-layout--left .t-sidebar {
+    border-right: 1px solid var(--t-color-sage);
+  }
+
+  .t-sidebar-layout--right .t-sidebar {
+    border-left: 1px solid var(--t-color-sage);
+  }
+}
+
+.t-content > :last-child {
+  margin-bottom: 0;
+}
+
+.t-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Widgets
+ *
+ * `t-widget t-widget-<id>` is injected by `AbstractHtmlWidget.render`, so a
+ * widget carries it whether or not its template remembers to. Per-part classes
+ * follow the widget's *id*: `t-widget-last-page` for a template named
+ * `last_update_page.html`.
+ * ------------------------------------------------------------------------ */
+
+.t-widget {
+  margin-block: var(--t-widget-spacing);
+}
+
+.t-widget__heading {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--t-color-muted);
+  margin-bottom: 0.75rem;
+}
+
+.t-widget-side-menu__list,
+.t-widget-last-page__list {
+  list-style: none;
+  padding-left: 0;
+  margin-bottom: 0;
+}
+
+.t-widget-side-menu__list--nested {
+  padding-left: 1rem;
+}
+
+.t-widget-side-menu__link,
+.t-widget-last-page__link {
+  display: inline-block;
+  padding-block: 0.35rem;
+  color: var(--t-color-ink);
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.t-widget-side-menu__link:hover,
+.t-widget-last-page__link:hover {
+  color: var(--t-color-primary);
+  box-shadow: inset 0 -2px 0 var(--t-color-accent);
+}

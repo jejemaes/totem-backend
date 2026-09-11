@@ -1,0 +1,20 @@
+{# A capped measure for prose. `--t-content-max-width` is the one length an
+   author can move from the settings. #}
+{% extends "website/themes/furni/base.html" %}
+
+{% block title %}{{ page.title ~ " · " ~ website.name if page and website else (page.title if page else "") }}{% endblock %}
+
+{% block content %}
+{% if page %}
+<header class="t-pagehead">
+  <div class="container">
+    <h1 class="t-pagehead__title">{{ page.title }}</h1>
+  </div>
+</header>
+{% endif %}
+<div class="container t-section">
+  <article class="t-narrow mx-auto">
+    <div class="t-content">{{ content }}</div>
+  </article>
+</div>
+{% endblock %}

@@ -1,0 +1,33 @@
+{# Content with an aside before it.
+
+   What fills the aside is `Website.side_bar_content` -- authored HTML with
+   widget markers, exactly like the footer, so one content mechanism covers
+   both and a `side-menu` widget can live there.
+
+   Bootstrap ordering rather than two markup branches, so `sidebar-right.html`
+   differs by one class and the two cannot drift apart. #}
+{% extends "website/themes/furni/base.html" %}
+
+{% block title %}{{ page.title ~ " · " ~ website.name if page and website else (page.title if page else "") }}{% endblock %}
+
+{% block content %}
+{% if page %}
+<header class="t-pagehead">
+  <div class="container">
+    <h1 class="t-pagehead__title">{{ page.title }}</h1>
+  </div>
+</header>
+{% endif %}
+<div class="container t-section">
+  <div class="row g-5 t-sidebar-layout t-sidebar-layout--left">
+    <div class="col-12 col-lg-8 order-lg-2">
+      <div class="t-content">{{ content }}</div>
+    </div>
+    <aside class="col-12 col-lg-4 order-lg-1 t-sidebar">
+      {% block sidebar %}
+        {% if side_bar_content %}{{ side_bar_content }}{% endif %}
+      {% endblock %}
+    </aside>
+  </div>
+</div>
+{% endblock %}
