@@ -1,0 +1,145 @@
+/* The default theme's own layer, on top of the Bootswatch Superhero build.
+ *
+ * Two jobs, and nothing else. First, declare every `--t-*` variable with the
+ * value the theme ships, so the block the server injects into `<head>` only has
+ * to carry what an author actually changed -- an unset option then costs
+ * nothing and needs no code. Second, style the stable class hooks: the layouts'
+ * `t-*` classes, and the `t-widget-*` hooks a widget template emits, which are
+ * the only contract a theme has with a widget since widget templates are not
+ * theme-overridable.
+ *
+ * Superhero is a drop-in Bootstrap *build*, not an overlay: its colours are
+ * compiled into rules and into `--bs-*` custom properties. So an author's
+ * primary colour has to be pushed back into the `--bs-*` variables rather than
+ * restating Bootstrap's rules here.
+ */
+
+:root {
+  /* Superhero's own values, from its _variables.scss. Redeclared rather than
+   * read from `--bs-*`, so that every `--t-*` has a value even if the Bootstrap
+   * build fails to load. */
+  --t-color-primary: #df6919;
+  --t-color-body-bg: #0f2537;
+  --t-font-family-base: Lato, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --t-content-max-width: 46rem;
+
+  /* Derived, so an author setting one colour does not have to set three. */
+  --t-sidebar-border: rgba(255, 255, 255, 0.1);
+  --t-widget-spacing: 1.5rem;
+}
+
+/* Push the author's choices back into Bootstrap. `color-mix` keeps the hover
+ * and subtle shades in step with a primary colour the author changed, instead
+ * of asking for three values that can disagree. */
+:root,
+[data-bs-theme="dark"] {
+  --bs-primary: var(--t-color-primary);
+  --bs-primary-rgb: var(--t-color-primary);
+  --bs-link-color: var(--t-color-primary);
+  --bs-link-hover-color: color-mix(in srgb, var(--t-color-primary) 80%, white);
+  --bs-body-bg: var(--t-color-body-bg);
+  --bs-body-font-family: var(--t-font-family-base);
+}
+
+.btn-primary {
+  --bs-btn-bg: var(--t-color-primary);
+  --bs-btn-border-color: var(--t-color-primary);
+  --bs-btn-hover-bg: color-mix(in srgb, var(--t-color-primary) 85%, black);
+  --bs-btn-hover-border-color: color-mix(in srgb, var(--t-color-primary) 85%, black);
+}
+
+/* ---------------------------------------------------------------------------
+ * Layouts
+ * ------------------------------------------------------------------------ */
+
+.t-main {
+  min-height: 60vh;
+}
+
+/* The readable measure of the `narrow` layout, and the one length an author can
+ * move from the settings. */
+.t-narrow {
+  max-width: var(--t-content-max-width);
+}
+
+.t-sidebar__list .nav-link {
+  padding-block: 0.25rem;
+}
+
+.t-sidebar__list .nav-link:hover {
+  color: var(--t-color-primary);
+}
+
+@media (min-width: 992px) {
+  .t-sidebar-layout--left .t-sidebar {
+    border-right: 1px solid var(--t-sidebar-border);
+  }
+
+  .t-sidebar-layout--right .t-sidebar {
+    border-left: 1px solid var(--t-sidebar-border);
+  }
+}
+
+.t-hero {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--t-color-body-bg) 80%, white) 0%,
+    var(--t-color-body-bg) 100%
+  );
+}
+
+/* Authored HTML: give the prose inside a page sane rhythm without reaching for
+ * a class the author would have to type. */
+.t-content > :last-child {
+  margin-bottom: 0;
+}
+
+.t-content img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* ---------------------------------------------------------------------------
+ * Widgets
+ *
+ * `t-widget t-widget-<id>` is injected by `AbstractHtmlWidget.render`, so every
+ * widget carries it whether or not its template remembers to. The per-part
+ * classes below follow the widget's *id*, not its template file name --
+ * `t-widget-last-page` for a template called `last_update_page.html`.
+ * ------------------------------------------------------------------------ */
+
+.t-widget {
+  margin-block: var(--t-widget-spacing);
+}
+
+.t-widget__heading {
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.75;
+}
+
+.t-widget-side-menu__list,
+.t-widget-last-page__list {
+  list-style: none;
+  padding-left: 0;
+  margin-bottom: 0;
+}
+
+.t-widget-side-menu__list--nested {
+  padding-left: 1rem;
+}
+
+.t-widget-side-menu__link,
+.t-widget-last-page__link {
+  display: inline-block;
+  padding-block: 0.2rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+.t-widget-side-menu__link:hover,
+.t-widget-last-page__link:hover {
+  color: var(--t-color-primary);
+  text-decoration: underline;
+}

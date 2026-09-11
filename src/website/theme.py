@@ -31,7 +31,13 @@ import re
 import typing as t
 
 from django.utils.safestring import SafeString, mark_safe
-from pydantic import BaseModel, ConfigDict, StringConstraints, ValidationError as PydanticValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    ValidationError as PydanticValidationError,
+)
 
 _logger = logging.getLogger(__name__)
 
@@ -482,7 +488,7 @@ class AbstractTheme(metaclass=ThemeMetaclass):
 
 
 class DefaultTheme(AbstractTheme):
-    """The theme the site falls back on, and for now the only one.
+    """The theme the site falls back on, built on Bootswatch Superhero.
 
     Registered here rather than shipped by its own app on purpose: it is rung
     three of every fallback chain and `validate_themes` requires it, so
@@ -491,15 +497,62 @@ class DefaultTheme(AbstractTheme):
     sweep looks for `<app>/theme.py` anywhere -- it just cannot take this one
     away.
 
-    Its templates and stylesheet do not exist yet; they arrive when the current
-    `website/jinja2/website/layout.html` is split into a real theme. Until then
-    every lookup falls through the three rungs and the views keep their own
-    `template_name`, which is why nothing here is load-bearing at render time.
+    Bootstrap and its Superhero build come from jsdelivr as literal tags in
+    `base.html`, not through `stylesheets`: `static()` on an absolute URL only
+    passes through by accident today, and a `ManifestStaticFilesStorage` would
+    look it up and raise. `stylesheets` is for collected static, which here is
+    our own thin layer on top.
+
+    Two things about Superhero worth knowing before changing the palette. Its
+    stylesheet `@import`s Lato from fonts.googleapis.com by itself, so the page
+    reaches a third party for the font whether or not we add a link tag. And it
+    is a drop-in Bootstrap *build*, not an overlay: its colours live in compiled
+    rules and in `--bs-*` custom properties, which is why `theme.css` overrides
+    the `--bs-*` variables from the `--t-*` ones rather than restating rules.
     """
 
     id = DEFAULT_THEME_ID
-    title = "Default"
+    title = "Superhero"
     template_dir = f"website/themes/{DEFAULT_THEME_ID}"
     layouts = frozenset(LAYOUTS)
     default_layout = LAYOUT_DEFAULT
     stylesheets = (f"website/themes/{DEFAULT_THEME_ID}/theme.css",)
+
+    class Options(BaseModel):
+        """What an author may change without touching code.
+
+        Every field defaults to `None`, which the metaclass requires and which
+        also carries the meaning "not set": `css_variables` drops those, so
+        `theme.css` keeps its own `:root` value and the injected block is only a
+        diff. That is what makes an unset option cost nothing.
+
+        Typed with the constrained aliases rather than plain `str`, so the
+        editor gets a real pattern in the JSON Schema and the write path refuses
+        a bad value with a field error -- `CSS_VALUE_RE` at render time is the
+        floor, not the specification.
+        """
+
+        model_config = ConfigDict(extra="forbid")
+
+        color_primary: t.Optional[CssColor] = Field(
+            None,
+            title="Primary Colour",
+            description="Accent colour for links, buttons and the active menu item. Superhero's own orange when unset.",
+        )
+        color_body_bg: t.Optional[CssColor] = Field(
+            None,
+            title="Background Colour",
+            description="Page background. Superhero's dark navy when unset.",
+        )
+        font_family_base: t.Optional[CssFontStack] = Field(
+            None,
+            title="Font Family",
+            description="Body font stack. Superhero ships Lato when unset.",
+        )
+        content_max_width: t.Optional[CssLength] = Field(
+            None,
+            title="Reading Width",
+            description="Maximum width of the text column in the narrow layout.",
+        )
+
+    option_schema = Options

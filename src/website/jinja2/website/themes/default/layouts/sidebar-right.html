@@ -1,0 +1,22 @@
+{# `sidebar-left.html` with the two columns in source order. See its comment
+   for what fills the aside and why the two files share their markup. #}
+{% extends "website/themes/default/base.html" %}
+{% import "website/themes/default/macros.html" as menu %}
+
+{% block title %}{{ page.title ~ " · " ~ website.name if page and website else (page.title if page else "") }}{% endblock %}
+
+{% block content %}
+<div class="container py-5">
+  {% if page %}<h1 class="display-6 fw-bold mb-4">{{ page.title }}</h1>{% endif %}
+  <div class="row g-4 t-sidebar-layout t-sidebar-layout--right">
+    <div class="col-12 col-lg-8">
+      <div class="t-content">{{ content }}</div>
+    </div>
+    <aside class="col-12 col-lg-4 t-sidebar">
+      {% block sidebar %}
+        {% if menu_nodes %}{{ menu.menu_vertical(menu_nodes) }}{% endif %}
+      {% endblock %}
+    </aside>
+  </div>
+</div>
+{% endblock %}
