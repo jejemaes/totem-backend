@@ -13,28 +13,33 @@ class WebsiteViewTestMixin:
     time" can be asserted at all.
     """
 
-    def build_website(self, menu=None, homepage=None, footer=None):
+    def build_website(self, menu=None, homepage=None, footer=None, **values):
+        values.setdefault("name", "Moulinsart")
+        values.setdefault("headline", "Le domaine")
         return Website.objects.create(
-            name="Moulinsart",
-            headline="<p>Le domaine</p>",
-            menu=menu,
-            homepage=homepage,
-            footer=footer,
+            menu=menu, homepage=homepage, footer=footer, **values
         )
 
     def build_menu_tree(self, page=None):
         root = Menu.objects.create(name="Main")
         Menu.objects.create(name="Home", parent=root, link="/", sequence=10)
+        # One item that opens in a new tab: the condition rendering it used to
+        # be inverted, and nothing covered it.
+        Menu.objects.create(
+            name="Extern", parent=root, link="https://example.test",
+            new_window=True, sequence=30,
+        )
         if page is not None:
             Menu.objects.create(name="Page", parent=root, page=page, sequence=20)
         return root
 
-    def build_page(self, slug="tresor", published=True, content=None):
+    def build_page(self, slug="tresor", published=True, content=None, **values):
         return Page.objects.create(
             title="Le Trésor de Rackham",
             slug=slug,
             content=content or "<p>Mille sabords</p>",
             is_published=published,
+            **values,
         )
 
     def marker(self, name="last-page", attrs=None):

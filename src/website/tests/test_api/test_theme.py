@@ -41,7 +41,7 @@ class ThemeAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         themes = {theme["id"]: theme for theme in self._list()}
 
         self.assertIn(DEFAULT_THEME_ID, themes)
-        self.assertEqual(themes[DEFAULT_THEME_ID]["title"], "Default")
+        self.assertEqual(themes[DEFAULT_THEME_ID]["title"], "Superhero")
 
     def test_a_theme_carries_the_json_schema_of_its_options(self):
         # The point of the route: the editor builds the settings form from the

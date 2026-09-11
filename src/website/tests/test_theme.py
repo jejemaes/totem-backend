@@ -231,3 +231,37 @@ class TestTemplateResolution(SimpleTestCase):
 
         self.assertEqual(len(names), len(set(names)))
         self.assertEqual(names[0], "core/themes/test-partial/layouts/narrow.html")
+
+
+class TestDefaultThemeStylesheet(SimpleTestCase):
+    """The default theme's options and its stylesheet have to agree.
+
+    `render_css_variables` emits `--t-<kebab-cased-field>` for every option that
+    is set, and `theme.css` is what gives each of those a fallback value in
+    `:root` -- that pairing is the whole reason an unset option costs nothing.
+    Renaming an option without touching the stylesheet would break it silently:
+    the injected block would declare a variable no rule reads, and the value the
+    author chose would simply have no effect.
+    """
+
+    def test_every_option_has_a_variable_declared_in_the_stylesheet(self):
+        from pathlib import Path
+
+        import website
+
+        theme = get_theme(DEFAULT_THEME_ID)
+        stylesheet = (
+            Path(website.__file__).parent / "static" / theme.stylesheets[0]
+        ).read_text()
+
+        # All of them set, so `css_variables` emits every one.
+        options = theme.option_schema(
+            color_primary="#123456",
+            color_body_bg="#000000",
+            font_family_base="Lato, sans-serif",
+            content_max_width="40rem",
+        )
+
+        for name in theme.css_variables(options):
+            with self.subTest(variable=name):
+                self.assertIn(f"{name}:", stylesheet)
