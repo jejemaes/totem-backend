@@ -13,6 +13,12 @@ The marker format is defined here rather than in `core.orm.validators`, even
 though the validator is what enforces it: the format belongs to the widget
 subsystem, and putting it here keeps the dependency pointing one way. The
 validator imports from this module; this module must never import the validator.
+
+Every widget also renders with a stable CSS class, `t-widget t-widget-<id>`,
+injected into its template context by `render`. Since a theme may not override a
+widget's template, that class is the whole contract between the two: the widget
+owns its markup, the theme owns how it looks. Inner parts follow the same
+prefix, `t-widget-<id>__<part>`, written by hand in each template.
 """
 
 import json
@@ -109,6 +115,23 @@ class AbstractHtmlWidget(metaclass=HtmlWidgetMetaclass):
     # django model in its `Meta` -- a widget has none.
     attribute_schema: t.Type[BaseModel] = NoAttributes
 
+    @property
+    def widget_css_class(self):
+        """The stable class hook a theme styles this widget through.
+
+        Themes may not override a widget template, so this string is the entire
+        contract between a widget and a theme -- which is why it is computed
+        from the id here rather than written by hand in each template, where a
+        typo would be a silently unstyled block. It follows the *id*, so the
+        widget registered as `last-page` is `t-widget-last-page` even though its
+        template is called `last_update_page.html`.
+
+        `t-` and not `widget-`, to match `WIDGET_TAG` above: one prefix shared by
+        the markup an author writes and the CSS a theme writes, so `grep
+        t-widget` finds both.
+        """
+        return f"t-widget t-widget-{self.id}"
+
     def validate_attributes(self, raw_attributes):
         """Coerce a raw `attrs` mapping into an `attribute_schema` instance.
 
@@ -130,6 +153,12 @@ class AbstractHtmlWidget(metaclass=HtmlWidgetMetaclass):
         `get_render_context` and leave this alone.
         """
         context = await self.get_render_context(attributes, env)
+        # The theme's only hook into this widget, so it is not the widget's to
+        # forget. Unconditional rather than `setdefault`: the hook is a contract,
+        # and a widget wanting *extra* classes has its own attribute for that
+        # (`SideMenuWidget.Attributes.css_class`). A widget overriding `render`
+        # bypasses this, which is fine -- it renders no template.
+        context["widget_css_class"] = self.widget_css_class
         return mark_safe(
             render_to_string(
                 self.template_name, context, using=self.template_engine

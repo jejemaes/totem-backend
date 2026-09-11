@@ -62,7 +62,7 @@ class TestLastUpdatePageWidget(TestCase):
             title="P", slug="p", content="<p>x</p>", is_published=True
         )
 
-        self.assertNotIn("<h5>", self.expand())
+        self.assertNotIn("t-widget__heading", self.expand())
         self.assertIn("Latest", self.expand('{"heading": "Latest"}'))
 
     def test_the_limit_is_bounded_by_its_schema(self):
@@ -135,10 +135,14 @@ class TestSideMenuWidget(TestCase):
         # The grandchild lives inside its parent item, not next to it.
         self.assertLess(rendered.index("First"), rendered.index("Nested"))
         self.assertLess(rendered.index("Nested"), rendered.index("Second"))
-        self.assertEqual(rendered.count("<ul>"), 2)
+        # One `<ul>` per level. Counted on the opening tag: the nested list
+        # carries the modifier class too, so the bare class name appears more
+        # often than there are lists.
+        self.assertEqual(rendered.count('<ul class="t-widget-side-menu__list'), 2)
+        self.assertIn("t-widget-side-menu__list--nested", rendered)
 
     def test_the_root_names_the_heading(self):
-        self.assertIn("<h5>Activities</h5>", self.expand(
+        self.assertIn('<h5 class="t-widget__heading">Activities</h5>', self.expand(
             f'{{"menu_id": "{self.section.pk}"}}'
         ))
 
@@ -147,7 +151,7 @@ class TestSideMenuWidget(TestCase):
             f'{{"menu_id": "{self.section.pk}", "heading": "In this section"}}'
         )
 
-        self.assertIn("<h5>In this section</h5>", rendered)
+        self.assertIn('<h5 class="t-widget__heading">In this section</h5>', rendered)
         self.assertNotIn("Activities", rendered)
 
     def test_the_css_class_lands_on_every_item(self):
@@ -156,10 +160,14 @@ class TestSideMenuWidget(TestCase):
         )
 
         # Three items, the nested one included.
-        self.assertEqual(rendered.count('class="nav-item"'), 3)
+        self.assertEqual(rendered.count('t-widget-side-menu__item nav-item'), 3)
 
     def test_the_css_class_is_optional(self):
-        self.assertNotIn("class=", self.expand(f'{{"menu_id": "{self.section.pk}"}}'))
+        # The hook is always there now; what must be absent is the author's
+        # own class appended after it.
+        rendered = self.expand(f'{{"menu_id": "{self.section.pk}"}}')
+        self.assertIn('class="t-widget-side-menu__item"', rendered)
+        self.assertNotIn("t-widget-side-menu__item ", rendered)
 
     def test_a_new_window_item_targets_a_blank_one(self):
         Menu.objects.create(
@@ -174,8 +182,8 @@ class TestSideMenuWidget(TestCase):
     def test_a_leaf_root_renders_its_heading_alone(self):
         rendered = self.expand(f'{{"menu_id": "{self.nested.pk}"}}')
 
-        self.assertIn("<h5>Nested</h5>", rendered)
-        self.assertNotIn("<ul>", rendered)
+        self.assertIn('<h5 class="t-widget__heading">Nested</h5>', rendered)
+        self.assertNotIn('<ul class="t-widget-side-menu__list', rendered)
 
     def test_an_unknown_menu_renders_the_heading_alone(self):
         # A widget is content: an id pointing at a deleted menu must not empty
@@ -185,8 +193,8 @@ class TestSideMenuWidget(TestCase):
                 f'{{"menu_id": "{menu_id}", "heading": "Section"}}'
             )
 
-            self.assertIn("<h5>Section</h5>", rendered)
-            self.assertNotIn("<ul>", rendered)
+            self.assertIn('<h5 class="t-widget__heading">Section</h5>', rendered)
+            self.assertNotIn('<ul class="t-widget-side-menu__list', rendered)
 
     def test_the_menu_id_is_required(self):
         with self.assertRaises(PydanticValidationError):

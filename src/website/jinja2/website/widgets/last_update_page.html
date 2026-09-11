@@ -1,10 +1,8 @@
-<div>
-	{% if heading %}<h5>{{ heading }}</h5>{% endif %}
-	<div>
-		<ul class="">
-          {% for page in pages %}
-            <li><a href="{{ page.url }}">{{ page.title }}</a></li>
-          {% endfor %}
-        </ul>
-	</div>
+<div class="{{ widget_css_class }}">
+	{% if heading %}<h5 class="t-widget__heading">{{ heading }}</h5>{% endif %}
+	<ul class="t-widget-last-page__list">
+		{% for page in pages %}
+		<li class="t-widget-last-page__item"><a class="t-widget-last-page__link" href="{{ page.url }}">{{ page.title }}</a></li>
+		{% endfor %}
+	</ul>
 </div>
