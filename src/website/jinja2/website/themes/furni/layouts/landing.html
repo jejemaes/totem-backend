@@ -1,0 +1,32 @@
+{# The only layout that does not render the page title: the hero carries the
+   site's own identity instead, which is the distinction between `landing` and
+   `full-width`. It is also what `/` falls back to with no homepage at all --
+   no title, no content, and the hero alone is still a coherent page.
+
+   Furni's hero is the theme's most recognisable element: a deep green band with
+   the headline set large and a light sage panel offset behind it. #}
+{% extends "website/themes/furni/base.html" %}
+
+{% block title %}{{ website.name if website else "" }}{% endblock %}
+
+{% block content %}
+<section class="t-hero">
+  <div class="container">
+    <div class="row align-items-center">
+      <div class="col-12 col-lg-6 t-hero__intro">
+        <h1 class="t-hero__title">{{ website.name if website else "" }}</h1>
+        {% if website and website.headline %}
+        <p class="t-hero__headline">{{ website.headline }}</p>
+        {% endif %}
+      </div>
+      <div class="col-12 col-lg-6 d-none d-lg-block">
+        <div class="t-hero__panel" aria-hidden="true"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="container t-section">
+  <div class="t-content">{{ content }}</div>
+</div>
+{% endblock %}

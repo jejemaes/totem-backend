@@ -556,3 +556,71 @@ class DefaultTheme(AbstractTheme):
         )
 
     option_schema = Options
+
+
+class FurniTheme(AbstractTheme):
+    """A light, roomy theme after the Furni template (themewagon.github.io/furni).
+
+    Its design language, not its stylesheet. Furni ships a full HTML template
+    whose CSS styles *its own* markup, and three things rule out serving that
+    file: the repository carries no tag or release, so jsdelivr can only serve a
+    moving `@main` branch with no stable integrity hash and a look that could
+    change under us; the stylesheet expects Furni's own Bootstrap build plus
+    tiny-slider, custom.js and Font Awesome; and the repository ships no licence
+    at all, which settles redistribution. What is reproduced here -- the sage
+    palette, Inter, pill buttons, generous section rhythm -- is expressed in our
+    own rules over a stock Bootstrap.
+
+    Stock Bootstrap and not the Superhero build the default theme uses: Furni is
+    a light design, so it needs Bootstrap's own light defaults to sit on.
+
+    The second real theme in the project, which is what finally makes the
+    engine's promise testable end to end: `Website.theme` can be switched and
+    every page keeps rendering, because a layout id means the same thing in both
+    themes even though the markup behind it does not.
+    """
+
+    id = "furni"
+    title = "Furni"
+    template_dir = "website/themes/furni"
+    layouts = frozenset(LAYOUTS)
+    default_layout = LAYOUT_DEFAULT
+    stylesheets = ("website/themes/furni/theme.css",)
+
+    class Options(BaseModel):
+        """Same field names as the default theme wherever they mean the same.
+
+        Switching theme clears the stored values -- nothing maps one schema onto
+        another -- so this costs nothing technically. It is for the author, who
+        should not have to relearn what "primary colour" is called.
+        """
+
+        model_config = ConfigDict(extra="forbid")
+
+        color_primary: t.Optional[CssColor] = Field(
+            None,
+            title="Primary Colour",
+            description="The deep green of headings, buttons and the hero. Furni's own when unset.",
+        )
+        color_accent: t.Optional[CssColor] = Field(
+            None,
+            title="Accent Colour",
+            description="Used sparingly, for highlights and the active menu item. Furni's yellow when unset.",
+        )
+        color_body_bg: t.Optional[CssColor] = Field(
+            None,
+            title="Background Colour",
+            description="Page background. White when unset.",
+        )
+        font_family_base: t.Optional[CssFontStack] = Field(
+            None,
+            title="Font Family",
+            description="Body font stack. Furni ships Inter when unset.",
+        )
+        content_max_width: t.Optional[CssLength] = Field(
+            None,
+            title="Reading Width",
+            description="Maximum width of the text column in the narrow layout.",
+        )
+
+    option_schema = Options

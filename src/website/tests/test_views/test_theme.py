@@ -11,7 +11,7 @@ returned, so it also shows *which rung* of the fallback answered.
 from django.test import Client, TestCase
 
 from website.models import Page, Website
-from website.theme import DEFAULT_THEME_ID
+from website.theme import DEFAULT_THEME_ID, LAYOUTS, get_themes
 from website.views import PageView
 
 from .common import WebsiteViewTestMixin
@@ -170,3 +170,65 @@ class TestThemeRendering(WebsiteViewTestMixin, TestCase):
         with self.assertNumQueries(4):
             # page, website, menu root, menu subtree -- and nothing for the theme.
             Client().get(self._url())
+
+
+class TestSwitchingTheme(WebsiteViewTestMixin, TestCase):
+    """The engine's central promise, exercised across the themes we ship.
+
+    A layout id means the same thing in every theme even though the markup
+    behind it does not, so changing `Website.theme` must never leave a page
+    unrenderable. Until a second real theme existed this could only be asserted
+    against a fixture; now it is asserted against what actually ships.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.page = self.build_page(slug="tresor")
+        self.website = self.build_website(menu=self.build_menu_tree(page=self.page))
+
+    def shipped_theme_ids(self):
+        return [theme.id for theme in get_themes() if not theme.id.startswith("test-")]
+
+    def test_every_shipped_theme_renders_every_layout(self):
+        for theme_id in self.shipped_theme_ids():
+            Website.objects.filter(pk=self.website.pk).update(theme=theme_id)
+            for layout in sorted(LAYOUTS):
+                Page.objects.filter(pk=self.page.pk).update(layout=layout)
+                with self.subTest(theme=theme_id, layout=layout):
+                    response = Client().get("/page/tresor/")
+
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(
+                        response.template_name[0],
+                        f"website/themes/{theme_id}/layouts/{layout}.html",
+                    )
+
+    def test_a_layout_no_theme_implements_still_renders_everywhere(self):
+        """Rung two, per theme: each falls back to its own default, not another's."""
+        Page.objects.filter(pk=self.page.pk).update(layout="no-such-layout")
+
+        for theme_id in self.shipped_theme_ids():
+            Website.objects.filter(pk=self.website.pk).update(theme=theme_id)
+            with self.subTest(theme=theme_id):
+                response = Client().get("/page/tresor/")
+
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(
+                    response.template_name[1],
+                    f"website/themes/{theme_id}/layouts/full-width.html",
+                )
+
+    def test_each_theme_loads_its_own_stylesheet_and_not_the_others(self):
+        for theme_id in self.shipped_theme_ids():
+            Website.objects.filter(pk=self.website.pk).update(theme=theme_id)
+            with self.subTest(theme=theme_id):
+                response = Client().get("/page/tresor/")
+
+                self.assertContains(
+                    response, f"/static/website/themes/{theme_id}/theme.css"
+                )
+                for other in self.shipped_theme_ids():
+                    if other != theme_id:
+                        self.assertNotContains(
+                            response, f"/static/website/themes/{other}/theme.css"
+                        )

@@ -233,35 +233,86 @@ class TestTemplateResolution(SimpleTestCase):
         self.assertEqual(names[0], "core/themes/test-partial/layouts/narrow.html")
 
 
-class TestDefaultThemeStylesheet(SimpleTestCase):
-    """The default theme's options and its stylesheet have to agree.
+class TestShippedThemeStylesheets(SimpleTestCase):
+    """Every shipped theme's options and its stylesheet have to agree.
 
-    `render_css_variables` emits `--t-<kebab-cased-field>` for every option that
-    is set, and `theme.css` is what gives each of those a fallback value in
-    `:root` -- that pairing is the whole reason an unset option costs nothing.
-    Renaming an option without touching the stylesheet would break it silently:
-    the injected block would declare a variable no rule reads, and the value the
-    author chose would simply have no effect.
+    `render_css_variables` emits `--t-<kebab-cased-field>` for each option that
+    is set, and the theme's stylesheet is what gives that variable a fallback in
+    `:root` -- the pairing is the whole reason an unset option costs nothing.
+    Renaming an option without touching the stylesheet breaks it silently: the
+    injected block declares a variable no rule reads, so the author's value has
+    no effect and nothing fails.
+
+    Runs over the registry rather than over one theme, so a theme added later is
+    covered the day it is written.
     """
+
+    def shipped_themes(self):
+        """The themes this project ships, i.e. not the `test-` ones."""
+        return [theme for theme in get_themes() if not theme.id.startswith("test-")]
+
+    def test_there_is_more_than_one_shipped_theme(self):
+        """Two real themes is what makes the engine's promise more than a claim.
+
+        With one, "switching theme keeps every page rendering" cannot be
+        exercised anywhere but in a test fixture.
+        """
+        self.assertGreaterEqual(len(self.shipped_themes()), 2)
 
     def test_every_option_has_a_variable_declared_in_the_stylesheet(self):
         from pathlib import Path
 
         import website
 
-        theme = get_theme(DEFAULT_THEME_ID)
-        stylesheet = (
-            Path(website.__file__).parent / "static" / theme.stylesheets[0]
-        ).read_text()
+        for theme in self.shipped_themes():
+            stylesheet = (
+                Path(website.__file__).parent / "static" / theme.stylesheets[0]
+            ).read_text()
 
-        # All of them set, so `css_variables` emits every one.
-        options = theme.option_schema(
-            color_primary="#123456",
-            color_body_bg="#000000",
-            font_family_base="Lato, sans-serif",
-            content_max_width="40rem",
-        )
+            # Every option set, so `css_variables` emits all of them. Built from
+            # the schema's own fields rather than a hardcoded payload, so a new
+            # option is covered without editing this test.
+            values = {}
+            for name, field in theme.option_schema.model_fields.items():
+                annotation = str(field.annotation)
+                if "CssColor" in annotation or "color" in name:
+                    values[name] = "#123456"
+                elif "content_max_width" in name or "CssLength" in annotation:
+                    values[name] = "40rem"
+                else:
+                    values[name] = "Inter, sans-serif"
 
-        for name in theme.css_variables(options):
-            with self.subTest(variable=name):
-                self.assertIn(f"{name}:", stylesheet)
+            for variable in theme.css_variables(theme.option_schema(**values)):
+                with self.subTest(theme=theme.id, variable=variable):
+                    self.assertIn(f"{variable}:", stylesheet)
+
+    def test_every_shipped_theme_has_a_template_for_each_layout_it_claims(self):
+        """`layouts` is a promise the filesystem has to keep.
+
+        The metaclass checks the ids are in the vocabulary; nothing checks the
+        files exist, because a missing one degrades at render time rather than
+        failing the boot. For a theme *this project ships* that degradation
+        would be a bug, so it is caught here instead.
+        """
+        from django.template import TemplateDoesNotExist
+        from django.template.loader import get_template
+
+        for theme in self.shipped_themes():
+            for layout_id in sorted(theme.layouts):
+                with self.subTest(theme=theme.id, layout=layout_id):
+                    name = f"{theme.template_dir}/layouts/{layout_id}.html"
+                    try:
+                        get_template(name, using="jinja2")
+                    except TemplateDoesNotExist:  # pragma: no cover
+                        self.fail(f"{theme.id} claims {layout_id} but {name} is missing")
+
+    def test_every_shipped_theme_has_its_chrome(self):
+        from django.template import TemplateDoesNotExist
+        from django.template.loader import get_template
+
+        for theme in self.shipped_themes():
+            with self.subTest(theme=theme.id):
+                try:
+                    get_template(theme.base_template, using="jinja2")
+                except TemplateDoesNotExist:  # pragma: no cover
+                    self.fail(f"{theme.id} has no {theme.base_template}")

@@ -1,0 +1,125 @@
+{# Furni's chrome: light, roomy, sage green.
+
+   Same contract as every theme's base -- extended by this theme's layouts and,
+   through `theme.base_template`, by any template another app ships for its own
+   records. `website` may be None on a freshly provisioned database, so every
+   dereference of it is guarded. #}
+{% import "website/themes/furni/macros.html" as menu %}
+<!doctype html>
+<html lang="en" data-bs-theme="light">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="generator" content="Totem">
+    {% if website and website.meta_description %}
+    <meta name="description" content="{{ website.meta_description }}">
+    {% endif %}
+    {% if website and website.meta_authors %}
+    <meta name="author" content="{{ website.meta_authors }}">
+    {% endif %}
+
+    <title>{% block title %}{{ website.name if website else "" }}{% endblock %}</title>
+
+    {# Stock Bootstrap, not the Superhero build the default theme uses: Furni is
+       a light design and needs Bootstrap's own defaults underneath. Pinned and
+       hashed against these exact jsdelivr files -- a hash that does not match
+       makes the browser drop the stylesheet silently. #}
+    <link rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css"
+          integrity="sha384-sRIl4kxILFvY47J16cr9ZwB07vP4J8+LH7qKQnuqkuIAvNWLzeN8tE5YBujZqJLB"
+          crossorigin="anonymous">
+
+    {# Inter, which is what gives Furni its typographic feel. Named here rather
+       than left to an `@import` inside our own stylesheet, so it starts loading
+       with the rest of the head instead of after the CSS has parsed. #}
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+
+    {% for stylesheet in theme.stylesheets %}
+    <link rel="stylesheet" href="{{ static(stylesheet) }}">
+    {% endfor %}
+
+    {# Rendered in python, never by a filter: a value inside a `<style>` cannot
+       be escaped into safety, so `render_css_variables` validates instead.
+       Empty when the author set nothing, hence the guard. #}
+    {% if theme_style %}
+    <style>{{ theme_style }}</style>
+    {% endif %}
+
+    {% block extra_style %}{% endblock %}
+  </head>
+  <body class="t-layout t-layout--{{ layout }}">
+
+    <nav class="navbar navbar-expand-md t-navbar sticky-top">
+      <div class="container">
+        <a class="navbar-brand t-navbar__brand" href="/">{{ website.name if website else "" }}</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse"
+                data-bs-target="#t-nav" aria-controls="t-nav"
+                aria-expanded="false" aria-label="Toggle navigation">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <div class="collapse navbar-collapse" id="t-nav">
+          <ul class="navbar-nav ms-auto align-items-md-center">
+            {% for node in menu_nodes %}
+              {% if not node.children %}
+                <li class="nav-item">{{ menu.menu_link(node) }}</li>
+              {% else %}
+                <li class="nav-item dropdown">
+                  <a class="nav-link dropdown-toggle" href="#" role="button"
+                     data-bs-toggle="dropdown" aria-expanded="false">{{ node.data.name }}</a>
+                  {# Bootstrap 5 has no submenus (they went away in v4 -> v5), so
+                     a third level renders as a nested list rather than opening.
+                     Left as is here too: shipping custom submenu javascript is a
+                     decision for the project, not for one theme. #}
+                  <ul class="dropdown-menu">
+                    {% for subnode in node.children recursive %}
+                      <li>
+                        {{ menu.menu_link(subnode, "dropdown-item") }}
+                        {% if subnode.children %}
+                        <ul class="dropdown-menu position-static d-block border-0">{{ loop(subnode.children) }}</ul>
+                        {% endif %}
+                      </li>
+                    {% endfor %}
+                  </ul>
+                </li>
+              {% endif %}
+            {% endfor %}
+          </ul>
+        </div>
+      </div>
+    </nav>
+
+    <main class="t-main">
+      {% block content %}{% endblock %}
+    </main>
+
+    <footer class="t-footer">
+      <div class="container">
+        <div class="row gy-4">
+          <div class="col-12 col-md">
+            <span class="t-footer__brand">{{ website.name if website else "" }}</span>
+            {% if website and website.headline %}
+            <p class="t-footer__headline mt-2 mb-0">{{ website.headline }}</p>
+            {% endif %}
+          </div>
+          <div class="col-12 col-md">
+            {{ footer }}
+          </div>
+        </div>
+        <div class="t-footer__legal mt-4 pt-4">
+          <small>&copy; {{ website.name if website else "" }}</small>
+        </div>
+      </div>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/js/bootstrap.bundle.min.js"
+            integrity="sha384-FKyoEForCGlyvwx9Hj09JcYn3nv7wiPVlz7YYwJrWVcXK/BmnVDxM+D2scQbITxI"
+            crossorigin="anonymous"></script>
+    {% for script in theme.scripts %}
+    <script src="{{ static(script) }}"></script>
+    {% endfor %}
+    {% block extra_js %}{% endblock %}
+  </body>
+</html>
