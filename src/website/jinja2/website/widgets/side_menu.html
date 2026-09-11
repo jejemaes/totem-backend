@@ -1,11 +1,11 @@
-<div>
-	{% if heading %}<h5>{{ heading }}</h5>{% endif %}
+<div class="{{ widget_css_class }}">
+	{% if heading %}<h5 class="t-widget__heading">{{ heading }}</h5>{% endif %}
 	{% if nodes %}
-	<ul>
+	<ul class="t-widget-side-menu__list">
 		{% for node in nodes recursive %}
-			<li{% if css_class %} class="{{ css_class }}"{% endif %}>
-				<a href="{{ node.data.url }}"{% if node.data.new_window %} target="_blank"{% endif %}>{{ node.data.name }}</a>
-				{% if node.children %}<ul>{{ loop(node.children) }}</ul>{% endif %}
+			<li class="t-widget-side-menu__item{% if css_class %} {{ css_class }}{% endif %}">
+				<a class="t-widget-side-menu__link" href="{{ node.data.url }}"{% if node.data.new_window %} target="_blank" rel="noopener"{% endif %}>{{ node.data.name }}</a>
+				{% if node.children %}<ul class="t-widget-side-menu__list t-widget-side-menu__list--nested">{{ loop(node.children) }}</ul>{% endif %}
 			</li>
 		{% endfor %}
 	</ul>
