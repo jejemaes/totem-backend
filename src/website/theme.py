@@ -71,6 +71,12 @@ LAYOUT_DEFAULT = "full-width"
 
 DEFAULT_THEME_ID = "default"
 
+# The layout of authored content, as opposed to a theme's own look: it styles
+# the blocks the rich text editor emits, and its class names are a contract with
+# that editor (see the file's own header). Every theme loads it through
+# `AbstractTheme.all_stylesheets`, so no theme can fail to.
+CONTENT_STYLESHEET = "website/content.css"
+
 
 def get_layouts():
     """The vocabulary as (id, label) pairs, ordered by id so a listing is stable."""
@@ -317,6 +323,23 @@ class AbstractTheme(metaclass=ThemeMetaclass):
     # raise.
     stylesheets = ()
     scripts = ()
+
+    @property
+    def all_stylesheets(self):
+        """`stylesheets`, always preceded by the shared content layer.
+
+        `content.css` styles the blocks the rich text editor emits -- today the
+        two-column `t-row`/`t-col` block -- and is the other half of a contract
+        with the editor rather than a look a theme chooses.
+
+        A property and not an entry each theme restates in its own tuple:
+        `stylesheets` is overridden wholesale, so a theme author would have to
+        remember to keep it, and a theme that forgot would render every
+        two-column block as two stacked divs. Nothing on the page would say why,
+        and the author who wrote the block is the last person able to diagnose
+        it. Templates loop over THIS, not over `stylesheets`.
+        """
+        return (CONTENT_STYLESHEET, *self.stylesheets)
 
     # The exact mirror of `AbstractHtmlWidget.attribute_schema`: it rejects a
     # malformed write, coerces values before rendering, and describes itself as

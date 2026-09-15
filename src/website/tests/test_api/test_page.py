@@ -208,6 +208,38 @@ class PageAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertFalse(Page.objects.filter(slug="nope").exists())
 
+    def test_create_keeps_a_two_column_block_byte_for_byte(self):
+        """The markup the rich text editor emits for a two-column block.
+
+        Its structure travels entirely in CLASS NAMES, and that is forced rather
+        than chosen: `class` is in lxml's `safe_attrs` while `data-*` is not, and
+        the CSS property whitelist has no `gap` or `flex`, so neither a
+        `data-split` marker nor an inline-styled block could be saved at all.
+
+        Two assertions, and the second is the point. `HTMLValidator` never
+        strips -- it accepts or raises -- so what comes back must be the bytes
+        that went in. A future tightening of the tag or attribute list would
+        turn this into a 422 here rather than into pages that silently stop
+        round-tripping through the editor.
+        """
+        content = (
+            '<div class="t-row t-row--1-2">'
+            '<div class="t-col"><img src="/media/public/website/2026/09/a.png" width="480"></div>'
+            '<div class="t-col"><h2>Our workshop</h2><p>Since 1994.</p></div>'
+            "</div>"
+        )
+        response = self.do_api_request(
+            self.url, "POST", self.token,
+            data=json.dumps({
+                "title": "Workshop",
+                "slug": "workshop",
+                "content": content,
+            }),
+        )
+
+        self.assertEqual(response.status_code, 201, response.json())
+        self.assertEqual(Page.objects.get(slug="workshop").content, content)
+
     # ------------------------------------------
     # Update Operation
     # ------------------------------------------

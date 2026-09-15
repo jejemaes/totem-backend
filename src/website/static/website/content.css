@@ -1,0 +1,83 @@
+/* The layout of AUTHORED content -- the blocks the rich text editor emits.
+ *
+ * A separate layer from a theme's `theme.css`, and loaded by every theme
+ * through `AbstractTheme.all_stylesheets`, because it is not a look: it is the
+ * other half of a contract with the editor. `totem-frontend`'s
+ * `components/form/fields/columns.ts` emits these exact class names, and the
+ * structure of the block travels in them and nowhere else -- `HTMLValidator`
+ * accepts `class` (lxml's `defs.safe_attrs`) but refuses `data-*`, and its CSS
+ * property whitelist has no `gap`, `flex` or `grid-template-columns`, so an
+ * inline-styled block cannot be saved at all.
+ *
+ * So: a theme may restyle these, but it may not fail to load them. Without this
+ * file every two-column block on every site renders as two stacked divs, with
+ * nothing on the page to say why.
+ */
+
+/* ---------------------------------------------------------------------------
+ * Two columns
+ *
+ * `t-row--<split>` is always present, the default 1-1 included: the editor
+ * emits it unconditionally so that re-saving an untouched page produces
+ * byte-identical HTML. Read left to right -- `1-2` is a narrow left column.
+ * ------------------------------------------------------------------------ */
+
+.t-row {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+  margin-block: 1.5rem;
+}
+
+/* `min-width: 0` is load-bearing, not tidiness: a flex item defaults to
+ * `min-width: auto` and refuses to shrink below its content, so one long word
+ * -- or an image at its natural size -- pushes the other column off the page
+ * instead of wrapping. */
+.t-col {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.t-row--1-2 > .t-col:first-child,
+.t-row--2-1 > .t-col:last-child {
+  flex-grow: 1;
+}
+
+.t-row--1-2 > .t-col:last-child,
+.t-row--2-1 > .t-col:first-child {
+  flex-grow: 2;
+}
+
+/* Restated rather than left to `.t-content img`: a block may also appear in the
+ * footer and in the sidebar, which are HtmlFields too and are not wrapped in
+ * `.t-content`. */
+.t-col img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* The block owns its own outer spacing, so its first and last children must not
+ * add to it -- otherwise the two columns start at different heights whenever
+ * one leads with a heading and the other with a paragraph. */
+.t-col > :first-child {
+  margin-top: 0;
+}
+
+.t-col > :last-child {
+  margin-bottom: 0;
+}
+
+/* An explicit breakpoint rather than `flex-wrap` with a basis: wrapping would
+ * let a 33/67 block silently become 50/50 at widths nobody chose, and the whole
+ * point of the split is that the author picked it. Below this, the columns
+ * stack in source order -- which is why the editor's help text is worth
+ * reading: the left column is what appears first on a phone. */
+@media (max-width: 47.9375em) {
+  .t-row {
+    display: block;
+  }
+
+  .t-col + .t-col {
+    margin-top: 1.5rem;
+  }
+}

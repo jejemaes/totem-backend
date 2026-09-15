@@ -13,6 +13,7 @@ from parameterized import parameterized
 from pydantic import BaseModel, ConfigDict
 
 from website.theme import (
+    CONTENT_STYLESHEET,
     DEFAULT_THEME_ID,
     LAYOUT_DEFAULT,
     LAYOUTS,
@@ -258,6 +259,33 @@ class TestShippedThemeStylesheets(SimpleTestCase):
         exercised anywhere but in a test fixture.
         """
         self.assertGreaterEqual(len(self.shipped_themes()), 2)
+
+    def test_every_theme_loads_the_shared_content_stylesheet(self):
+        """`content.css` is a contract with the editor, not a theme's own look.
+
+        The editor emits `t-row`/`t-col` and nothing else carries the block's
+        structure -- `HTMLValidator` refuses `data-*` and refuses flex/grid in
+        an inline style -- so a theme that did not load this file would render
+        every two-column block as two stacked divs, with nothing on the page to
+        say why. `all_stylesheets` prepends it precisely so a theme cannot
+        forget, and this is what checks that a theme cannot override it away
+        either.
+        """
+        from pathlib import Path
+
+        import website
+
+        for theme in self.shipped_themes():
+            with self.subTest(theme=theme.id):
+                self.assertIn(CONTENT_STYLESHEET, theme.all_stylesheets)
+                # The theme's own layer must come after, so it can restyle the
+                # shared one rather than be overridden by it.
+                self.assertEqual(theme.all_stylesheets[0], CONTENT_STYLESHEET)
+                self.assertTrue(
+                    (
+                        Path(website.__file__).parent / "static" / CONTENT_STYLESHEET
+                    ).exists()
+                )
 
     def test_every_option_has_a_variable_declared_in_the_stylesheet(self):
         from pathlib import Path

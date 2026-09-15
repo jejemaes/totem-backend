@@ -37,7 +37,10 @@
     <link rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
 
-    {% for stylesheet in theme.stylesheets %}
+    {# The shared `content.css`, which styles the blocks the editor emits, then
+       this theme's own. `all_stylesheets` and not `stylesheets`: the shared one
+       is prepended there, so no theme can fail to load it. #}
+    {% for stylesheet in theme.all_stylesheets %}
     <link rel="stylesheet" href="{{ static(stylesheet) }}">
     {% endfor %}
 

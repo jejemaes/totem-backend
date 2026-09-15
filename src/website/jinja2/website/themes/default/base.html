@@ -34,10 +34,13 @@
           integrity="sha384-fU437/gCPFVIYQG5/RnXUGGh+prGONHn6C9GslvteaFVmNCeul6aHunWDz85bM78"
           crossorigin="anonymous">
 
-    {# Our own layer, from collected static. It declares every `--t-*` variable
-       in `:root` with a fallback, so the block below only has to carry what an
-       author actually set. #}
-    {% for stylesheet in theme.stylesheets %}
+    {# Our own layers, from collected static: the shared `content.css`, which
+       styles the blocks the editor emits, then this theme's own -- which
+       declares every `--t-*` variable in `:root` with a fallback, so the block
+       below only has to carry what an author actually set. `all_stylesheets`
+       and not `stylesheets`: the shared one is prepended there, so no theme can
+       fail to load it. #}
+    {% for stylesheet in theme.all_stylesheets %}
     <link rel="stylesheet" href="{{ static(stylesheet) }}">
     {% endfor %}
 
