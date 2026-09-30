@@ -5,7 +5,7 @@ from parameterized import parameterized
 
 from core.orm import fields
 from core.html_widget import WIDGET_MAX_COUNT, AbstractHtmlWidget
-from core.orm.validators import HTMLValidator
+from core.orm.validators import HTML_DEFAULT_ATTRS, HTML_DEFAULT_TAGS, HTMLValidator
 
 HTML_WITH_STYLE = """
 <div id="root">
@@ -106,10 +106,10 @@ class TestHTMLField(TestCase):
 
     @parameterized.expand(
         [
-            (fields.HTML_DEFAULT_TAGS, "<p>this is a test</p>", True),
-            (fields.HTML_DEFAULT_TAGS - {"p"}, "<p>this is a test</p>", False),
-            (fields.HTML_DEFAULT_TAGS, HTML_WITH_STYLE, True),
-            (fields.HTML_DEFAULT_TAGS - {"div"}, HTML_WITH_STYLE, False),
+            (HTML_DEFAULT_TAGS, "<p>this is a test</p>", True),
+            (HTML_DEFAULT_TAGS - {"p"}, "<p>this is a test</p>", False),
+            (HTML_DEFAULT_TAGS, HTML_WITH_STYLE, True),
+            (HTML_DEFAULT_TAGS - {"div"}, HTML_WITH_STYLE, False),
         ]
     )
     def test_allowed_tags(self, allowed_tags, value, is_valid):
@@ -123,10 +123,10 @@ class TestHTMLField(TestCase):
 
     @parameterized.expand(
         [
-            (fields.HTML_DEFAULT_ATTRS, "<p>this is a test</p>", True),
-            (fields.HTML_DEFAULT_ATTRS - {"id"}, "<p>this is a test</p>", True),
-            (fields.HTML_DEFAULT_ATTRS, HTML_WITH_STYLE, True),
-            (fields.HTML_DEFAULT_ATTRS - {"id"}, HTML_WITH_STYLE, False),
+            (HTML_DEFAULT_ATTRS, "<p>this is a test</p>", True),
+            (HTML_DEFAULT_ATTRS - {"id"}, "<p>this is a test</p>", True),
+            (HTML_DEFAULT_ATTRS, HTML_WITH_STYLE, True),
+            (HTML_DEFAULT_ATTRS - {"id"}, HTML_WITH_STYLE, False),
         ]
     )
     def test_allowed_attrs(self, allowed_attrs, value, is_valid):
