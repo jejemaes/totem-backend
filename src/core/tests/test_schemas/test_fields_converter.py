@@ -1,4 +1,5 @@
 import datetime
+import decimal
 import typing as t
 
 from annotated_types import Ge, Gt, Le, Lt, MaxLen, MinLen
@@ -7,6 +8,7 @@ from django.contrib.postgres import fields as psql_fields
 from django.db import models
 from django.test import TestCase
 from django.utils import timezone
+import pydantic
 from parameterized import parameterized
 from pydantic import AnyUrl, EmailStr, IPvAnyAddress  # , Json
 from pydantic.fields import FieldInfo
@@ -279,6 +281,19 @@ class TestSchemaFieldConverter(TestCase):
         python_type, field = convert_db_field(django_field, optional=False)
         self.assertEqual(python_type, expected_type)
         self.assertPydanticFieldEqual(field, expected_field)
+
+    def test_decimal_field_conversion(self):
+        """A `Decimal`, constrained by the field's own digits."""
+        python_type, field = convert_db_field(
+            models.DecimalField(max_digits=5, decimal_places=2), optional=False
+        )
+        self.assertEqual(python_type, decimal.Decimal)
+        schema = pydantic.create_model("DecimalSchema", value=(python_type, field))
+        self.assertEqual(schema(value="123.45").value, decimal.Decimal("123.45"))
+        with self.assertRaises(pydantic.ValidationError):
+            schema(value="1234.5")  # 6 digits
+        with self.assertRaises(pydantic.ValidationError):
+            schema(value="1.234")  # 3 decimal places
 
     @parameterized.expand(
         [

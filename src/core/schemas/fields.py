@@ -1,4 +1,5 @@
 import datetime
+import decimal
 import typing as t
 from enum import Enum
 from functools import singledispatch
@@ -212,12 +213,27 @@ def convert_field_to_int(
 
 
 @convert_django_field.register(models.FloatField)
-@convert_django_field.register(models.DecimalField)
 def convert_field_to_float(
     field: Field, optional: bool = False, extra_kwargs: dict = None
 ) -> t.Tuple[t.Type, PydanticField]:
     return _get_pydantic_fieldinfo_from_field(
         float, field, optional=optional, extra_kwargs=extra_kwargs
+    )
+
+
+# Decimal
+
+
+@convert_django_field.register(models.DecimalField)
+def convert_field_to_decimal(
+    field: Field, optional: bool = False, extra_kwargs: dict = None
+) -> t.Tuple[t.Type, PydanticField]:
+    # `Decimal`, not `float`: a `DecimalField` always carries a `DecimalValidator`,
+    # whose `max_digits` / `decimal_places` pydantic only knows how to apply to a
+    # `Decimal` -- on a float it raises `TypeError` for every value, valid or not.
+    # A float would also lose the exactness the column exists for.
+    return _get_pydantic_fieldinfo_from_field(
+        decimal.Decimal, field, optional=optional, extra_kwargs=extra_kwargs
     )
 
 
