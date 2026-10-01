@@ -40,3 +40,10 @@ class CoreConfig(AppConfig):
         from .api.validation import validate_controllers
 
         validate_controllers()
+
+        # Every model is loaded, so every stored computed field's `depends_on` can
+        # be resolved: a malformed one fails here, for every management command,
+        # rather than on the first write that should have refreshed it.
+        from .orm.fields.computed import build_computed_field_dependency_registry
+
+        build_computed_field_dependency_registry()
