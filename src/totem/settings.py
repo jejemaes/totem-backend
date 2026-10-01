@@ -9,6 +9,7 @@ https://docs.djangoproject.com/en/5.0/topics/settings/
 For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
+import sys
 from pathlib import Path
 
 from core.utils.various import env
@@ -47,6 +48,14 @@ INSTALLED_APPS = [
     # other auto loading stuff).
     "core",
 ]
+
+# Test-only apps, exercising the framework layer of `core` with models of their
+# own. Never installed outside the test runner, so their tables never exist in a
+# real database; `TOTEM_TEST_APPS=true` installs them for `makemigrations`.
+TESTING = sys.argv[1:2] == ["test"] or env("TOTEM_TEST_APPS", default=False, boolean=True)
+if TESTING:
+    # Before `core`, which must stay last.
+    INSTALLED_APPS.insert(INSTALLED_APPS.index("core"), "core.tests.computed_app")
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
