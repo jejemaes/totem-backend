@@ -1,10 +1,12 @@
 import json
+from unittest.mock import patch
 
 from django.test import TestCase
 from parameterized import parameterized
 
 from base.models import Country
 from contact.models import Contact, ContactTag
+from contact.services import ContactService
 from core.testing import APITestCaseMixin
 from user.tests.test_api.common import CommonTestMixin
 
@@ -172,6 +174,27 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         contact = Contact.objects.get(pk=data["id"])
         self.assertEqual(contact.country, self.country)
         self.assertEqual([t.pk for t in contact.tags.all()], [self.tag_family.pk])
+
+    def test_create_responds_with_what_the_database_holds(self):
+        """The response is refetched, not the instance as built: a value the
+        database holds by the end of the write -- here changed by a postprocess,
+        relation included -- is what the client gets back."""
+        def postprocess(service, instances):
+            Contact.objects.filter(pk__in=[i.pk for i in instances]).update(city="Moulinsart")
+            for instance in instances:
+                instance.tags.add(self.tag_vip)
+            return instances
+
+        with patch.object(ContactService, "_create_postprocess", postprocess):
+            response = self.do_api_request(
+                self.url, "POST", self.token,
+                data=json.dumps({"last_name": "Castafiore", "city": "Milano"}),
+            )
+        data = response.json()
+
+        self.assertEqual(response.status_code, 201, data)
+        self.assertEqual(data["city"], "Moulinsart")
+        self.assertEqual([tag["id"] for tag in data["tags"]], [self.tag_vip.pk])
 
     def test_create_with_unknown_country(self):
         response = self.do_api_request(
