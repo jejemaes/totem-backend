@@ -7,6 +7,7 @@ from django.db.utils import DatabaseError
 from ninja import FilterSchema
 from pydantic import BaseModel
 
+from core.orm.fields.computed.utils import VIRTUAL, computed_fields
 from core.orm.queryset import queryset_fetch_fields, queryset_order_by_fields
 from user.access_policy import Context as AccessContext, apply_access_rules
 
@@ -390,8 +391,22 @@ class ServiceBase(Service, t.Generic[ModelT]):
         Public for the same reason as `apply_ordering`: the generic `@query_field`
         decorator (`core.api.query_fields.QueryField.querying_field_queryset`) calls
         this directly on whatever queryset a decorated view returns.
+
+        A virtual computed field of this model is no column, so it is not handed to
+        `queryset_fetch_fields` but loaded through the queryset's computed API --
+        an annotation, or a prefetch run when the queryset is evaluated. For an async
+        route that is a correctness requirement: the descriptor's fallback would
+        query from a coroutine. A stored one is a column like any other. A virtual
+        field of a *related* model is not supported (refused at startup by
+        `validate_controllers`): the nested prefetches are built by
+        `queryset_fetch_fields`, which knows nothing about computed fields.
         """
-        return queryset_fetch_fields(queryset, fields)
+        virtual = computed_fields(self.model, VIRTUAL)
+        computed = [name for name in fields if name in virtual]
+        queryset = queryset_fetch_fields(queryset, [name for name in fields if name not in virtual])
+        if computed:
+            queryset = queryset.with_computed(*computed)
+        return queryset
 
     def _database_error_to_validation_error(self, exc: DatabaseError):
         if isinstance(exc, models.ProtectedError):
