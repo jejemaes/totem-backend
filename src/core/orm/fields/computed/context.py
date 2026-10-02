@@ -120,12 +120,14 @@ class RefreshComputedFieldsContext:
         -- so the rows deleted or nulled through `on_delete` count too.
         """
         model = queryset.model
+        cascades = get_registry().cascades.get(model)
+        if not cascades and not any(b.on_existence and not b.is_local for b in bindings_for(model)):
+            return  # nothing watches these rows: not even their pks are read
         pks = list(queryset.values_list("pk", flat=True))
         if not pks:
             return
         self._existence_changed(model, pks)
 
-        cascades = get_registry().cascades.get(model)
         if not cascades:
             return
         collector = Collector(using=queryset.db or router.db_for_write(model), origin=queryset)

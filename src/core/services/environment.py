@@ -5,6 +5,8 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import Model
 
+from core.orm.fields.computed import RefreshComputedFieldsContext
+
 from .base import Service
 from .registry import ServiceRegistry
 
@@ -33,7 +35,15 @@ class Environment:
 
     registry: ServiceRegistry = ServiceRegistry
 
-    def __init__(self, user=None, language=None, tz=None, context: dict | None = None):
+    def __init__(
+        self,
+        user=None,
+        language=None,
+        tz=None,
+        context: dict | None = None,
+        *,
+        _computed_refresh: RefreshComputedFieldsContext | None = None,
+    ):
         self.user = user
         self.language = language if language is not None else settings.LANGUAGE_CODE
         self.tz = tz if tz is not None else settings.TIME_ZONE
@@ -45,6 +55,8 @@ class Environment:
         # `__setattr__` can keep every public attribute read-only.
         self._services = {}
         self._cache = {}
+        # Shared with every environment derived from this one: see `computed_refresh`.
+        self._computed_refresh = _computed_refresh or RefreshComputedFieldsContext()
 
     def __setattr__(self, name: str, value: t.Any) -> None:
         # once initialized, attributes are read-only
@@ -118,7 +130,28 @@ class Environment:
             language=self.language if language is None else language,
             tz=self.tz if tz is None else tz,
             context=dict(self.context) if context is None else context,
+            _computed_refresh=self._computed_refresh,
         )
+
+    #
+    # Computed fields
+    #
+
+    def computed_refresh(self) -> RefreshComputedFieldsContext:
+        """ The context every write of this unit of work enters, to keep stored
+        computed fields in sync.
+
+        One instance per unit of work, not per environment: a derived environment
+        -- `env(...)`, hence `service.with_context(...)` -- shares it. So a service
+        writing from another service's postprocess, even under another context,
+        joins its parent's context: its refreshes are queued with the parent's and
+        flushed once, when the outermost write exits, inside its transaction.
+
+        The consequence for such a nested write: what it returns is primed with
+        the values of before that flush, which has not happened yet. Two requests
+        never share an environment, so nothing leaks between them.
+        """
+        return self._computed_refresh
 
     #
     # Access rules
