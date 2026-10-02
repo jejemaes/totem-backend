@@ -58,78 +58,85 @@ class CreateMixin(t.Generic[CreateT]):
         # related services. Reads before the transaction, writes inside it.
         internal_data = await self.to_internal_values(values)
         scoped_queryset = await self.apply_access_rules(self.get_queryset(), "create")
-        return await sync_to_async(self._create_atomic, thread_sensitive=True)(
+        return await sync_to_async(self._create, thread_sensitive=True)(
             internal_data, scoped_queryset
         )
+
+    def _create(
+        self, internal_data: t.List[dict], scoped_queryset: models.QuerySet
+    ) -> t.List[models.Model]:
+        """The sync body of `create`: the transaction, around `_create_atomic`."""
+        with transaction.atomic():
+            return self._create_atomic(internal_data, scoped_queryset)
 
     def _create_atomic(
         self, internal_data: t.List[dict], scoped_queryset: models.QuerySet
     ) -> t.List[models.Model]:
-        with transaction.atomic():
-            queryset = self.get_queryset()
+        """Everything a creation does inside its transaction, postprocess included."""
+        queryset = self.get_queryset()
 
-            # Validate data
-            error = ServiceValidationMultiError({}, code="creation_invalid_data")
-            for index, internal_values in enumerate(internal_data):
-                try:
-                    self.validate_data(internal_values, None)
-                except ServiceValidationError as exc:
-                    error.add_error(index, exc)
-
-            if error:
-                raise error
-
-            # Remove many-to-many relationships from validated_data.
-            # They are not valid arguments to the default `.create()` method,
-            # as they require that the instance has already been saved.
-            many_to_many_fields = [
-                field.name
-                for field in queryset.model._meta.get_fields()
-                if isinstance(field, ManyToManyField)
-            ]
-            many_to_many_data = []
-            for internal_values in internal_data:
-                many_to_many = {}
-                for field_name in many_to_many_fields:
-                    if field_name in internal_values:
-                        many_to_many[field_name] = internal_values.pop(field_name)
-                many_to_many_data.append(many_to_many)
-
-            # Create instances
-            instances = [self.model(**values) for values in internal_data]  # pylint: disable=not-callable
+        # Validate data
+        error = ServiceValidationMultiError({}, code="creation_invalid_data")
+        for index, internal_values in enumerate(internal_data):
             try:
-                instances = queryset.bulk_create(instances)
-            except TypeError as exc:
-                raise TypeError(str(exc))
-            except DatabaseError as exc:
-                raise self._database_error_to_validation_error(exc) from exc
+                self.validate_data(internal_values, None)
+            except ServiceValidationError as exc:
+                error.add_error(index, exc)
 
-            # Access rules check
-            if scoped_queryset.filter(pk__in=[obj.pk for obj in instances]).count() != len(instances):
-                raise exceptions.PermissionDenied("You do not have permission to create some of the objects.")
+        if error:
+            raise error
 
-            # Save many-to-many relationships after the instance is created, and set it in the prefetch cache
-            for instance, many_to_many_values in zip(instances, many_to_many_data):
-                prefetched_objects = getattr(instance, "_prefetched_objects_cache", {})
-                for field_name in many_to_many_fields:
-                    value = many_to_many_values.get(field_name, [])
-                    if value:
-                        # optimization: `set` would cause a read, but we are creating
-                        # so there is no existing relation.
-                        try:
-                            getattr(instance, field_name).add(*value)
-                        except DatabaseError as exc:
-                            raise self._database_error_to_validation_error(exc) from exc
-                    # Prime the cache for *every* relation, not only the ones given:
-                    # right after a creation a relation nobody set is necessarily
-                    # empty. This is what lets an async route serialize the instance
-                    # without hitting the database, since ninja serializes outside of
-                    # any `sync_to_async`.
-                    prefetched_objects[field_name] = value
-                setattr(instance, "_prefetched_objects_cache", prefetched_objects)
+        # Remove many-to-many relationships from validated_data.
+        # They are not valid arguments to the default `.create()` method,
+        # as they require that the instance has already been saved.
+        many_to_many_fields = [
+            field.name
+            for field in queryset.model._meta.get_fields()
+            if isinstance(field, ManyToManyField)
+        ]
+        many_to_many_data = []
+        for internal_values in internal_data:
+            many_to_many = {}
+            for field_name in many_to_many_fields:
+                if field_name in internal_values:
+                    many_to_many[field_name] = internal_values.pop(field_name)
+            many_to_many_data.append(many_to_many)
 
-            # Postprocess
-            instances = self._create_postprocess(instances)
+        # Create instances
+        instances = [self.model(**values) for values in internal_data]  # pylint: disable=not-callable
+        try:
+            instances = queryset.bulk_create(instances)
+        except TypeError as exc:
+            raise TypeError(str(exc))
+        except DatabaseError as exc:
+            raise self._database_error_to_validation_error(exc) from exc
+
+        # Access rules check
+        if scoped_queryset.filter(pk__in=[obj.pk for obj in instances]).count() != len(instances):
+            raise exceptions.PermissionDenied("You do not have permission to create some of the objects.")
+
+        # Save many-to-many relationships after the instance is created, and set it in the prefetch cache
+        for instance, many_to_many_values in zip(instances, many_to_many_data):
+            prefetched_objects = getattr(instance, "_prefetched_objects_cache", {})
+            for field_name in many_to_many_fields:
+                value = many_to_many_values.get(field_name, [])
+                if value:
+                    # optimization: `set` would cause a read, but we are creating
+                    # so there is no existing relation.
+                    try:
+                        getattr(instance, field_name).add(*value)
+                    except DatabaseError as exc:
+                        raise self._database_error_to_validation_error(exc) from exc
+                # Prime the cache for *every* relation, not only the ones given:
+                # right after a creation a relation nobody set is necessarily
+                # empty. This is what lets an async route serialize the instance
+                # without hitting the database, since ninja serializes outside of
+                # any `sync_to_async`.
+                prefetched_objects[field_name] = value
+            setattr(instance, "_prefetched_objects_cache", prefetched_objects)
+
+        # Postprocess
+        instances = self._create_postprocess(instances)
 
         return instances
 
@@ -209,104 +216,117 @@ class UpdateMixin(t.Generic[UpdateT]):
         # Relations are resolved here, in the async phase: see `create`.
         internal_values = (await self.to_internal_values([values]))[0]
         scoped_queryset = await self.apply_access_rules(self.get_queryset(), "update")
-        return await sync_to_async(self._update_atomic, thread_sensitive=True)(
+        return await sync_to_async(self._update, thread_sensitive=True)(
             scoped_queryset, filters, internal_values
         )
 
-    def _update_atomic(
+    def _update(
         self, scoped_queryset: models.QuerySet, filters: BaseModel, internal_values: dict
     ) -> t.Tuple[int, models.QuerySet]:
-        pks = []
+        """The sync body of `update`: builds the queryset to update, then the
+        transaction, around `_update_atomic`.
+
+        Building it runs no query -- a queryset is lazy -- so it needs no
+        transaction: the rows are first read in `_update_atomic`.
+        """
+        queryset = scoped_queryset
+
+        # Apply filters
+        if filters:
+            queryset = self._apply_filters(queryset, filters)
+
+        update_fields = set(internal_values.keys())
+
+        # Preprocess queryset to optimize which field to fetch
+        queryset = self._update_preprocess(queryset, update_fields)
+
         with transaction.atomic():
-            queryset = scoped_queryset
+            return self._update_atomic(queryset, update_fields, internal_values)
 
-            # Apply filters
-            if filters:
-                queryset = self._apply_filters(queryset, filters)
+    def _update_atomic(
+        self, queryset: models.QuerySet, update_fields: t.Set[str], internal_values: dict
+    ) -> t.Tuple[int, models.QuerySet]:
+        """Everything an update does inside its transaction, postprocess included."""
+        pks = []
+        instances = queryset.all()
 
-            update_fields = set(internal_values.keys())
-
-            # Preprocess queryset to optimize which field to fetch
-            queryset = self._update_preprocess(queryset, update_fields)
-            instances = queryset.all()
-
-            # Validate data with current instances
-            error = ServiceValidationMultiError({}, code="update_invalid_data")
-            for instance in instances:
-                pks.append(instance.pk)
-                try:
-                    self.validate_data(internal_values, instance)
-                except ServiceValidationError as exc:
-                    error.add_error(instance.pk, exc)
-
-            if error:
-                raise error
-
-            # If no instance found, return now.
-            if not pks:
-                return 0, queryset.none()
-
-            # Remove many-to-many relationships from internal_values.
-            # They are not valid arguments to the default `.update()` method.
-            many_to_many = {}
-            for field in queryset.model._meta.get_fields():
-                if (
-                    isinstance(field, ManyToManyField)
-                    and field.name in internal_values
-                ):
-                    many_to_many[field.name] = internal_values.pop(field.name)
-
-            # Update instances
+        # Validate data with current instances
+        error = ServiceValidationMultiError({}, code="update_invalid_data")
+        for instance in instances:
+            pks.append(instance.pk)
             try:
-                queryset.update(**internal_values)
+                self.validate_data(internal_values, instance)
+            except ServiceValidationError as exc:
+                error.add_error(instance.pk, exc)
+
+        if error:
+            raise error
+
+        # If no instance found, return now.
+        if not pks:
+            return 0, queryset.none()
+
+        # Remove many-to-many relationships from internal_values.
+        # They are not valid arguments to the default `.update()` method.
+        many_to_many = {}
+        for field in queryset.model._meta.get_fields():
+            if (
+                isinstance(field, ManyToManyField)
+                and field.name in internal_values
+            ):
+                many_to_many[field.name] = internal_values.pop(field.name)
+
+        # Update instances
+        try:
+            queryset.update(**internal_values)
+        except DatabaseError as exc:
+            raise self._database_error_to_validation_error(exc) from exc
+
+        # As `update()` invalidates the `_result_cache` of the queryset, we need to refetch the instances as the initial
+        # query might have alter the instances to update (self-alterable queryset).
+        # Postprocessing will decide to evaluate or not the queryset.
+        queryset = self.get_queryset().filter(pk__in=pks)
+
+        # Update many-to-many relationships: either create new relations or delete the obsolete ones. Existing are not touched.
+        # We should have maximum 3 SQL queries per many-to-many field.
+        for many_to_many_field, value in many_to_many.items():
+            field = queryset.model._meta.get_field(many_to_many_field)
+            through_model = field.remote_field.through
+
+            through_src_field = field.path_infos[0].join_field.remote_field
+            through_dst_field = field.path_infos[1].join_field.remote_field.field
+
+            existing_vals = through_model.objects.filter(**{
+                f"{through_src_field.get_attname()}__in": pks,
+            }).values(through_src_field.get_attname(), through_dst_field.get_attname(), through_model._meta.pk.name)
+
+            existing_objs_map = {(item[through_src_field.get_attname()], item[through_dst_field.get_attname()]): item[through_model._meta.pk.name] for item in existing_vals}
+
+            relations_to_create = []
+            pks_to_keep = set()
+            for pk in pks:
+                for new_value in value:
+                    if (pk, new_value.pk) not in existing_objs_map:
+                        relations_to_create.append(through_model(**{
+                            through_src_field.get_attname(): pk,
+                            through_dst_field.get_attname(): new_value.pk,
+                        }))
+                    else:
+                        pks_to_keep.add(existing_objs_map[(pk, new_value.pk)])
+
+            try:
+                pks_to_remove = set(existing_objs_map.values()) - set(pks_to_keep)
+                if pks_to_remove:
+                    through_model.objects.filter(pk__in=pks_to_remove).delete()
+                if relations_to_create:
+                    through_model.objects.bulk_create(
+                        relations_to_create, ignore_conflicts=False
+                    )
             except DatabaseError as exc:
                 raise self._database_error_to_validation_error(exc) from exc
 
-            # As `update()` invalidates the `_result_cache` of the queryset, we need to refetch the instances as the initial
-            # query might have alter the instances to update (self-alterable queryset).
-            # Postprocessing will decide to evaluate or not the queryset.
-            queryset = self.get_queryset().filter(pk__in=pks)
-
-            # Update many-to-many relationships: either create new relations or delete the obsolete ones. Existing are not touched.
-            # We should have maximum 3 SQL queries per many-to-many field.
-            for many_to_many_field, value in many_to_many.items():
-                field = queryset.model._meta.get_field(many_to_many_field)
-                through_model = field.remote_field.through
-
-                through_src_field = field.path_infos[0].join_field.remote_field
-                through_dst_field = field.path_infos[1].join_field.remote_field.field
-
-                existing_vals = through_model.objects.filter(**{
-                    f"{through_src_field.get_attname()}__in": pks,
-                }).values(through_src_field.get_attname(), through_dst_field.get_attname(), through_model._meta.pk.name)
-
-                existing_objs_map = {(item[through_src_field.get_attname()], item[through_dst_field.get_attname()]): item[through_model._meta.pk.name] for item in existing_vals}
-
-                relations_to_create = []
-                pks_to_keep = set()
-                for pk in pks:
-                    for new_value in value:
-                        if (pk, new_value.pk) not in existing_objs_map:
-                            relations_to_create.append(through_model(**{
-                                through_src_field.get_attname(): pk,
-                                through_dst_field.get_attname(): new_value.pk,
-                            }))
-                        else:
-                            pks_to_keep.add(existing_objs_map[(pk, new_value.pk)])
-
-                try:
-                    pks_to_remove = set(existing_objs_map.values()) - set(pks_to_keep)
-                    if pks_to_remove:
-                        through_model.objects.filter(pk__in=pks_to_remove).delete()
-                    if relations_to_create:
-                        through_model.objects.bulk_create(
-                            relations_to_create, ignore_conflicts=False
-                        )
-                except DatabaseError as exc:
-                    raise self._database_error_to_validation_error(exc) from exc
-
-            # Postprocess
-            self._update_postprocess(queryset, internal_values)
+        # Postprocess
+        self._update_postprocess(queryset, internal_values)
 
         # Use `len(pks)` instead of `count = queryset.update()` because we want to include records even if no concrete fields were altered.
         # e.i.: partial update of only a m2m relations, the instance itself if not altered.
@@ -329,26 +349,32 @@ class DeleteMixin:
 
     async def delete(self, filters: BaseModel) -> int:
         scoped_queryset = await self.apply_access_rules(self.get_queryset(), "delete")
-        return await sync_to_async(self._delete_atomic, thread_sensitive=True)(
+        return await sync_to_async(self._delete, thread_sensitive=True)(
             scoped_queryset, filters
         )
 
-    def _delete_atomic(self, scoped_queryset: models.QuerySet, filters: BaseModel) -> int:
+    def _delete(self, scoped_queryset: models.QuerySet, filters: BaseModel) -> int:
+        """The sync body of `delete`: builds the queryset to delete, then the
+        transaction, around `_delete_atomic`. Building it runs no query."""
+        queryset = scoped_queryset
+
+        # apply filters
+        if filters:
+            queryset = self._apply_filters(queryset, filters)
+
+        queryset = self._delete_preprocess(queryset)
+
         with transaction.atomic():
-            queryset = scoped_queryset
+            return self._delete_atomic(queryset)
 
-            # apply filters
-            if filters:
-                queryset = self._apply_filters(queryset, filters)
+    def _delete_atomic(self, queryset: models.QuerySet) -> int:
+        """Everything a deletion does inside its transaction, postprocess included."""
+        try:
+            _, deleted_dict = queryset.delete()
+        except DatabaseError as exc:
+            raise self._database_error_to_validation_error(exc) from exc
 
-            queryset = self._delete_preprocess(queryset)
-
-            try:
-                _, deleted_dict = queryset.delete()
-            except DatabaseError as exc:
-                raise self._database_error_to_validation_error(exc) from exc
-
-            self._delete_postprocess()
+        self._delete_postprocess()
         return deleted_dict.get(queryset.model._meta.label, 0)
 
     def _delete_preprocess(self, queryset: models.QuerySet) -> models.QuerySet:
