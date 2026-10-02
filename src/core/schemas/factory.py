@@ -8,6 +8,8 @@ from ninja.schema import Schema
 from pydantic import AliasChoices
 from pydantic import create_model as create_pydantic_model
 
+from core.orm.fields.computed.utils import VIRTUAL, computed_fields
+
 from .fields import convert_db_field
 from .types import ExtraFieldInfos, SchemaKey
 
@@ -157,14 +159,22 @@ class SchemaFactory:
         fields: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
     ) -> Iterator[DjangoField]:
-        "Returns iterator for model fields based on `exclude` or `fields` arguments"
+        """Returns iterator for model fields based on `exclude` or `fields` arguments.
+
+        A virtual computed field is only ever selected by name. It is in no
+        `get_fields()`, and taking it into `"__all__"` or an `exclude` list would make
+        every response of the schema compute it -- a subquery or a python call per
+        row -- without anybody having asked. A stored one, like a generated one, is
+        a column, selected like any other.
+        """
         all_fields = {f.name: f for f in self._model_fields(model)}
+        virtual = computed_fields(model, VIRTUAL)
 
         if not fields and not exclude:
             for f in all_fields.values():
                 yield f
 
-        invalid_fields = (set(fields or []) | set(exclude or [])) - all_fields.keys()
+        invalid_fields = (set(fields or []) | set(exclude or [])) - all_fields.keys() - virtual.keys()
         if invalid_fields:
             raise ConfigError(
                 f"DjangoField(s) {invalid_fields} are not in model {model}"
@@ -172,7 +182,7 @@ class SchemaFactory:
 
         if fields:
             for name in fields:
-                yield all_fields[name]
+                yield all_fields[name] if name in all_fields else virtual[name]
         if exclude:
             for f in all_fields.values():
                 if f.name not in exclude:
