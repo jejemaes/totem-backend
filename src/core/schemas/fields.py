@@ -1,3 +1,4 @@
+import copy
 import datetime
 import decimal
 import typing as t
@@ -14,6 +15,7 @@ from pydantic import Field as create_pydantic_field
 from pydantic.fields import FieldInfo as PydanticField
 from pydantic_core import PydanticUndefined
 
+from core.orm.fields.computed import ComputedField
 from core.schemas.relations import create_foreignkey_field
 from core.schemas.types import AnyObject
 from core.schemas.validators import convert_validators
@@ -150,6 +152,35 @@ def convert_django_field(
     raise ImproperlyConfigured(
         f"Don't know how to convert the Django field {field} ({field, field.__class__})"
     )
+
+
+# Derived values: computed and generated fields
+
+
+@convert_django_field.register(ComputedField)
+@convert_django_field.register(models.GeneratedField)
+def convert_derived_field(
+    field: Field, optional: bool = False, extra_kwargs: dict = None
+) -> t.Tuple[t.Type, PydanticField]:
+    """Converted as what they hold: their `output_field`, carrying the field's own
+    name, labels and nullability.
+
+    No converter of its own could be right: the type of a computed or generated
+    value is whatever `output_field` says. Always nullable: a stored computed value
+    is NULL until its first refresh, and a virtual one is None when not loaded.
+
+    Read-only is not expressed here, since the same conversion serves every schema:
+    `validate_controllers` refuses a derived field in a request schema.
+    """
+    described = copy.copy(field.output_field)
+    described.name = field.name
+    described.attname = field.name
+    described.verbose_name = field.verbose_name
+    described.help_text = field.help_text
+    described.null = True
+    described.blank = True
+    described.model = field.model
+    return convert_django_field(described, optional=optional, extra_kwargs=extra_kwargs)
 
 
 # Strings

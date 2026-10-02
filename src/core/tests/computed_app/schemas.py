@@ -53,3 +53,31 @@ class LineUpdateSchema(ModelSchema):
         model = Line
         fields = ["order", "product", "quantity", "unit_price"]
         optional_fields = "__all__"
+
+
+# Responses: computed fields are listed in `Meta.fields` like any other -- stored,
+# virtual or generated -- typed after their `output_field`.
+
+
+class OrderSchema(ModelSchema):
+    class Meta:
+        model = Order
+        fields = [
+            "id", "label", "status",
+            "label_upper", "line_count", "total", "total_of_amounts", "tag_names",
+            "line_count_virtual", "max_quantity_virtual",
+        ]
+
+
+class OrderDisplayNameSchema(ModelSchema):
+    class Meta:
+        model = Order
+        fields = ["id", "label", "line_count"]
+
+
+class LineSchema(ModelSchema):
+    order: OrderDisplayNameSchema
+
+    class Meta:
+        model = Line
+        fields = ["id", "order", "quantity", "unit_price", "amount", "order_status"]
