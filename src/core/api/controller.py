@@ -15,7 +15,6 @@ from ninja.signature.utils import get_path_param_names
 from ninja.utils import normalize_path
 from pydantic import BaseModel
 
-from core.orm.queryset import queryset_fetch_fields
 from core.schemas.utils import (
     _unwrap_list_schema,
     extract_orm_fields_from_specs,
@@ -450,14 +449,25 @@ class CreateModelControllerMixin:
         request_body: BaseModel,
     ) -> Model:
         try:
+            service = request.env.get(self.service)
             # The body ninja already validated is passed straight through: it is the
             # service's input schema, so there is nothing to convert and nothing to
             # validate twice.
-            # No refetch needed to serialize: the instance is built in memory with
-            # every concrete field, and the service primes the m2m prefetch cache
-            # for all relations, empty ones included.
-            instances = await request.env.get(self.service).create([request_body])
-            return instances[0] if instances else None
+            instances = await service.create([request_body])
+            if not instances:
+                return None
+            # Refetched rather than serialized as built: the in-memory instance only
+            # holds what was written, while the response may read values the
+            # database derives -- an annotation, a generated column, a value a
+            # postprocess or another write changed. Loaded through the service, like
+            # the update route, so the response reads what a retrieve would.
+            # Not through `browse`: the creator gets back what they created, whether
+            # or not a read rule would show it to them, as for an update.
+            queryset = service.apply_query_fields(
+                service.get_queryset().filter(pk=instances[0].pk),
+                self._response_orm_fields(self.create_response_schema),
+            )
+            return await queryset.afirst()
         except ServiceValidationMultiError as exc:
             raise self.service_validation_error_to_api_error(
                 exc, self.create_response_schema, loc_path=["body", "request_body"]
@@ -520,10 +530,10 @@ class UpdateModelControllerMixin:
                     status_code=404,
                     message=f"{self.model._meta.verbose_name.capitalize()} not found.",
                 )
-            # Unlike a creation, existing relations are unknown here, so the prefetch
-            # cache cannot be primed: the response has to be loaded explicitly before
-            # leaving the async context.
-            queryset = queryset_fetch_fields(
+            # The response has to be loaded explicitly before leaving the async
+            # context, and through the service: it decides how each field of the
+            # response is loaded.
+            queryset = request.env.get(self.service).apply_query_fields(
                 queryset, self._response_orm_fields(self.update_response_schema)
             )
             return await queryset.afirst()
