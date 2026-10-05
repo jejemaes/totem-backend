@@ -5,16 +5,24 @@ this watched model change, or when rows of it appear or disappear, this computed
 field must be recomputed on these root rows". `RefreshComputedFieldsContext` only
 ever asks this registry; nothing here writes.
 
-Supported shapes, two segments at most -- anything longer is refused at startup
-rather than silently not watched:
+A dependency is a path of relations, optionally ending on a field:
 
-  "label"               a local field
-  "parent"              a forward foreign key: reassigning it
-  "parent__status"      a field of the row a foreign key points to
-  "lines"               a reverse foreign key: rows joining or leaving it
-  "lines__quantity"     ... and that field changing on them
-  "tags"                a many-to-many, declared here or on the other side
-  "tags__name"          ... and that field changing on the related rows
+  "label"                          a local field
+  "parent"                         a forward foreign key: reassigning it
+  "parent__status"                 a field of the row a foreign key points to
+  "lines"                          a reverse foreign key: rows joining or leaving it
+  "lines__quantity"                ... and that field changing on them
+  "tags"                           a many-to-many, declared here or on the other side
+  "tags__name"                     ... and that field changing on the related rows
+  "lines__product__category__name" any chain of the above
+
+Every model along the path is watched, each with the lookup leading from it back
+to the root: renaming a category, moving a product to another category, giving a
+line another product, adding or deleting a line all change which name is read.
+The number of relations crossed is capped by the `COMPUTED_FIELD_MAX_HOPS`
+setting (4 by default): every hop widens the set of rows a single write can make
+stale, and a path longer than that is refused at startup rather than discovered
+in production.
 """
 
 import dataclasses
@@ -22,6 +30,7 @@ import typing as t
 from collections import defaultdict
 
 from django.apps import apps as django_apps
+from django.conf import settings
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db import models
 from django.db.models.constants import LOOKUP_SEP
@@ -43,9 +52,11 @@ class Binding:
     # Fields of the watched model whose update triggers a refresh, by name and by
     # attname, since a service writes `order` and a queryset may write `order_id`.
     trigger_fields: t.FrozenSet[str]
-    # Among those, the ones that move a row from one root to another (a foreign key
-    # or a many-to-many). Updating one requires capturing the roots *before* the
-    # write as well, since the old root loses the row.
+    # Among those, the relations that are part of `path` itself -- the way back to
+    # the root -- so that writing one moves the row from one root to another.
+    # Updating one requires capturing the roots *before* the write as well, since
+    # the old root loses the row. A relation leading *away* from the root (the next
+    # hop) is a plain trigger: the row reaches the same roots before and after.
     membership_fields: t.FrozenSet[str]
     # Whether creating or deleting watched rows changes the value.
     on_existence: bool
@@ -94,9 +105,9 @@ def build_computed_field_dependency_registry() -> _Registry:
     bindings = defaultdict(list)
     for model in django_apps.get_models():
         for field in computed_fields(model, STORED).values():
-            for dep in field.depends_on:
-                for binding in _parse_dependency(model, field, dep):
-                    bindings[binding.watched_model].append(binding)
+            parsed = [b for dep in field.depends_on for b in _parse_dependency(model, field, dep)]
+            for binding in _merge(parsed):
+                bindings[binding.watched_model].append(binding)
 
     bindings = dict(bindings)
     _registry = _Registry(
@@ -133,97 +144,131 @@ def _referenced_names(expression) -> t.Set[str]:
     return names
 
 
-def _parse_dependency(root, field, dep) -> t.Iterator[Binding]:
+def max_hops() -> int:
+    return getattr(settings, "COMPUTED_FIELD_MAX_HOPS", 4)
+
+
+class _Watch:
+    """What one dependency asks of one `(watched model, path)`, while parsing."""
+
+    def __init__(self):
+        self.trigger_fields = set()
+        self.membership_fields = set()
+        self.on_existence = False
+        self.fk_attname = None
+
+
+def _parse_dependency(root, field, dep) -> t.List[Binding]:
+    """The bindings `dep` needs, one per watched `(model, path)`, in path order.
+
+    Walks the path one relation at a time. At each hop from `model` to `target`:
+
+    * a forward relation (a foreign key, or a many-to-many declared on `model`) is
+      written on `model`: it triggers there, with the path up to `model`. It leads
+      away from the root, so it is no membership change.
+    * a reverse relation (the key, or the many-to-many, declared on `target`) is
+      written on `target`: it triggers there, with the path up to `target`, and it
+      *is* a membership change -- it is the way back to the root.
+    * rows of `target` appearing or disappearing change what the path reaches.
+
+    A trailing field triggers on the last model reached.
+    """
     where = f"depends_on={dep!r} on {root.__name__}.{field.name}"
     parts = dep.split(LOOKUP_SEP)
-    if len(parts) > 2:
-        raise ImproperlyConfigured(
-            f"{where}: paths of more than two segments are not supported."
-        )
-    try:
-        rel = root._meta.get_field(parts[0])
-    except FieldDoesNotExist:
-        raise ImproperlyConfigured(f"{where}: '{parts[0]}' is not a field of {root.__name__}.")
+    watches = {}  # (watched model, path) -> _Watch, insertion-ordered
 
-    def local(names, membership=frozenset()):
-        return Binding(
-            root_model=root, field=field, watched_model=root, path=None,
-            trigger_fields=frozenset(names), membership_fields=frozenset(membership),
-            on_existence=False,
-        )
+    def watch(model, path):
+        return watches.setdefault((model, LOOKUP_SEP.join(path) or None), _Watch())
 
-    if not rel.is_relation:
-        if len(parts) == 2:
-            raise ImproperlyConfigured(f"{where}: '{parts[0]}' is not a relation.")
-        yield local(_field_names(rel))
-        return
-
-    target = rel.related_model
-    sub_names, sub_membership = set(), set()
-    if len(parts) == 2:
+    model, path, hops = root, [], 0
+    for index, name in enumerate(parts):
         try:
-            sub = target._meta.get_field(parts[1])
+            rel = model._meta.get_field(name)
         except FieldDoesNotExist:
-            raise ImproperlyConfigured(f"{where}: '{parts[1]}' is not a field of {target.__name__}.")
-        if sub.auto_created and not sub.concrete:
-            raise ImproperlyConfigured(
-                f"{where}: '{parts[1]}' is a reverse relation of {target.__name__}, "
-                f"which would be a third hop."
-            )
-        sub_names = _field_names(sub)
-        if sub.is_relation:
-            sub_membership = set(sub_names)
+            raise ImproperlyConfigured(f"{where}: '{name}' is not a field of {model.__name__}.")
 
-    if rel.concrete and (rel.many_to_one or rel.one_to_one):
-        # Forward foreign key: reassigning it changes the value of this very row...
-        own = _field_names(rel)
-        yield local(own, membership=own)
-        if len(parts) == 2:
-            # ... and so does that field changing on the row it points to.
-            yield Binding(
-                root_model=root, field=field, watched_model=target, path=rel.name,
-                trigger_fields=frozenset(sub_names),
-                membership_fields=frozenset(sub_membership),
-                # A deleted target sets the key to NULL, or deletes the root.
-                on_existence=True,
+        if not rel.is_relation:
+            if index != len(parts) - 1:
+                raise ImproperlyConfigured(f"{where}: '{name}' is not a relation.")
+            watch(model, path).trigger_fields |= _field_names(rel)
+            break
+
+        hops += 1
+        if hops > max_hops():
+            raise ImproperlyConfigured(
+                f"{where}: crosses more than {max_hops()} relations, the "
+                f"COMPUTED_FIELD_MAX_HOPS setting. Every hop widens what a single "
+                f"write can make stale."
             )
-    elif rel.one_to_many or rel.one_to_one:
-        # Reverse foreign key: the key lives on the watched model, so moving a row to
-        # another root is an update of that key.
-        fk_names = _field_names(rel.field)
-        yield Binding(
-            root_model=root, field=field, watched_model=target, path=rel.name,
-            trigger_fields=frozenset(fk_names | sub_names),
-            membership_fields=frozenset(fk_names | sub_membership),
-            on_existence=True,
-            fk_attname=rel.field.attname,
-        )
-    elif rel.many_to_many:
-        if rel.concrete:
-            # Declared here: the root's own service writes the relation.
-            yield local({rel.name}, membership={rel.name})
-            yield Binding(
-                root_model=root, field=field, watched_model=target, path=rel.name,
-                trigger_fields=frozenset(sub_names),
-                membership_fields=frozenset(sub_membership),
-                # A deleted target leaves the relation through the `through` table.
-                on_existence=True,
-            )
+
+        target = rel.related_model
+        if target is None:
+            raise ImproperlyConfigured(f"{where}: '{name}' is a generic relation, not supported.")
+        lookup = rel.name  # for a reverse relation, its query name
+        if isinstance(rel, models.ForeignObjectRel):
+            # Reverse: written on `target`, and the way back to the root.
+            own = _field_names(rel.field)
+            target_watch = watch(target, path + [lookup])
+            target_watch.trigger_fields |= own
+            target_watch.membership_fields |= own
+            if not path and not rel.many_to_many:
+                # First hop over a reverse key: the root pk sits on the instance.
+                target_watch.fk_attname = rel.field.attname
         else:
-            # Declared on the other side: that model's service writes the relation.
-            m2m_names = {rel.field.name}
-            yield Binding(
-                root_model=root, field=field, watched_model=target, path=rel.name,
-                trigger_fields=frozenset(m2m_names | sub_names),
-                membership_fields=frozenset(m2m_names | sub_membership),
-                on_existence=True,
-            )
-    else:  # pragma: no cover - generic relations
-        raise ImproperlyConfigured(f"{where}: unsupported relation type.")
+            # Forward: written on `model`, leading away from the root.
+            watch(model, path).trigger_fields |= _field_names(rel)
+
+        # Rows of `target` appearing or disappearing change what the path reaches:
+        # a reverse relation gains or loses members, a deleted forward target nulls
+        # or deletes what pointed to it, a deleted many-to-many target leaves the
+        # relation through the `through` table.
+        watch(target, path + [lookup]).on_existence = True
+        model, path = target, path + [lookup]
+
+    return [
+        Binding(
+            root_model=root, field=field, watched_model=watched_model, path=watched_path,
+            trigger_fields=frozenset(w.trigger_fields),
+            membership_fields=frozenset(w.membership_fields),
+            on_existence=w.on_existence and watched_path is not None,
+            fk_attname=w.fk_attname,
+        )
+        for (watched_model, watched_path), w in watches.items()
+    ]
+
+
+def _merge(bindings: t.Iterable[Binding]) -> t.List[Binding]:
+    """One binding per `(field, watched model, path)`, the union of the others.
+
+    `total` depending on `lines__quantity` and `lines__unit_price` watches `Line`
+    through `lines` once, on both fields, rather than twice.
+    """
+    merged = {}
+    for b in bindings:
+        key = (b.field, b.watched_model, b.path)
+        if key not in merged:
+            merged[key] = b
+            continue
+        m = merged[key]
+        merged[key] = dataclasses.replace(
+            m,
+            trigger_fields=m.trigger_fields | b.trigger_fields,
+            membership_fields=m.membership_fields | b.membership_fields,
+            on_existence=m.on_existence or b.on_existence,
+            fk_attname=m.fk_attname or b.fk_attname,
+        )
+    return list(merged.values())
 
 
 def _compute_depths(bindings) -> t.Dict[models.Field, int]:
-    """Depth of each stored computed field in the "reads" graph, or a cycle error."""
+    """Depth of each stored computed field in the "reads" graph, or a cycle error.
+
+    A field reading *itself* -- on other rows, through relations: `Menu.depth` on
+    `parent__depth`, `Order.x` on `lines__order__x` -- is refused too. Refreshing it
+    would queue it again on the rows reading those, at the same depth: harmless on a
+    tree, endless on rows that point at each other. With it refused, every
+    propagation during a flush goes strictly deeper, so a flush always ends.
+    """
     reads = defaultdict(set)  # field -> stored computed fields it reads
     fields = set()
     for watched_model, model_bindings in bindings.items():
@@ -231,9 +276,17 @@ def _compute_depths(bindings) -> t.Dict[models.Field, int]:
         for binding in model_bindings:
             fields.add(binding.field)
             for name in binding.trigger_fields:
-                if name in stored and stored[name] is not binding.field:
-                    reads[binding.field].add(stored[name])
-                    fields.add(stored[name])
+                if name not in stored:
+                    continue
+                if stored[name] is binding.field:
+                    raise ImproperlyConfigured(
+                        f"{binding.root_model.__name__}.{binding.field.name} depends on "
+                        f"itself through '{binding.path or binding.field.name}': a "
+                        f"refresh would trigger itself, without end on rows that "
+                        f"point at each other."
+                    )
+                reads[binding.field].add(stored[name])
+                fields.add(stored[name])
 
     depth = {}
     visiting = set()

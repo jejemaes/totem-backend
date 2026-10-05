@@ -13,10 +13,14 @@ from core.tests.computed_app.schemas import (
     LineUpdateSchema,
     OrderCreateSchema,
     OrderUpdateSchema,
+    CategoryCreateSchema,
+    CategoryUpdateSchema,
     ProductCreateSchema,
+    ProductUpdateSchema,
     TagCreateSchema,
 )
 from core.tests.computed_app.services import (
+    CategoryService,
     LineService,
     OrderService,
     ProductService,
@@ -146,10 +150,33 @@ class TestUpdate(ComputedServiceTestCase):
 
     def test_unwatched_field_refreshes_nothing(self):
         (product,) = async_to_sync(self.products.create)([ProductCreateSchema(name="p")])
+        self.update(self.lines, LineUpdateSchema, self.line.pk, product=product.pk)
         with CaptureQueriesContext(connection) as queries:
-            self.update(self.lines, LineUpdateSchema, self.line.pk, product=product.pk)
-        self.assertEqual(len(updates_of(queries, Line)), 1)  # the write itself
+            # no computed field reads a product's name
+            self.update(self.products, ProductUpdateSchema, product.pk, name="renamed")
         self.assertEqual(updates_of(queries, Order), [])
+        self.assertEqual(updates_of(queries, Line), [])
+
+    def test_three_hops(self):
+        """`top_category` reads `lines__product__category__name`: a category
+        renamed or a product moved, through their own services, reach the order."""
+        categories = self.env.get(CategoryService)
+        alpha, beta = async_to_sync(categories.create)(
+            [CategoryCreateSchema(name="alpha"), CategoryCreateSchema(name="beta")]
+        )
+        a1, a2 = async_to_sync(self.products.create)([
+            ProductCreateSchema(name="a1", category=alpha.pk),
+            ProductCreateSchema(name="a2", category=beta.pk),
+        ])
+        self.update(self.lines, LineUpdateSchema, self.line.pk, product=a1.pk)
+        self.assertEqual(self.fetch(Order, self.order.pk).top_category, "alpha")
+
+        self.update(categories, CategoryUpdateSchema, alpha.pk, name="zeta")
+        self.assertEqual(self.fetch(Order, self.order.pk).top_category, "zeta")
+
+        self.update(self.products, ProductUpdateSchema, a1.pk, category=beta.pk)
+        order = self.fetch(Order, self.order.pk)
+        self.assertEqual((order.top_category, order.top_category_ref), ("beta", beta.pk))
 
     def test_foreign_key_reassignment(self):
         other = self.create_order("other")

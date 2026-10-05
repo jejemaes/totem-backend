@@ -124,10 +124,17 @@ class ComputedField(models.Field):
         or the name of a model classmethod / staticmethod, taking a list of
         instances and returning `{pk: value}`. A missing pk reads as None.
     :param depends_on: what the value depends on, as lookups from this model:
-        `"label"`, `"parent"`, `"parent__status"`, `"lines"`, `"lines__quantity"`,
-        `"tags"`, `"tags__name"`. Required when stored; ignored otherwise. A bare
-        relation (`"lines"`) reacts to rows joining or leaving it; a relation path
-        (`"lines__quantity"`) also reacts to that field changing.
+        `"label"`, `"parent__status"`, `"lines__quantity"`, `"tags__name"`,
+        `"lines__product__category__name"`. Required when stored; ignored
+        otherwise. A relation path reacts to rows joining or leaving each relation
+        on the way, and to its last field changing. At most
+        `COMPUTED_FIELD_MAX_HOPS` relations (4 by default), and never the field
+        itself on other rows (`parent__depth` for `depth`): both are refused at
+        startup. Every write a path watches recomputes every row it leads back to,
+        so prefer depending on ids over displayed values: storing the top
+        category's id watches `lines__product__category` and ignores renames,
+        storing its name recomputes every order reaching it on each rename. A field
+        whose reach is unbounded is better left virtual.
     :param stored: whether the value is a column kept in sync.
 
     Exactly one of `annotation_method` / `prefetch_method`.

@@ -1,13 +1,34 @@
 from typing import List, Optional
 
 from core.schemas import ModelSchema
-from core.tests.computed_app.models import Line, Order, Product, Tag
+from core.tests.computed_app.models import Category, Line, Order, Product, Tag
+
+
+class CategoryCreateSchema(ModelSchema):
+    class Meta:
+        model = Category
+        fields = ["name"]
+
+
+class CategoryUpdateSchema(ModelSchema):
+    class Meta:
+        model = Category
+        fields = ["name"]
+        optional_fields = "__all__"
 
 
 class ProductCreateSchema(ModelSchema):
     class Meta:
         model = Product
-        fields = ["name"]
+        fields = ["name", "category"]
+        optional_fields = ["category"]
+
+
+class ProductUpdateSchema(ModelSchema):
+    class Meta:
+        model = Product
+        fields = ["name", "category"]
+        optional_fields = "__all__"
 
 
 class TagCreateSchema(ModelSchema):

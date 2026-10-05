@@ -1,19 +1,32 @@
 from core.services import ServiceBase
 from core.services.mixins import CreateMixin, DeleteMixin, ReadMixin, UpdateMixin
 
-from .models import Line, Order, Product, Tag
+from .models import Category, Line, Order, Product, Tag
 from .schemas import (
+    CategoryCreateSchema,
+    CategoryUpdateSchema,
     LineCreateSchema,
     LineUpdateSchema,
     OrderCreateSchema,
     OrderUpdateSchema,
     ProductCreateSchema,
+    ProductUpdateSchema,
     TagCreateSchema,
     TagUpdateSchema,
 )
 
 
-class ProductService(CreateMixin[ProductCreateSchema], ReadMixin, DeleteMixin, ServiceBase[Product]):
+class CategoryService(
+    CreateMixin[CategoryCreateSchema], ReadMixin, UpdateMixin[CategoryUpdateSchema], DeleteMixin,
+    ServiceBase[Category],
+):
+    pass
+
+
+class ProductService(
+    CreateMixin[ProductCreateSchema], ReadMixin, UpdateMixin[ProductUpdateSchema], DeleteMixin,
+    ServiceBase[Product],
+):
     pass
 
 

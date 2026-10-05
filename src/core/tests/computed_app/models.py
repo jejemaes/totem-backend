@@ -7,6 +7,8 @@
   Order.tag_count        a many-to-many declared here
   Order.tag_names        the same, through a prefetch method, plus a field of it
   Order.tag_popularity   a stored computed field of a many-to-many (a chain)
+  Order.top_category     three hops: `lines__product__category__name`
+  Order.top_category_ref the same choice stored as an id: renaming is no write to it
   Tag.order_count        a many-to-many declared on the other side
   Line.order_status      a field behind a forward foreign key
   Line.amount            local fields only: becomes a `GeneratedField`
@@ -18,7 +20,7 @@ from collections import defaultdict
 from decimal import Decimal
 
 from django.db import models
-from django.db.models import Count, F, Max, Sum
+from django.db.models import Count, F, Max, OuterRef, Subquery, Sum
 from django.db.models.functions import Upper
 
 from core.orm.fields import ComputedField, ComputedQuerySetMixin, ULIDField
@@ -32,8 +34,34 @@ class ComputedQuerySet(ComputedQuerySetMixin, models.QuerySet):
     pass
 
 
+class Category(models.Model):
+    name = models.CharField("Name", max_length=64)
+
+
 class Product(models.Model):
     name = models.CharField("Name", max_length=64)
+    category = models.ForeignKey(
+        Category, verbose_name="Category", related_name="products", null=True, blank=True,
+        on_delete=models.SET_NULL,
+    )
+
+
+def most_present_category(value):
+    """The category most present among an order's lines, its `value` read.
+
+    Ties are broken on that same value. A field must only react to what it reads:
+    breaking an id's ties on the name would let a rename change which id wins,
+    behind a `depends_on` that does not watch names.
+    """
+    return lambda: Subquery(
+        Line.objects
+        .filter(order=OuterRef("pk"), product__category__isnull=False)
+        .order_by()
+        .values(value)
+        .annotate(n=Count("pk"))
+        .order_by("-n", value)
+        .values(value)[:1]
+    )
 
 
 class Tag(models.Model):
@@ -99,6 +127,22 @@ class Order(models.Model):
         # Reads `Tag.order_count`, itself a stored computed field: refreshed after it.
         annotation_method=lambda: Max("tags__order_count", default=0),
         depends_on=["tags__order_count"],
+        stored=True,
+    )
+    top_category = ComputedField(
+        "Top category",
+        output_field=models.CharField(max_length=64),
+        annotation_method=most_present_category("product__category__name"),
+        depends_on=["lines__product__category__name"],
+        stored=True,
+    )
+    top_category_ref = ComputedField(
+        "Top category (id)",
+        output_field=models.IntegerField(),
+        # The same choice, by id: renaming a category changes nothing it reads, so
+        # it watches no name -- a rename costs it no query at all.
+        annotation_method=most_present_category("product__category_id"),
+        depends_on=["lines__product__category"],
         stored=True,
     )
     tag_names = ComputedField(
