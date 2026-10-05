@@ -5,8 +5,9 @@ from django.core.exceptions import FieldError, ImproperlyConfigured
 from django.db import models
 from django.db.models import Count, F, OuterRef, Subquery, Sum, Value, Window
 from django.db.models.functions import Upper
-from django.test import SimpleTestCase, TestCase
-from django.test.utils import isolate_apps
+from django.db import connection
+from django.test import SimpleTestCase, TestCase, override_settings
+from django.test.utils import CaptureQueriesContext, isolate_apps
 
 from core.orm.fields import ComputedField, ComputedQuerySetMixin
 from core.orm.fields.computed import (
@@ -15,10 +16,16 @@ from core.orm.fields.computed import (
     get_computed_field,
     prime_computed_values,
 )
-from core.orm.fields.computed.dependency import _parse_dependency, get_registry
+from core.orm.fields.computed.dependency import (
+    _compute_depths,
+    _merge,
+    _parse_dependency,
+    bindings_for,
+    get_registry,
+)
 from core.orm.fields.computed.field import is_row_local
 from core.orm.fields.computed.utils import as_subquery
-from core.tests.computed_app.models import Line, Order, Product, Tag
+from core.tests.computed_app.models import Category, Line, Order, Product, Tag
 
 
 class TestRegistries(SimpleTestCase):
@@ -27,12 +34,14 @@ class TestRegistries(SimpleTestCase):
         meta = Order._meta
         self.assertEqual(
             set(meta.stored_computed_fields),
-            {"line_count", "total", "total_of_amounts", "tag_count", "tag_popularity", "tag_names"},
+            {"line_count", "total", "total_of_amounts", "tag_count", "tag_popularity", "tag_names",
+             "top_category", "top_category_ref"},
         )
         self.assertEqual(set(meta.virtual_computed_fields), {"line_count_virtual", "max_quantity_virtual"})
         self.assertEqual(
             set(meta.computed_annotation_fields),
-            {"line_count", "total", "total_of_amounts", "tag_count", "tag_popularity", "line_count_virtual"},
+            {"line_count", "total", "total_of_amounts", "tag_count", "tag_popularity", "line_count_virtual",
+             "top_category", "top_category_ref"},
         )
         self.assertEqual(set(meta.computed_prefetch_fields), {"tag_names", "max_quantity_virtual"})
 
@@ -206,20 +215,20 @@ class TestDependencyParsing(SimpleTestCase):
 
     def test_refused_shapes(self):
         field = Order._meta.get_field("total")
-        for dep in ("lines__order__status", "nope", "label__x", "lines__nope"):
+        for dep in ("nope", "label__x", "lines__nope"):
             with self.subTest(dep=dep), self.assertRaises(ImproperlyConfigured):
                 list(_parse_dependency(Order, field, dep))
-
-    def test_reverse_relation_as_second_hop_refused(self):
-        field = Line._meta.get_field("order_status")
-        with self.assertRaises(ImproperlyConfigured):
-            list(_parse_dependency(Line, field, "order__lines"))
 
     def test_depth_orders_chains(self):
         depth = get_registry().depth
         self.assertLess(depth[Tag._meta.get_field("order_count")], depth[Order._meta.get_field("tag_popularity")])
         # A generated field is no step of a chain: it is current before any flush.
         self.assertEqual(depth[Order._meta.get_field("total_of_amounts")], 0)
+
+    def test_bindings_of_one_field_are_merged(self):
+        """`total` watches `Line` through `lines` once, for both its fields."""
+        (binding,) = [b for b in bindings_for(Line) if b.field.name == "total"]
+        self.assertTrue({"quantity", "unit_price", "order", "order_id"} <= binding.trigger_fields)
 
     def test_cascades(self):
         cascades = get_registry().cascades
@@ -288,12 +297,12 @@ class TestContext(ComputedTestCase):
 
     def test_unwatched_field_costs_nothing(self):
         (order,) = self.create_orders("o")
-        (line,) = self.create_lines((order, 1, "1"))
         (product,) = Product.objects.bulk_create([Product(name="p")])
-        Line.objects.filter(pk=line.pk).update(product=product)
-        with self.assertNumQueries(0):  # no computed field depends on `lines__product`
+        self.create_lines((order, 1, "1", product))
+        Product.objects.filter(pk=product.pk).update(name="renamed")
+        with self.assertNumQueries(0):  # no computed field reads a product's name
             with RefreshComputedFieldsContext() as ctx:
-                ctx.modified(Line, [line.pk], {"product"})
+                ctx.modified(Product, [product.pk], {"name"})
 
     def test_foreign_key_reassignment_refreshes_both_roots(self):
         first, second = self.create_orders("a", "b")
@@ -496,7 +505,11 @@ class TestStoredEqualsVirtual(ComputedTestCase):
         with RefreshComputedFieldsContext() as ctx:
             order.tags.set(tags)
             ctx.modified(Order, [order.pk], {"tags"})
-        self.create_lines((order, 3, "2.5"), (order, 1, "4"))
+        alpha, beta = Category.objects.bulk_create([Category(name="alpha"), Category(name="beta")])
+        first, second = Product.objects.bulk_create(
+            [Product(name="first", category=alpha), Product(name="second", category=beta)]
+        )
+        self.create_lines((order, 3, "2.5", first), (order, 1, "4", second), (order, 1, "1", second))
 
         for model in (Order, Line, Tag):
             for field in model._meta.computed_annotation_fields.values():
@@ -519,3 +532,155 @@ class TestStoredEqualsVirtual(ComputedTestCase):
         )
         Order.objects.filter(pk=order.pk).update(line_count=as_subquery(fake))
         self.assertEqual(self.fetch(Order, order.pk).line_count, 3)
+
+
+class TestMultiHopDependencies(SimpleTestCase):
+    """`lines__product__category__name`: every model on the path is watched, each
+    with the lookup leading back to the order."""
+
+    def bindings(self, name):
+        field = Order._meta.get_field(name)
+        return {
+            (b.watched_model, b.path): b
+            for b in _parse_dependency(Order, field, field.depends_on[0])
+        }
+
+    def test_every_model_on_the_path_is_watched(self):
+        bindings = self.bindings("top_category")
+        self.assertEqual(
+            set(bindings),
+            {(Line, "lines"), (Product, "lines__product"), (Category, "lines__product__category")},
+        )
+        line = bindings[(Line, "lines")]
+        self.assertEqual(line.trigger_fields, {"order", "order_id", "product", "product_id"})
+        self.assertEqual(line.fk_attname, "order_id")  # first hop: read off the instance
+        self.assertEqual(bindings[(Product, "lines__product")].trigger_fields, {"category", "category_id"})
+        self.assertEqual(bindings[(Category, "lines__product__category")].trigger_fields, {"name"})
+        self.assertTrue(all(b.on_existence for b in bindings.values()))
+
+    def test_membership_is_only_the_way_back_to_the_root(self):
+        """`Line.order` moves a line to another order: roots before and after. A
+        line's product or a product's category leads away from the order: the line
+        reaches the same order before and after the write."""
+        bindings = self.bindings("top_category")
+        self.assertEqual(bindings[(Line, "lines")].membership_fields, {"order", "order_id"})
+        self.assertEqual(bindings[(Product, "lines__product")].membership_fields, set())
+        self.assertEqual(bindings[(Category, "lines__product__category")].membership_fields, set())
+
+    def test_depending_on_an_id_watches_no_name(self):
+        bindings = self.bindings("top_category_ref")
+        category = bindings[(Category, "lines__product__category")]
+        # deleting a category nulls the products' key: watched; renaming it is not
+        self.assertTrue(category.on_existence)
+        self.assertEqual(category.trigger_fields, set())
+
+    def test_reverse_relation_after_a_forward_one(self):
+        field = Line._meta.get_field("order_status")
+        bindings = {(b.watched_model, b.path): b for b in _parse_dependency(Line, field, "order__lines")}
+        self.assertEqual(bindings[(Line, None)].trigger_fields, {"order", "order_id"})
+        self.assertTrue(bindings[(Order, "order")].on_existence)
+        back = bindings[(Line, "order__lines")]
+        self.assertEqual(back.membership_fields, {"order", "order_id"})
+
+    def test_hop_limit(self):
+        field = Order._meta.get_field("top_category")
+        with override_settings(COMPUTED_FIELD_MAX_HOPS=2):
+            with self.assertRaisesRegex(ImproperlyConfigured, "COMPUTED_FIELD_MAX_HOPS"):
+                _parse_dependency(Order, field, "lines__product__category__name")
+        with override_settings(COMPUTED_FIELD_MAX_HOPS=3):
+            _parse_dependency(Order, field, "lines__product__category__name")
+
+
+class TestSelfDependency(SimpleTestCase):
+    """A field reading itself on other rows is refused: refreshing it would trigger
+    it again, without end on rows that point at each other."""
+
+    def depths(self, model, name):
+        field = model._meta.get_field(name)
+        bindings = {}
+        for binding in _merge(b for dep in field.depends_on for b in _parse_dependency(model, field, dep)):
+            bindings.setdefault(binding.watched_model, []).append(binding)
+        return _compute_depths(bindings)
+
+    @isolate_apps("core.tests.computed_app")
+    def test_through_a_foreign_key_to_the_same_model(self):
+        class Node(models.Model):
+            parent = models.ForeignKey("self", null=True, on_delete=models.CASCADE)
+            depth = ComputedField(
+                output_field=models.IntegerField(), annotation_method=lambda: F("parent__depth"),
+                depends_on=["parent__depth"], stored=True,
+            )
+
+        with self.assertRaisesRegex(ImproperlyConfigured, "Node.depth depends on itself through 'parent'"):
+            self.depths(Node, "depth")
+
+    def test_through_a_path_back_to_the_root(self):
+        field = Order._meta.get_field("line_count")
+        bindings = {}
+        for binding in _parse_dependency(Order, field, "lines__order__line_count"):
+            bindings.setdefault(binding.watched_model, []).append(binding)
+        with self.assertRaisesRegex(ImproperlyConfigured, "Order.line_count depends on itself through 'lines__order'"):
+            _compute_depths(bindings)
+
+
+class TestMultiHopContext(ComputedTestCase):
+
+    def setUp(self):
+        self.alpha, self.beta = Category.objects.bulk_create([Category(name="alpha"), Category(name="beta")])
+        self.a1, self.a2, self.b1 = Product.objects.bulk_create([
+            Product(name="a1", category=self.alpha),
+            Product(name="a2", category=self.alpha),
+            Product(name="b1", category=self.beta),
+        ])
+        (self.order,) = self.create_orders("o")
+        self.line_a1, self.line_a2, self.line_b1 = self.create_lines(
+            (self.order, 1, "1", self.a1), (self.order, 1, "1", self.a2), (self.order, 1, "1", self.b1),
+        )
+
+    def top(self):
+        order = self.fetch(Order, self.order.pk)
+        return order.top_category, order.top_category_ref
+
+    def test_created_lines(self):
+        self.assertEqual(self.top(), ("alpha", self.alpha.pk))
+
+    def test_renaming_a_category(self):
+        Category.objects.filter(pk=self.alpha.pk).update(name="zeta")
+        with CaptureQueriesContext(connection) as queries:
+            with RefreshComputedFieldsContext() as ctx:
+                ctx.modified(Category, [self.alpha.pk], {"name"})
+        self.assertEqual(self.top(), ("zeta", self.alpha.pk))
+        # the orders through lines and products, then the one field reading names
+        self.assertEqual(len(queries), 2)
+        self.assertNotIn("top_category_ref", queries[-1]["sql"])
+
+    def test_moving_a_product_to_another_category(self):
+        with RefreshComputedFieldsContext() as ctx:
+            self.assertFalse(ctx.has_relation_to_modify(Product, {"category"}))
+            Product.objects.filter(pk=self.a2.pk).update(category=self.beta)
+            with self.assertNumQueries(2):  # no read before the write
+                ctx.modified(Product, [self.a2.pk], {"category"})
+                ctx.flush()
+        self.assertEqual(self.top(), ("beta", self.beta.pk))
+
+    def test_giving_a_line_another_product(self):
+        with RefreshComputedFieldsContext() as ctx:
+            self.assertFalse(ctx.has_relation_to_modify(Line, {"product"}))
+            self.assertTrue(ctx.has_relation_to_modify(Line, {"order"}))
+            Line.objects.filter(pk=self.line_a2.pk).update(product=self.b1)
+            ctx.modified(Line, [self.line_a2.pk], {"product"})
+        self.assertEqual(self.top(), ("beta", self.beta.pk))
+
+    def test_deleting_a_category_nulls_its_products(self):
+        with RefreshComputedFieldsContext() as ctx:
+            queryset = Category.objects.filter(pk=self.alpha.pk)
+            ctx.deleted(queryset)
+            queryset.delete()  # SET_NULL on the products
+        self.assertEqual(self.top(), ("beta", self.beta.pk))
+
+    def test_unrelated_rename_costs_one_query(self):
+        """A category no order reaches: the lookup finds no root, nothing is written."""
+        (lone,) = Category.objects.bulk_create([Category(name="lone")])
+        with self.assertNumQueries(1):
+            with RefreshComputedFieldsContext() as ctx:
+                ctx.modified(Category, [lone.pk], {"name"})
