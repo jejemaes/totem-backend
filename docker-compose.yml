@@ -38,9 +38,57 @@ services:
     stdin_open: true
     depends_on:
       - db
+      - redis
     networks:
       - totem-backend-network
       - totem-saas-network
+
+  redis:
+    container_name: totem-backend-redis
+    image: redis:7-alpine
+    networks:
+      - totem-backend-network
+
+  worker:
+    container_name: totem-backend-worker
+    build:
+      context: .
+    # The `django` service runs the migrations: no preflight here, to not
+    # migrate concurrently.
+    entrypoint: ""
+    command: ["celery", "-A", "totem", "worker", "--loglevel", "info", "--concurrency", "4"]
+    restart: unless-stopped
+    volumes:
+      - ./src:/usr/src/app
+      - totem-media:/usr/src/media
+    env_file:
+      - default.env
+    depends_on:
+      - db
+      - redis
+    networks:
+      - totem-backend-network
+
+  # Exactly one beat: each beat instance sends the due tasks, so two of them
+  # would run every periodic task twice.
+  beat:
+    container_name: totem-backend-beat
+    build:
+      context: .
+    entrypoint: ""
+    command: ["celery", "-A", "totem", "beat", "--loglevel", "info"]
+    # Restarts until the `django` service has run the migrations of the
+    # schedule tables.
+    restart: unless-stopped
+    volumes:
+      - ./src:/usr/src/app
+    env_file:
+      - default.env
+    depends_on:
+      - db
+      - redis
+    networks:
+      - totem-backend-network
 
   nginx:
     container_name: totem-backend-nginx

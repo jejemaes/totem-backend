@@ -16,6 +16,7 @@ is there. Line numbers drift; the mechanism is the durable part.
 - [7. Querysets must never reach a template](#7)
 - [8. `assertTemplateUsed` is silently useless](#8)
 - [9. Route order comes from `cls.__dict__` insertion order](#9)
+- [10. Sending a Celery task from a service](#10)
 
 ## 1
 
@@ -190,3 +191,24 @@ ones are `setattr`'d later, during `add_routes_to`. So a hand-written
 This is load-bearing rather than incidental: if it inverted, `GET /current/`
 would be served by `retrieve` with `id="current"` and answer 404. Worth its own
 test whenever you add such an alias.
+
+## 10
+
+**Sending a Celery task from a service: after commit, and off the event loop.**
+
+Background jobs are Celery tasks (`<app>/tasks.py`, autodiscovered by
+`totem/celery.py`), with Redis as broker. Two traps when a service sends one:
+
+- `task.delay()` publishes at once, while the transaction that wrote what the
+  task reads may still roll back, or not be visible yet to the worker. Use
+  `task.delay_on_commit(...)`, which publishes from `transaction.on_commit`.
+  In a test, wrap the call in `self.captureOnCommitCallbacks(execute=True)`,
+  or the task is never sent.
+- Publishing is blocking network I/O to Redis. From an `async def`, call it
+  through `sync_to_async(task.delay_on_commit)(...)`, never directly, or it
+  blocks the event loop.
+
+A task itself is synchronous. To reuse an async service, it builds its own
+`Environment` and runs the coroutine with `async_to_sync`. Tasks are
+acknowledged after they run (`CELERY_TASK_ACKS_LATE`), so a task killed midway
+is redelivered: it must be idempotent.
