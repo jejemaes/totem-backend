@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "oauth2_provider",
+    "django_celery_beat",
     "base",
     "oauth",
     "user",
@@ -191,3 +192,52 @@ OAUTH2_PROVIDER = {
 
 CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOW_CREDENTIALS = True
+
+
+# Logging
+# Logs are the only trace of the background jobs (no Celery result backend):
+# the worker logs each task received, succeeded (with its duration) or failed
+# (with its traceback).
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "json": {
+            "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
+            "format": "%(asctime)s %(levelname)s %(name)s %(processName)s %(message)s",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "json",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": env("TOTEM_LOG_LEVEL", default="INFO"),
+    },
+}
+
+
+# Celery
+# Redis is the broker; the schedules of the periodic tasks live in the
+# database (`django_celery_beat`), editable from the admin.
+
+CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://redis:6379/0")
+CELERY_TIMEZONE = TIME_ZONE
+# No result backend: a task outcome is only logged.
+CELERY_TASK_IGNORE_RESULT = True
+# A task is acknowledged once done, so it is redelivered if the worker dies
+# while running it. Tasks must therefore be idempotent.
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+# Redis redelivers an unacknowledged task after this delay: it must exceed the
+# longest task duration, or the task runs twice.
+CELERY_BROKER_TRANSPORT_OPTIONS = {"visibility_timeout": 60 * 60}
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+# Keep the `LOGGING` above instead of Celery's own root logger setup.
+CELERY_WORKER_HIJACK_ROOT_LOGGER = False
+CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"

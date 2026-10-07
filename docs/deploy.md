@@ -34,3 +34,20 @@ Here is a list of required environment variables to run the django container of 
 - `POSTGRES_PASSWORD`: string, user password to access the psql server
 - `POSTGRES_HOST`: string, the URL of the psql server
 - `POSTGRES_PORT`: string, the port of psql server
+
+### Celery
+
+- `CELERY_BROKER_URL`: string, the URL of the Redis broker. Default is `redis://redis:6379/0`.
+- `TOTEM_LOG_LEVEL`: string, the level of the root logger. Default is `INFO`.
+
+
+## Background Jobs
+
+Background jobs run on Celery, with Redis as broker. Besides the web server, the same docker image runs two more processes:
+
+- the worker, executing the tasks: `celery -A totem worker --loglevel info`. It can be scaled to several instances.
+- the scheduler, sending the periodic tasks when due: `celery -A totem beat --loglevel info`. **Exactly one** instance must run, otherwise the periodic tasks are sent twice.
+
+The schedules of the periodic tasks are stored in the database, and can be changed (or disabled) from the django admin, under *Periodic Tasks*, without restarting anything. The default ones are created by `./manage.py populate --env system`, which never overrides a schedule that already exists.
+
+There is no result backend: the outcome of a task (success with its duration, or failure with its traceback) is only logged by the worker.
