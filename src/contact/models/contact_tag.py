@@ -29,7 +29,7 @@ class ContactTag(models.Model):
                 violation_error_message="A tag with that name already exists.",
             ),
             models.CheckConstraint(
-                check=models.Q(color__gte=0, color__lte=15),
+                condition=models.Q(color__gte=0, color__lte=15),
                 name="contact_tag_color_range",
                 violation_error_message="The color must be between 0 and 15.",
             ),

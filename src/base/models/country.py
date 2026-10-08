@@ -16,7 +16,7 @@ class Country(models.Model):
             # their pydantic translation, at the API boundary. Anything writing
             # through the ORM (fixture, shell, admin, migration) only meets this.
             models.CheckConstraint(
-                check=models.Q(code__regex=r"^[A-Z]{2}$"),
+                condition=models.Q(code__regex=r"^[A-Z]{2}$"),
                 name="country_code_iso_alpha2",
                 violation_error_message="The country code must be 2 uppercase letters (ISO 3166-1 alpha-2).",
             ),

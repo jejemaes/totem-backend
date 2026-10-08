@@ -79,7 +79,7 @@ class Menu(models.Model):
         verbose_name_plural = "Menu Items"
         constraints = [
             models.CheckConstraint(
-                check=(Q(parent__isnull=False) & (Q(link__isnull=False) | Q(page__isnull=False))) | (Q(parent__isnull=True)),
+                condition=(Q(parent__isnull=False) & (Q(link__isnull=False) | Q(page__isnull=False))) | (Q(parent__isnull=True)),
                 name='%(class)s_page_or_link',
                 violation_error_message="Menu must be linked to an URL or a page."
             ),
