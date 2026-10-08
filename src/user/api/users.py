@@ -55,7 +55,7 @@ class UserController(TokenHasScopePermissionModelControllerMixin, ModelControlle
     @route.get(
         "/me/", response=UserProfileSchema, permissions=[IsAuthenticated], tags=["User"]
     )
-    def profile_read(self, request):
+    async def profile_read(self, request):
         return request.auth.user
 
     @route.patch(

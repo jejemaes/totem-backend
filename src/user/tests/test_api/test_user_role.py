@@ -3,6 +3,8 @@ from freezegun import freeze_time
 from parameterized import parameterized
 
 from core.testing import APITestCaseMixin
+from user.access_policy import access_policy
+from user.access_rights import get_all_permission
 from user.choices import UserType
 from user.models import User, UserRole
 
@@ -287,6 +289,53 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             self.assertEqual(
                 data, {"detail": ["You do not have permission to perform this action."]}
             )
+
+    # ------------------------------------------
+    # Permissions and Access Rules Actions
+    # ------------------------------------------
+
+    def test_permissions_response(self):
+        response = self.do_api_request(
+            f"{self.url}permissions/", "GET", self.user_access_token_frodon.token
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            [{"id": perm, "name": name} for perm, name in get_all_permission()],
+        )
+
+    def test_access_rules_response(self):
+        response = self.do_api_request(
+            f"{self.url}access-rules/", "GET", self.user_access_token_frodon.token
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            [
+                {"id": rule.identifier, "name": rule.name, "description": rule.description}
+                for rule in access_policy.get_all_rules()
+            ],
+        )
+
+    @parameterized.expand(
+        [
+            ("permissions/", "totem.userrole.update", 403),
+            ("permissions/", "totem.userrole.read", 200),
+            ("access-rules/", "totem.userrole.update", 403),
+            ("access-rules/", "totem.userrole.read", 200),
+        ]
+    )
+    def test_permissions_and_access_rules_access_rights(self, path, scope, status_code):
+        self.user_access_token_frodon.scope = scope
+        self.user_access_token_frodon.save(update_fields=["scope"])
+
+        response = self.do_api_request(
+            f"{self.url}{path}", "GET", self.user_access_token_frodon.token
+        )
+
+        self.assertEqual(response.status_code, status_code)
 
     # ------------------------------------------
     # Utils
