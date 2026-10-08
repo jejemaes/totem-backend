@@ -48,7 +48,7 @@ class UserRoleController(
         permissions=[TokenHasScopePermission("totem.userrole.read")],
         tags=["User Role"],
     )
-    def permission_read(self, request):
+    async def permission_read(self, request):
         permissions = get_all_permission()
         return [{"id": p[0], "name": p[1]} for p in permissions]
 
@@ -58,7 +58,7 @@ class UserRoleController(
         permissions=[TokenHasScopePermission("totem.userrole.read")],
         tags=["User Role"],
     )
-    def access_rules_read(self, request):
+    async def access_rules_read(self, request):
         result = []
         for rule in access_policy.get_all_rules():
             result.append(

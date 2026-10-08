@@ -71,4 +71,4 @@ class PermissionSchema(Schema):
 class AccessRuleSchema(Schema):
     id: str
     name: str = Field(description="Title of the access rule.")
-    description: str = Field(description="Description of the access rules.")
+    description: Optional[str] = Field(description="Description of the access rules.")
