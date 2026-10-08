@@ -55,7 +55,7 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='contacttag',
-            constraint=models.CheckConstraint(check=models.Q(('color__gte', 0), ('color__lte', 15)), name='contact_tag_color_range', violation_error_message='The color must be between 0 and 15.'),
+            constraint=models.CheckConstraint(condition=models.Q(('color__gte', 0), ('color__lte', 15)), name='contact_tag_color_range', violation_error_message='The color must be between 0 and 15.'),
         ),
         migrations.AddField(
             model_name='contact',

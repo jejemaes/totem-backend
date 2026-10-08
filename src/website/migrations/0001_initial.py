@@ -92,6 +92,6 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='menu',
-            constraint=models.CheckConstraint(check=models.Q(models.Q(('parent__isnull', False), models.Q(('link__isnull', False), ('page__isnull', False), _connector='OR')), ('parent__isnull', True), _connector='OR'), name='menu_page_or_link', violation_error_message='Menu must be linked to an URL or a page.'),
+            constraint=models.CheckConstraint(condition=models.Q(models.Q(('parent__isnull', False), models.Q(('link__isnull', False), ('page__isnull', False), _connector='OR')), ('parent__isnull', True), _connector='OR'), name='menu_page_or_link', violation_error_message='Menu must be linked to an URL or a page.'),
         ),
     ]

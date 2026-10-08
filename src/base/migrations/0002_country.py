@@ -23,6 +23,6 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='country',
-            constraint=models.CheckConstraint(check=models.Q(('code__regex', '^[A-Z]{2}$')), name='country_code_iso_alpha2', violation_error_message='The country code must be 2 uppercase letters (ISO 3166-1 alpha-2).'),
+            constraint=models.CheckConstraint(condition=models.Q(('code__regex', '^[A-Z]{2}$')), name='country_code_iso_alpha2', violation_error_message='The country code must be 2 uppercase letters (ISO 3166-1 alpha-2).'),
         ),
     ]
