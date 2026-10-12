@@ -2,7 +2,12 @@ import json
 import urllib.parse as urlparse
 from urllib.parse import urlencode
 
+from django.core.management import call_command
+from django.db import connection, connections
+from django.db.backends.postgresql.base import DatabaseWrapper
 from django.test import Client
+
+from core.db.tenancy import use_database
 
 
 class APITestCaseMixin:
@@ -54,3 +59,53 @@ class APITestCaseMixin:
             response = client.options(url, **headers)
 
         return response
+
+class TenantDatabaseTestMixin:
+    """ Gives a `TransactionTestCase` a second, migrated tenant database.
+
+    Its name, `tenant_db`, derives from the test database, so that parallel
+    test workers each get their own. It is created and migrated once per test
+    class (a few seconds), then dropped.
+
+    Not for a `TestCase`: its transaction on `default` forbids switching to
+    another database (`DatabaseSwitchError`).
+    """
+
+    tenant_db_suffix = "tenant"
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.tenant_db = f"{connection.settings_dict['NAME']}_{cls.tenant_db_suffix}"
+        with connection._nodb_cursor() as cursor:
+            cursor.execute(f'DROP DATABASE IF EXISTS "{cls.tenant_db}"')
+            cursor.execute(f'CREATE DATABASE "{cls.tenant_db}"')
+        call_command("tenant_migrate", cls.tenant_db, verbosity=0)
+
+    @classmethod
+    def tearDownClass(cls):
+        forget_database(cls.tenant_db)
+        with connection._nodb_cursor() as cursor:
+            cursor.execute(f'DROP DATABASE IF EXISTS "{cls.tenant_db}"')
+        super().tearDownClass()
+
+    def tearDown(self):
+        # `TransactionTestCase` only flushes the databases of `databases`.
+        with use_database(self.tenant_db):
+            call_command("flush", interactive=False, verbosity=0)
+        super().tearDown()
+
+
+def forget_database(db_name):
+    """ Close the alias of a database and remove it, so that it can be dropped. """
+    conn = connections.get_initialized(db_name)
+    if conn is not None:
+        conn.close()
+        del connections[db_name]
+    pool = DatabaseWrapper._connection_pools.pop(db_name, None)
+    if pool is not None:
+        pool.close()
+    with connections._lock:
+        connections.settings.pop(db_name, None)
+        connections._tenant_aliases.discard(db_name)
+        connections._last_used.pop(db_name, None)

@@ -23,6 +23,7 @@ from core.db.tenancy import (
     use_database,
 )
 from core.services import Environment
+from core.testing import TenantDatabaseTestMixin, forget_database
 
 
 class CurrentDatabaseTestCase(SimpleTestCase):
@@ -158,44 +159,22 @@ class DefaultConnectionTestCase(TestCase):
             call_command("tenant_migrate", "tenant_a", database="other", verbosity=0)
 
 
-class TenantIsolationTestCase(TransactionTestCase):
+class TenantIsolationTestCase(TenantDatabaseTestMixin, TransactionTestCase):
     """ Two real databases: the data of one is not visible from the other. """
-
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        # Unique per parallel test worker, as is the test database.
-        cls.other = f"{connection.settings_dict['NAME']}_tenancy"
-        with connection._nodb_cursor() as cursor:
-            cursor.execute(f'DROP DATABASE IF EXISTS "{cls.other}"')
-            cursor.execute(f'CREATE DATABASE "{cls.other}"')
-        call_command("tenant_migrate", cls.other, verbosity=0)
-
-    @classmethod
-    def tearDownClass(cls):
-        forget_database(cls.other)
-        with connection._nodb_cursor() as cursor:
-            cursor.execute(f'DROP DATABASE IF EXISTS "{cls.other}"')
-        super().tearDownClass()
-
-    def tearDown(self):
-        with use_database(self.other):
-            Country.objects.all().delete()
-        super().tearDown()
 
     def test_data_isolation(self):
         Country.objects.create(code="BE", name="Belgium")
-        with use_database(self.other):
+        with use_database(self.tenant_db):
             self.assertFalse(Country.objects.filter(code="BE").exists())
             Country.objects.create(code="FR", name="France")
             with connection.cursor() as cursor:
                 cursor.execute("SELECT current_database()")
-                self.assertEqual(cursor.fetchone()[0], self.other)
+                self.assertEqual(cursor.fetchone()[0], self.tenant_db)
         self.assertFalse(Country.objects.filter(code="FR").exists())
         self.assertTrue(Country.objects.filter(code="BE").exists())
 
     def test_transaction_stays_on_its_database(self):
-        with use_database(self.other):
+        with use_database(self.tenant_db):
             with self.assertRaises(ZeroDivisionError):
                 with transaction.atomic():
                     Country.objects.create(code="FR", name="France")
@@ -204,27 +183,27 @@ class TenantIsolationTestCase(TransactionTestCase):
 
     def test_async_unit_of_work(self):
         async def create_in_other():
-            with use_database(self.other):
+            with use_database(self.tenant_db):
                 await Country.objects.acreate(code="FR", name="France")
 
         async_to_sync(create_in_other)()
         self.assertFalse(Country.objects.filter(code="FR").exists())
-        with use_database(self.other):
+        with use_database(self.tenant_db):
             self.assertTrue(Country.objects.filter(code="FR").exists())
 
     def test_one_pool_per_database(self):
         Country.objects.exists()
-        with use_database(self.other):
+        with use_database(self.tenant_db):
             Country.objects.exists()
         self.assertIn(current_database(), DatabaseWrapper._connection_pools)
-        self.assertIn(self.other, DatabaseWrapper._connection_pools)
+        self.assertIn(self.tenant_db, DatabaseWrapper._connection_pools)
         self.assertIsNot(
             DatabaseWrapper._connection_pools[current_database()],
-            DatabaseWrapper._connection_pools[self.other],
+            DatabaseWrapper._connection_pools[self.tenant_db],
         )
 
     def test_idle_pool_eviction(self):
-        with use_database(self.other):
+        with use_database(self.tenant_db):
             Country.objects.exists()
             connection.close()  # back to the pool
         Country.objects.exists()
@@ -233,26 +212,13 @@ class TenantIsolationTestCase(TransactionTestCase):
         with transaction.atomic():
             Country.objects.exists()
             evicted = connections.evict_idle_pools(now=time.monotonic() + 3600)
-        self.assertIn(self.other, evicted)
-        self.assertNotIn(self.other, DatabaseWrapper._connection_pools)
+        self.assertIn(self.tenant_db, evicted)
+        self.assertNotIn(self.tenant_db, DatabaseWrapper._connection_pools)
         self.assertNotIn(current_database(), evicted)
         self.assertIs(DatabaseWrapper._connection_pools[current_database()], current_pool)
 
         # Created again on next use.
-        with use_database(self.other):
+        with use_database(self.tenant_db):
             self.assertFalse(Country.objects.exists())
-        self.assertIn(self.other, DatabaseWrapper._connection_pools)
+        self.assertIn(self.tenant_db, DatabaseWrapper._connection_pools)
 
-
-def forget_database(db_name):
-    """ Close and drop the alias of a database, so that it can be dropped. """
-    conn = connections.get_initialized(db_name)
-    if conn is not None:
-        conn.close()
-        del connections[db_name]
-    pool = DatabaseWrapper._connection_pools.pop(db_name, None)
-    if pool is not None:
-        pool.close()
-    with connections._lock:
-        connections.settings.pop(db_name, None)
-        connections._tenant_aliases.discard(db_name)
