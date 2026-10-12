@@ -6,6 +6,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from base.choices import FileReferencePrivacy
+from core.db.tenancy import current_database, use_database
 
 
 class Command(BaseCommand):
@@ -30,8 +31,20 @@ class Command(BaseCommand):
             dest="empty_dir",
             help="Delete empty directory in filestore and media stores.",
         )
+        parser.add_argument(
+            "--db-name",
+            dest="db_name",
+            default=None,
+            help="Tenant database whose filestore to clear. Defaults to the database of the settings.",
+        )
 
     def handle(self, *args, **options):
+        if options["db_name"]:
+            with use_database(options["db_name"]):
+                return self._handle(*args, **options)
+        return self._handle(*args, **options)
+
+    def _handle(self, *args, **options):
         # Determine which apps to process
         storages = options["storages"]
         if not storages:
@@ -39,7 +52,8 @@ class Command(BaseCommand):
 
         # Remove empty directories
         if options["empty_dir"]:
-            root_dir = settings.MEDIA_ROOT
+            # The root of the current database only (see the media storages).
+            root_dir = os.path.join(settings.MEDIA_ROOT, current_database())
             for storage in storages:
                 self._remove_empty_directories(os.path.join(root_dir, storage), remove_root=False)
 

@@ -20,6 +20,15 @@ Each tenant has its own database. `migrate` runs on the database of the settings
 
 The database must already exist: this command creates no database.
 
+### Filestore To Tenant Layout
+
+Each tenant database has its own media root, `MEDIA_ROOT/<db_name>/{_filestore,public,private}`. To upgrade a deployment made before that, move its media under the root of its database, once, with the services stopped:
+
+    docker-compose run --rm django ./manage.py filestore_to_tenant_layout postgres --dry-run
+    docker-compose run --rm django ./manage.py filestore_to_tenant_layout postgres
+
+The symlinks of the media stores are rewritten as relative ones. Nothing is changed in the database.
+
 ### Populate
 
 This command imports data for the specified environment. This command is idempotent

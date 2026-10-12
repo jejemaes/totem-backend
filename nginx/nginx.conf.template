@@ -43,6 +43,18 @@ http {
         https https;
     }
 
+    # Database of the tenant, set by the multi-tenant proxy: each tenant has its
+    # own media root, `/usr/src/media/<db_name>/`. Without the header, the
+    # database of the settings (single tenant). A value that is not a database
+    # name maps to "", answered with a 404: it must never reach a path.
+    # (`${POSTGRES_NAME}` is filled in from the environment when the container
+    # starts, see `NGINX_ENVSUBST_*` in docker-compose.yml.)
+    map $http_x_tenant_db $tenant_db {
+        ""                          "${POSTGRES_NAME}";
+        "~^[a-z_][a-z0-9_]{0,62}$"  $http_x_tenant_db;
+        default                     "";
+    }
+
     upstream django {
         server totem-backend:8000;
     }
@@ -62,12 +74,17 @@ http {
         }
 
         location ~ /media/public {
+            if ($tenant_db = "") {
+                return 404;
+            }
             rewrite '^/media/public/(.*)$' /$1 break;
-            root /usr/src/media/public/;
+            root /usr/src/media/$tenant_db/public/;
         }
 
-        location ^~ /media/_filestore/ {
-           alias /usr/src/media/_filestore/;
+        # Target of the `X-Accel-Redirect` of the private media view, which
+        # names the database itself: `/_media_internal/<db_name>/_filestore/...`.
+        location ^~ /_media_internal/ {
+           alias /usr/src/media/;
            internal;
         }
 

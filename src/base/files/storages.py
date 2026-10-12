@@ -13,20 +13,43 @@ from django.utils.encoding import filepath_to_uri
 
 from base.choices import FileReferencePrivacy
 from base.models import FileReference
+from core.db.tenancy import current_database
 from core.utils import signing
 
 # -----------------------------------------------
 # Media FileSystem Storages
 # -----------------------------------------------
 
+def private_media_salt():
+    """ Salt of the signed URLs of the private media, bound to the database.
+
+    A URL signed for a tenant is then refused on any other: the same symbolic
+    path may exist in both, pointing at a different file.
+    """
+    return f"private-media:{current_database()}"
+
+
 @deconstructible(path="base.files.storages.PublicMediaFileSystemStorage")
 class PublicMediaFileSystemStorage(FileSystemStorage):
     """
     Standard filesystem storage
+
+    Each tenant database has its own root, `MEDIA_ROOT/<db_name>/`, holding the
+    `_filestore` and the `public` and `private` media stores. The root is
+    computed on each access, not cached as in `FileSystemStorage`: the storage
+    instances are created once, at import, on the model fields.
     """
 
     FILESTORE_DIR = '_filestore'
     PRIVACY = FileReferencePrivacy.PUBLIC
+
+    @property
+    def base_location(self):
+        return os.path.join(self._value_or_setting(self._location, settings.MEDIA_ROOT), current_database())
+
+    @property
+    def location(self):
+        return os.path.abspath(self.base_location)
 
     def symlink_path(self, name):
         return safe_join(self.location, self.PRIVACY, name)
@@ -50,7 +73,11 @@ class PublicMediaFileSystemStorage(FileSystemStorage):
         absolute_link_path = self.symlink_path(symbolic_path)
         self._ensure_intermediate_directory(absolute_link_path)
         try:
-            os.symlink(absolute_file_path, absolute_link_path)
+            # Relative, so that the root of a tenant can be moved as a whole.
+            os.symlink(
+                os.path.relpath(absolute_file_path, os.path.dirname(absolute_link_path)),
+                absolute_link_path,
+            )
         except FileExistsError:
             pass
 
@@ -193,4 +220,4 @@ class PrivateMediaFileSystemStorage(PublicMediaFileSystemStorage):
 
     def url(self, name):
         url = super().url(name)
-        return signing.sign_url(url, hours=self.expiration_hours)
+        return signing.sign_url(url, hours=self.expiration_hours, salt=private_media_salt())
