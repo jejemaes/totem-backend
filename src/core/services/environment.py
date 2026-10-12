@@ -5,6 +5,7 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db.models import Model
 
+from core.db.tenancy import current_database
 from core.orm.fields.computed import RefreshComputedFieldsContext
 
 from .base import Service
@@ -63,6 +64,15 @@ class Environment:
         if name in vars(self):
             raise AttributeError(f"Attribute {name!r} is read-only, call `env()` instead")
         return super().__setattr__(name, value)
+
+    @property
+    def db_name(self) -> str:
+        """ The database this unit of work runs on.
+
+        Read from the context on each access, never stored: the database is
+        selected around the environment (`use_database()`), not by it.
+        """
+        return current_database()
 
     #
     # Service access
