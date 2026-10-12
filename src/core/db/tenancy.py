@@ -281,6 +281,23 @@ from django.db import connections  # noqa: E402  the instance installed above
 
 
 # ------------------------------------------------------
+# Cache
+# ------------------------------------------------------
+
+def make_cache_key(key, key_prefix, version):
+    """ `KEY_FUNCTION` of the caches: the key is namespaced by the database.
+
+    The same key set by two tenants names two entries, so a cached value of
+    one is never served to another. Django's default is
+    `f"{key_prefix}:{version}:{key}"`; the database comes after the prefix,
+    which stays the namespace of the deployment.
+
+    Not covered: `cache.clear()` empties the whole cache, every tenant alike.
+    """
+    return f"{key_prefix}:{current_database()}:{version}:{key}"
+
+
+# ------------------------------------------------------
 # Logging
 # ------------------------------------------------------
 

@@ -155,6 +155,19 @@ if env("SAAS_DB_NAME"):
 DATABASE_ROUTERS = ["core.db.routers.TenantRouter"]
 
 
+# Cache
+# Each key is prefixed by the database of the current tenant (see
+# `make_cache_key`). Local memory, as the default of Django: nothing is
+# cached across processes yet.
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+        "KEY_FUNCTION": "core.db.tenancy.make_cache_key",
+    },
+}
+
+
 # Password validation
 # https://docs.djangoproject.com/en/5.0/ref/settings/#auth-password-validators
 
