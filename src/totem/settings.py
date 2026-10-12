@@ -107,7 +107,14 @@ ASGI_APPLICATION = 'totem.asgi.application'
 
 
 # Database
-# https://docs.djangoproject.com/en/5.0/ref/settings/#databases
+# https://docs.djangoproject.com/en/5.2/ref/settings/#databases
+#
+# One database per tenant (see `core.db.tenancy`). `default` follows the
+# database of the current unit of work; its entry is the template of each
+# database (credentials, pool), and its `NAME` the database used when none is
+# active. In a multi-tenant deployment, `POSTGRES_NAME` should name a database
+# that does not exist, so that code forgetting to select a tenant fails at
+# connection instead of writing in a shared database.
 
 DATABASES = {
     "default": {
@@ -117,8 +124,33 @@ DATABASES = {
         "PASSWORD": env("POSTGRES_PASSWORD"),
         "HOST": env("POSTGRES_HOST"),
         "PORT": env("POSTGRES_PORT"),
+        "OPTIONS": {
+            # One pool per database (psycopg_pool), created on first use.
+            "pool": {
+                # An idle database keeps no connection: with dozens of
+                # databases per process, idle connections would add up.
+                "min_size": int(env("DB_POOL_MIN_SIZE", default="0")),
+                "max_size": int(env("DB_POOL_MAX_SIZE", default="4")),
+                # Seconds before an unused connection is closed (one per period).
+                "max_idle": float(env("DB_POOL_MAX_IDLE", default="60")),
+                # Seconds to wait for a free connection before raising.
+                "timeout": float(env("DB_POOL_TIMEOUT", default="10")),
+                # Each pool runs its own threads, also once per database.
+                "num_workers": 1,
+            },
+        },
     }
 }
+
+# The catalog of tenants, shared with the multi-tenant proxy. Declared only
+# when the deployment has one.
+if env("SAAS_DB_NAME"):
+    DATABASES["saas_base"] = {
+        **DATABASES["default"],
+        "NAME": env("SAAS_DB_NAME"),
+    }
+
+DATABASE_ROUTERS = ["core.db.routers.TenantRouter"]
 
 
 # Password validation
@@ -205,13 +237,19 @@ LOGGING = {
     "formatters": {
         "json": {
             "()": "pythonjsonlogger.jsonlogger.JsonFormatter",
-            "format": "%(asctime)s %(levelname)s %(name)s %(processName)s %(message)s",
+            "format": "%(asctime)s %(levelname)s %(name)s %(processName)s %(db_name)s %(message)s",
+        },
+    },
+    "filters": {
+        "db_name": {
+            "()": "core.db.tenancy.DatabaseNameFilter",
         },
     },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "json",
+            "filters": ["db_name"],
         },
     },
     "root": {

@@ -12,6 +12,14 @@ When starting the service, the database might not be ready to accept queries. Dj
     docker-compose exec ./manage.py wait_for_db
 
 
+### Tenant Migrate
+
+Each tenant has its own database. `migrate` runs on the database of the settings (`POSTGRES_NAME`); to migrate another tenant database, give its name first. The other arguments and options are those of `migrate`.
+
+    docker-compose exec django ./manage.py tenant_migrate tenant_acme
+
+The database must already exist: this command creates no database.
+
 ### Populate
 
 This command imports data for the specified environment. This command is idempotent
@@ -21,6 +29,7 @@ This command imports data for the specified environment. This command is idempot
  - `--env`:  required env corresponding to the dataset to load. Either `system`, or `local` will load the data required for the service to run.
  - `--drop-db`: optional. If set, will erase the database (schema and data). Then migration scripts will be re-executed before populating.
  - `--size`:  optional size of the set of data to introduce in database. Either `small`, `medium` or `large`. Default is `small`.
+ - `--db-name`: optional tenant database to populate. Default is the database of the settings (`POSTGRES_NAME`).
 
 The command will load authorized fixtures, and execute code to generate or alter data to fit the environment.
 

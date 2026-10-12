@@ -3,10 +3,11 @@ import textwrap
 from argparse import RawTextHelpFormatter
 
 from django.apps import apps
-from django.conf import settings
 from django.core import management
 from django.core.management.base import BaseCommand, CommandError
-from django.db import DEFAULT_DB_ALIAS, transaction
+from django.db import DEFAULT_DB_ALIAS, connections, transaction
+
+from core.db.tenancy import use_database
 from core.utils.topological_sort import stable_topological_sort
 
 ENV_LIST = ["system", "local"]
@@ -63,8 +64,20 @@ class Command(BaseCommand):
             dest="drop_db",
             help="Force to drop the database (data and schema) and recreate it by running migrations. Requires the `django-extensions` to be installed to drop the schema, otherwise only the data will be removed.",
         )
+        parser.add_argument(
+            "--db-name",
+            dest="db_name",
+            default=None,
+            help="Tenant database to populate. Defaults to the database of the settings.",
+        )
 
     def handle(self, *args, **options):
+        if options["db_name"]:
+            with use_database(options["db_name"]):
+                return self._handle(*args, **options)
+        return self._handle(*args, **options)
+
+    def _handle(self, *args, **options):
         # Determine which apps to process
         app_list = options["apps"]
         if not app_list:
@@ -193,8 +206,13 @@ class Command(BaseCommand):
 
     # Database Trashing
 
-    def db_reset(self, database=None):
-        dbinfo = settings.DATABASES.get(database or DEFAULT_DB_ALIAS)
+    def db_reset(self):
+        """ Drop and recreate the current database (see `use_database()`). """
+        connection = connections[DEFAULT_DB_ALIAS]
+        # The pool would otherwise keep connections to the dropped database.
+        connection.close()
+        connection.close_pool()
+        dbinfo = connection.settings_dict
 
         database_name = dbinfo.get('NAME')
         database_host = dbinfo.get('HOST')
