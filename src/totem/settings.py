@@ -59,6 +59,8 @@ if TESTING:
     INSTALLED_APPS.insert(INSTALLED_APPS.index("core"), "core.tests.computed_app")
 
 MIDDLEWARE = [
+    # First: every other middleware runs on the tenant database too.
+    'core.middleware.TenantMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'corsheaders.middleware.CorsMiddleware',
