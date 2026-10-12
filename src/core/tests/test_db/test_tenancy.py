@@ -20,6 +20,7 @@ from core.db.tenancy import (
     TenantConnectionHandler,
     current_database,
     default_database,
+    tenant_databases,
     use_database,
 )
 from core.services import Environment
@@ -83,6 +84,9 @@ class CurrentDatabaseTestCase(SimpleTestCase):
             DatabaseNameFilter().filter(record)
         self.assertEqual(record.db_name, "tenant_a")
 
+
+    def test_without_catalog_the_database_of_the_settings(self):
+        self.assertEqual(tenant_databases(), [default_database()])
 
     def test_router_keeps_apps_out_of_catalog(self):
         router = TenantRouter()
@@ -154,6 +158,12 @@ class DefaultConnectionTestCase(TestCase):
         with self.assertRaises(ConnectionDoesNotExist):
             connections["Not a database"]
 
+    def test_unconfigured_catalog_is_not_a_tenant_database(self):
+        self.assertNotIn("saas_base", settings.DATABASES)
+        with self.assertRaises(ConnectionDoesNotExist):
+            connections["saas_base"]
+        self.assertNotIn("saas_base", settings.DATABASES)
+
     def test_tenant_migrate_refuses_database_option(self):
         with self.assertRaises(CommandError):
             call_command("tenant_migrate", "tenant_a", database="other", verbosity=0)
@@ -222,3 +232,38 @@ class TenantIsolationTestCase(TenantDatabaseTestMixin, TransactionTestCase):
             self.assertFalse(Country.objects.exists())
         self.assertIn(self.tenant_db, DatabaseWrapper._connection_pools)
 
+
+
+class TenantDatabasesTestCase(TransactionTestCase):
+    """ The catalog is a table of the proxy, read by raw SQL. The test database
+    itself stands for `saas_base`. """
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        # After the setup: the test runner must not see an alias it did not
+        # create a test database for. Allowed to this test case only.
+        catalog = dict(settings.DATABASES[DEFAULT_DB_ALIAS], NAME=connection.settings_dict["NAME"])
+        cls.enterClassContext(mock.patch.dict(settings.DATABASES, {"saas_base": catalog}))
+        cls.databases = cls.databases | {"saas_base"}
+        # Before the patch is undone: cleanups run last registered first.
+        cls.addClassCleanup(forget_database, "saas_base")
+
+    def test_active_tenants_of_the_catalog(self):
+        # Committed: the catalog is read on its own connection.
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "CREATE TABLE tenant (db_name varchar(63) NOT NULL, active boolean NOT NULL)"
+            )
+            cursor.execute(
+                "INSERT INTO tenant VALUES ('tenant_b', true), ('tenant_a', true),"
+                " ('tenant_old', false), ('Bad-Name', true)"
+            )
+        self.addCleanup(self.drop_catalog)
+
+        with self.assertLogs("core.db.tenancy", "WARNING"):
+            self.assertEqual(tenant_databases(), ["tenant_a", "tenant_b"])
+
+    def drop_catalog(self):
+        with connection.cursor() as cursor:
+            cursor.execute("DROP TABLE IF EXISTS tenant")
