@@ -280,4 +280,14 @@ CELERY_BROKER_TRANSPORT_OPTIONS = {"visibility_timeout": 60 * 60}
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 # Keep the `LOGGING` above instead of Celery's own root logger setup.
 CELERY_WORKER_HIJACK_ROOT_LOGGER = False
-CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+# The schedule of each tenant lives in its own database: one beat runs them all.
+CELERY_BEAT_SCHEDULER = "core.celery.scheduler:TenantDatabaseScheduler"
+# Longest sleep of beat between two looks at the schedules of the tenants (a
+# query in each tenant database). Beat still wakes up on time for the next due
+# task: this only bounds how long a change made in the admin goes unseen. No
+# periodic task runs more often than hourly, so 5 minutes is plenty.
+CELERY_BEAT_MAX_LOOP_INTERVAL = int(env("CELERY_BEAT_MAX_LOOP_INTERVAL", default="300"))
+# Seconds between two reads of the list of tenants, by beat (at a tick, so at
+# least the loop interval). Not `CELERY_` prefixed: Celery would load it as
+# one of its own settings.
+BEAT_TENANT_REFRESH = int(env("BEAT_TENANT_REFRESH", default="300"))

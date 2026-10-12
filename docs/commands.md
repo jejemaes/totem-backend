@@ -18,7 +18,9 @@ Each tenant has its own database. `migrate` runs on the database of the settings
 
     docker-compose exec django ./manage.py tenant_migrate tenant_acme
 
-The database must already exist: this command creates no database.
+The database must already exist: this command creates no database. With `--all` instead of a name, every active tenant is migrated in turn: those of the catalog (`saas_base`) when `SAAS_DB_NAME` is set, otherwise the database of the settings. `--remove-stale-contenttypes` then deletes the content types of the removed models, without prompting.
+
+    docker-compose exec django ./manage.py tenant_migrate --all
 
 ### Filestore To Tenant Layout
 

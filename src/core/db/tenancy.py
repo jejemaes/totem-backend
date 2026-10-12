@@ -103,6 +103,30 @@ def use_database(db_name: str) -> t.Iterator[str]:
         _current_database.reset(token)
 
 
+def tenant_databases() -> list[str]:
+    """ Names of the databases of the active tenants.
+
+    Read from the catalog (`saas_base`) when the deployment has one, by raw
+    SQL: its schema belongs to the proxy, no model maps it yet. Otherwise the
+    single database of the settings. Not cached: a tenant added or deactivated
+    is seen by the next call.
+    """
+    from core.db.routers import SAAS_DB_ALIAS
+
+    if SAAS_DB_ALIAS not in settings.DATABASES:
+        return [default_database()]
+    with connections[SAAS_DB_ALIAS].cursor() as cursor:
+        cursor.execute("SELECT db_name FROM tenant WHERE active ORDER BY db_name")
+        names = [row[0] for row in cursor.fetchall()]
+    valid = []
+    for db_name in names:
+        if DATABASE_NAME_RE.match(db_name or ""):
+            valid.append(db_name)
+        else:
+            logger.warning("Skipped tenant with an invalid database name: %r", db_name)
+    return valid
+
+
 # ------------------------------------------------------
 # Connection Handler
 # ------------------------------------------------------
@@ -180,8 +204,12 @@ class TenantConnectionHandler(ConnectionHandler):
         return current_database() if alias == DEFAULT_DB_ALIAS else alias
 
     def _add_database(self, db_name):
-        if not DATABASE_NAME_RE.match(db_name):
-            # Same error as an unknown alias, as before this handler existed.
+        from core.db.routers import SAAS_DB_ALIAS
+
+        # A reserved alias left out of the settings (no catalog configured) is
+        # not a tenant database either: same error as an unknown alias, as
+        # before this handler existed.
+        if not DATABASE_NAME_RE.match(db_name) or db_name in (DEFAULT_DB_ALIAS, SAAS_DB_ALIAS):
             raise self.exception_class(f"The connection '{db_name}' doesn't exist.")
         with self._lock:
             if db_name in self.settings:
