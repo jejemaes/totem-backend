@@ -133,6 +133,10 @@ DATABASES = {
         # to get it would fail otherwise. One round trip per checkout.
         "CONN_HEALTH_CHECKS": True,
         "OPTIONS": {
+            # Reported to Postgres with each connection: names the container
+            # that sent a query, in `pg_stat_activity` and in the logs (`%a`
+            # of `log_line_prefix`). Set per container in docker-compose.yml.
+            "application_name": env("POSTGRES_APP_NAME", default="totem-backend"),
             # One pool per database (psycopg_pool), created on first use.
             "pool": {
                 # An idle database keeps no connection: with dozens of
