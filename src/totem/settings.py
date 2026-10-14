@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     "user",
     "website",
     "contact",
+    "saas",
     # `core` must be last since it autodiscover `api` module
     # of each app, and generate schema on the fly (all models and
     # other auto loading stuff).
@@ -126,6 +127,11 @@ DATABASES = {
         "PASSWORD": env("POSTGRES_PASSWORD"),
         "HOST": env("POSTGRES_HOST"),
         "PORT": env("POSTGRES_PORT"),
+        # A connection handed out by the pool is checked first: its session may
+        # have been terminated meanwhile (`tenant-migrate` with
+        # `kill_connections`, a restart of the server), and the first request
+        # to get it would fail otherwise. One round trip per checkout.
+        "CONN_HEALTH_CHECKS": True,
         "OPTIONS": {
             # One pool per database (psycopg_pool), created on first use.
             "pool": {
@@ -153,6 +159,10 @@ if env("SAAS_DB_NAME"):
     }
 
 DATABASE_ROUTERS = ["core.db.routers.TenantRouter"]
+
+# Key of the operator API creating the tenant databases (`X-Api-Key` header).
+# Unset: that API does not exist.
+SAAS_API_KEY = env("SAAS_API_KEY")
 
 
 # Cache

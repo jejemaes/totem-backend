@@ -4,7 +4,6 @@ from urllib.parse import urlencode
 
 from django.core.management import call_command
 from django.db import connection, connections
-from django.db.backends.postgresql.base import DatabaseWrapper
 from django.test import Client
 
 from core.db.tenancy import use_database
@@ -96,16 +95,24 @@ class TenantDatabaseTestMixin:
         super().tearDown()
 
 
+class ForgetDatabaseAliasesMixin:
+    """ Forget, after each test, the database aliases it created.
+
+    A request designating a database (`X-Tenant-Db`) creates its alias. Left
+    behind, it breaks the teardown of the test case: Django removes its
+    "queries not allowed" guards from every alias it iterates, but only put
+    them on the aliases that existed when the test case started.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(self.forget_new_aliases, connections.tenant_aliases())
+
+    def forget_new_aliases(self, known):
+        for alias in connections.tenant_aliases() - known:
+            forget_database(alias)
+
+
 def forget_database(db_name):
     """ Close the alias of a database and remove it, so that it can be dropped. """
-    conn = connections.get_initialized(db_name)
-    if conn is not None:
-        conn.close()
-        del connections[db_name]
-    pool = DatabaseWrapper._connection_pools.pop(db_name, None)
-    if pool is not None:
-        pool.close()
-    with connections._lock:
-        connections.settings.pop(db_name, None)
-        connections._tenant_aliases.discard(db_name)
-        connections._last_used.pop(db_name, None)
+    connections.forget_database(db_name)

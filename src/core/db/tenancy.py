@@ -63,6 +63,13 @@ def current_database() -> str:
     return _current_database.get() or default_database()
 
 
+def selected_database() -> str | None:
+    """ The database selected for the current unit of work (`use_database()`,
+    the `X-Tenant-Db` header of a request), or `None` when it runs on the
+    default database because none was. """
+    return _current_database.get()
+
+
 def validate_database_name(db_name: str) -> str:
     """ Check the name syntactically, and return it.
 
@@ -225,6 +232,23 @@ class TenantConnectionHandler(ConnectionHandler):
                 settings_dict["OPTIONS"]["pool"].setdefault("name", db_name)
             self.settings[db_name] = settings_dict
             self._tenant_aliases.add(db_name)
+
+    def forget_database(self, db_name):
+        """ Close the connection (of this thread) and the pool of a database,
+        and remove its alias, so that the database can be dropped. """
+        from django.db.backends.postgresql.base import DatabaseWrapper
+
+        conn = getattr(self._connections, db_name, None)
+        if conn is not None:
+            conn.close()
+            delattr(self._connections, db_name)
+        with self._lock:
+            pool = DatabaseWrapper._connection_pools.pop(db_name, None)
+            if pool is not None:
+                pool.close()
+            self.settings.pop(db_name, None)
+            self._tenant_aliases.discard(db_name)
+            self._last_used.pop(db_name, None)
 
     # Pool Eviction
 
