@@ -12,7 +12,9 @@ services:
       - POSTGRES_DB=postgres
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres
-    command: ["postgres", "-c", "log_statement=all"]
+    # Each statement prefixed with its database (%d) and the container that
+    # sent it (%a: `application_name`, see POSTGRES_APP_NAME).
+    command: ["postgres", "-c", "log_statement=all", "-c", "log_line_prefix=%m [%p] %u@%d %a "]
     networks:
       - totem-backend-network
 
@@ -29,9 +31,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - POSTGRES_NAME=postgres
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_APP_NAME=totem-backend
     env_file:
       - default.env
     tty: true
@@ -61,6 +61,8 @@ services:
     volumes:
       - ./src:/usr/src/app
       - totem-media:/usr/src/media
+    environment:
+      - POSTGRES_APP_NAME=totem-backend-worker
     env_file:
       - default.env
     depends_on:
@@ -82,6 +84,8 @@ services:
     restart: unless-stopped
     volumes:
       - ./src:/usr/src/app
+    environment:
+      - POSTGRES_APP_NAME=totem-backend-beat
     env_file:
       - default.env
     depends_on:

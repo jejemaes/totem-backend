@@ -139,6 +139,14 @@ class DefaultConnectionTestCase(TestCase):
         self.assertEqual(connections[DEFAULT_DB_ALIAS].alias, current)
         self.assertEqual(connection.alias, current)
 
+    def test_application_name_reported_to_postgres(self):
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT current_setting('application_name')")
+            self.assertEqual(
+                cursor.fetchone()[0],
+                settings.DATABASES[DEFAULT_DB_ALIAS]["OPTIONS"]["application_name"],
+            )
+
     def test_all_initialized_only_includes_current_connection(self):
         connection.ensure_connection()
         self.assertIn(connections[DEFAULT_DB_ALIAS], connections.all(initialized_only=True))
