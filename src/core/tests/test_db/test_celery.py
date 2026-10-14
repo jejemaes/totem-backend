@@ -207,7 +207,7 @@ class TenantMigrateAllTestCase(TenantDatabaseTestMixin, TransactionTestCase):
     def test_all_migrates_every_tenant(self):
         out = io.StringIO()
         with mock.patch(
-            "core.management.commands.tenant_migrate.tenant_databases",
+            "saas.management.commands.tenant_migrate.tenant_databases",
             return_value=[default_database(), self.tenant_db],
         ):
             call_command("tenant_migrate", "--all", "--remove-stale-contenttypes", stdout=out)
