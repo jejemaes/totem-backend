@@ -9,18 +9,18 @@ from account.services import AccountCategoryService
 from core.services import Environment
 from core.services.exceptions import ServiceValidationMultiError
 
-from .common import (
+from account.tests.common import (
     ACCOUNT_ID1,
     ACCOUNT_ID2,
     CATEGORY_BANK_ID,
     CATEGORY_GENERAL_ID,
     CATEGORY_SHOP_ID,
     MOVEMENT_ID2,
-    AccountServiceTestMixin,
+    AccountTestMixin,
 )
 
 
-class TestAccountCategoryService(AccountServiceTestMixin, TestCase):
+class TestAccountCategoryService(AccountTestMixin, TestCase):
 
     def setUp(self):
         super().setUp()

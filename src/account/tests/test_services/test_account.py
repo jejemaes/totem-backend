@@ -9,10 +9,10 @@ from account.services import AccountService
 from core.services import Environment
 from core.services.exceptions import ServiceValidationMultiError
 
-from .common import ACCOUNT_ID1, ACCOUNT_ID2, ACCOUNT_ID3, AccountServiceTestMixin
+from account.tests.common import ACCOUNT_ID1, ACCOUNT_ID2, ACCOUNT_ID3, AccountTestMixin
 
 
-class TestAccountService(AccountServiceTestMixin, TestCase):
+class TestAccountService(AccountTestMixin, TestCase):
 
     def setUp(self):
         super().setUp()
