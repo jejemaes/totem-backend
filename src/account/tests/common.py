@@ -20,9 +20,12 @@ MOVEMENT_ID2 = "01JM0000000000000000000002"
 MOVEMENT_ID3 = "01JM0000000000000000000003"
 
 
-class AccountServiceTestMixin:
-    """Two accounts, SHOP with three movements and BANK with none, ACCOUNT_ID3
-    inactive; one general category and one per account.
+class AccountTestMixin:
+    """Three accounts, SHOP with three movements, BANK and OLD (inactive) with
+    none; one general category, and one for each of SHOP and BANK.
+
+    Shared by the service and the API tests, which therefore describe the same
+    ledger.
 
     Created through the ORM, so the stored totals are refreshed by hand, as a
     reconciliation job would.
@@ -31,7 +34,7 @@ class AccountServiceTestMixin:
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        cls.user = User.objects.create(
+        cls.user = User.objects.create(  # the acting user of the service tests
             pk=USER_ID1,
             username="Tintin",
             password="MiL0u4ev3r",
