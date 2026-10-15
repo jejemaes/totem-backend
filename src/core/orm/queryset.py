@@ -47,6 +47,11 @@ def model_prepare_fetch_fields(model: Model, field_lookups: t.Dict[str, t.Dict[s
             prefetch_current_field = False
             # TODO: optimize with maybe check JOIN and select_related if so
             if field.one_to_one or field.many_to_one:
+                # The column holding the foreign key is on this row, and both the
+                # prefetch and a bare-pk serialization read it: deferred, it would
+                # be loaded by one query per instance.
+                if field.concrete:
+                    only_fields.add(fname)
                 if fval: # need fields of the ForeignKey
                     prefetch_current_field = True
             elif field.many_to_many or field.one_to_many:
