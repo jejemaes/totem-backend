@@ -13,7 +13,7 @@ from account.services import AccountMovementService
 from core.services import Environment
 from core.services.exceptions import ServiceValidationMultiError
 
-from .common import (
+from account.tests.common import (
     ACCOUNT_ID1,
     ACCOUNT_ID2,
     CATEGORY_BANK_ID,
@@ -22,7 +22,7 @@ from .common import (
     MOVEMENT_ID1,
     MOVEMENT_ID2,
     MOVEMENT_ID3,
-    AccountServiceTestMixin,
+    AccountTestMixin,
 )
 
 NOW = "2026-10-15 10:00:00"
@@ -31,7 +31,7 @@ FUTURE = "2026-10-16"
 
 
 @freeze_time(NOW)
-class TestAccountMovementService(AccountServiceTestMixin, TestCase):
+class TestAccountMovementService(AccountTestMixin, TestCase):
 
     def setUp(self):
         super().setUp()
