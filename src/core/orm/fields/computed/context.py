@@ -74,9 +74,7 @@ class RefreshComputedFieldsContext:
         for field in computed_fields(model, STORED).values():
             self._pending[field].update(pks)
 
-        for binding in bindings_for(model):
-            if binding.on_existence and not binding.is_local:
-                self._add(binding, self._roots(binding, pks, instances))
+        self._existence_changed(model, pks, instances)
 
     def modified(
         self,
@@ -97,54 +95,50 @@ class RefreshComputedFieldsContext:
         update_fields = set(update_fields)
         if not pks or not update_fields:
             return
-        # Several fields of one root model often watch through the same relation
-        # (`Order.total` and `Order.total_of_amounts`, both through `lines`): the
-        # roots are the same, resolve them once.
-        roots = {}
-        for binding in bindings_for(model):
-            if not binding.trigger_fields & update_fields:
-                continue
-            if before and not binding.membership_fields & update_fields:
-                continue
-            key = (binding.root_model, binding.path)
-            if key not in roots:
-                roots[key] = self._roots(binding, pks)
-            self._add(binding, roots[key])
+        self._resolve(
+            [
+                b for b in bindings_for(model)
+                if b.trigger_fields & update_fields
+                and (not before or b.membership_fields & update_fields)
+            ],
+            pks,
+        )
 
     def deleted(self, queryset: QuerySet) -> None:
         """The rows of `queryset` are about to be deleted. Call it *before* the delete:
         once they are gone, nothing leads back to their roots.
 
-        When the deletion can cascade to a watched model (known statically), the
+        When the deletion can, through `on_delete`, delete rows whose existence is
+        watched or rewrite a watched key (known statically, see `Cascade`), the
         cascade is collected up front -- the same collection django is about to make
-        -- so the rows deleted or nulled through `on_delete` count too.
+        -- so the rows deleted or nulled that way count too.
         """
         model = queryset.model
-        cascades = get_registry().cascades.get(model)
-        if not cascades and not any(b.on_existence and not b.is_local for b in bindings_for(model)):
+        cascade = get_registry().cascades.get(model)
+        if not cascade and not any(b.on_existence and not b.is_local for b in bindings_for(model)):
             return  # nothing watches these rows: not even their pks are read
         pks = list(queryset.values_list("pk", flat=True))
         if not pks:
             return
         self._existence_changed(model, pks)
 
-        if not cascades:
+        if not cascade:
             return
         collector = Collector(using=queryset.db or router.db_for_write(model), origin=queryset)
         collector.collect(model._base_manager.filter(pk__in=pks))
         for related_model, instances in collector.data.items():
-            if related_model in cascades:
+            if related_model in cascade.deleted:
                 # The rows asked for are already counted; a self-referencing
                 # cascade (a tree) adds more rows of the same model.
                 cascaded = {i.pk for i in instances} - (set(pks) if related_model is model else set())
                 self._existence_changed(related_model, list(cascaded))
         for fast_delete in collector.fast_deletes:
-            if fast_delete.model in cascades:
+            if fast_delete.model in cascade.deleted:
                 self._existence_changed(
                     fast_delete.model, list(fast_delete.values_list("pk", flat=True))
                 )
         for (field, _value), batches in collector.field_updates.items():
-            if field.model not in cascades:
+            if field not in cascade.nulled:
                 continue
             updated = []
             for batch in batches:
@@ -203,10 +197,27 @@ class RefreshComputedFieldsContext:
         if root_pks:
             self._pending[binding.field].update(root_pks)
 
-    def _existence_changed(self, model, pks) -> None:
-        for binding in bindings_for(model):
-            if binding.on_existence and not binding.is_local:
-                self._add(binding, self._roots(binding, pks))
+    def _existence_changed(self, model, pks, instances=None) -> None:
+        self._resolve(
+            [b for b in bindings_for(model) if b.on_existence and not b.is_local], pks, instances
+        )
+
+    def _resolve(self, bindings, pks, instances=None) -> None:
+        """Queue the fields of `bindings` on the roots of watched rows `pks`.
+
+        Several fields of one root model often watch through the same lookup
+        (`Order.total` and `Order.total_of_amounts`, both through `lines`;
+        `tag_count`, `tag_names` and `tag_popularity`, all through `tags`): the
+        roots are the same, so each distinct `(root model, path)` is resolved once.
+        Not merged into one binding at startup: each field keeps its own triggers,
+        and renaming a tag must not recompute what only counts tags.
+        """
+        roots = {}
+        for binding in bindings:
+            key = (binding.root_model, binding.path)
+            if key not in roots:
+                roots[key] = self._roots(binding, pks, instances)
+            self._add(binding, roots[key])
 
     @staticmethod
     def _roots(binding, pks, instances=None) -> t.Set:
