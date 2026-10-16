@@ -12,8 +12,11 @@
   Tag.order_count        a many-to-many declared on the other side
   Line.order_status      a field behind a forward foreign key
   Line.amount            local fields only: becomes a `GeneratedField`
+  Shipment.order_label   a field behind a forward foreign key, its rows' existence unwatched
 
-plus one virtual field of each computation strategy on `Order`.
+plus one virtual field of each computation strategy on `Order`. `Customer` carries
+no computed field, and nothing reads it: deleting one nulls `Order.customer` and
+deletes shipments, both watched models, and changes no stored value.
 """
 
 from collections import defaultdict
@@ -64,6 +67,10 @@ def most_present_category(value):
     )
 
 
+class Customer(models.Model):
+    name = models.CharField("Name", max_length=64)
+
+
 class Tag(models.Model):
     name = models.CharField("Name", max_length=64)
 
@@ -83,6 +90,11 @@ class Order(models.Model):
     label = models.CharField("Label", max_length=64, default="")
     status = models.CharField("Status", max_length=16, default="draft")
     tags = models.ManyToManyField(Tag, verbose_name="Tags", related_name="orders", blank=True)
+    # Read by no computed field.
+    customer = models.ForeignKey(
+        Customer, verbose_name="Customer", related_name="orders", null=True, blank=True,
+        on_delete=models.SET_NULL,
+    )
 
     label_upper = ComputedField(
         "Label (upper)",
@@ -208,6 +220,23 @@ class Line(models.Model):
         output_field=models.CharField(max_length=16),
         annotation_method=lambda: F("order__status"),
         depends_on=["order__status"],
+        stored=True,
+    )
+
+    objects = ComputedQuerySet.as_manager()
+
+
+class Shipment(models.Model):
+    customer = models.ForeignKey(
+        Customer, verbose_name="Customer", related_name="shipments", on_delete=models.CASCADE,
+    )
+    order = models.ForeignKey(Order, verbose_name="Order", related_name="shipments", on_delete=models.CASCADE)
+
+    order_label = ComputedField(
+        "Order label",
+        output_field=models.CharField(max_length=64),
+        annotation_method=lambda: F("order__label"),
+        depends_on=["order__label"],
         stored=True,
     )
 

@@ -69,6 +69,16 @@ class Binding:
         return self.path is None
 
 
+@dataclasses.dataclass(frozen=True)
+class Cascade:
+    """What deleting rows of one model changes through `on_delete`, among the writes
+    a binding watches."""
+    # Models whose rows a CASCADE deletes, and whose existence is watched.
+    deleted: t.FrozenSet[t.Type[models.Model]]
+    # Foreign keys a SET_NULL / SET_DEFAULT / SET() rewrites, and that are watched.
+    nulled: t.FrozenSet[models.Field]
+
+
 @dataclasses.dataclass
 class _Registry:
     bindings: t.Dict[t.Type[models.Model], t.List[Binding]]
@@ -76,8 +86,9 @@ class _Registry:
     # deeper than every stored computed field it reads, so refreshing by
     # increasing depth never reads a stale input.
     depth: t.Dict[models.Field, int]
-    # Model -> the watched models a deletion of its rows can cascade to.
-    cascades: t.Dict[t.Type[models.Model], t.FrozenSet[t.Type[models.Model]]]
+    # Model -> what a deletion of its rows can change, through `on_delete`, that
+    # some binding watches. A model missing from it deletes without collecting.
+    cascades: t.Dict[t.Type[models.Model], Cascade]
 
 
 _registry: t.Optional[_Registry] = None
@@ -113,7 +124,7 @@ def build_computed_field_dependency_registry() -> _Registry:
     _registry = _Registry(
         bindings=bindings,
         depth=_compute_depths(bindings),
-        cascades=_compute_cascades(set(bindings)),
+        cascades=_compute_cascades(bindings),
     )
     return _registry
 
@@ -309,35 +320,58 @@ def _compute_depths(bindings) -> t.Dict[models.Field, int]:
     return depth
 
 
-_CASCADING = (models.CASCADE, models.SET_NULL, models.SET_DEFAULT)
+_REWRITING = (models.SET_NULL, models.SET_DEFAULT)  # and SET(), told by its `deconstruct`
 
 
-def _compute_cascades(watched_models) -> t.Dict[t.Type[models.Model], t.FrozenSet]:
-    """For each model, the watched models a deletion can reach through `on_delete`.
+def _compute_cascades(bindings) -> t.Dict[t.Type[models.Model], Cascade]:
+    """For each model, what a deletion can change through `on_delete` that is watched.
 
     Static, so that a deletion pays for collecting its cascade up front only when it
-    can actually reach a watched model -- the common case pays nothing.
+    can actually change a watched value -- the common case pays nothing. Reaching a
+    model that carries watched fields is not enough: a key no computed field reads
+    may be nulled, rows whose existence nothing watches may be deleted, and
+    collecting them finds nothing to refresh. So an edge counts only for what
+    `RefreshComputedFieldsContext.deleted()` would act upon:
+
+    * a CASCADE, when the existence of the deleted rows is watched (`on_existence`).
+      It is followed further either way: the rows it deletes cascade in turn.
+    * a SET_NULL / SET_DEFAULT / SET(), when the rewritten key is a trigger field.
+      The rows stay, nothing is followed.
     """
-    def reachable(model, seen):
+    existence = {
+        model for model, model_bindings in bindings.items()
+        if any(b.on_existence and not b.is_local for b in model_bindings)
+    }
+    triggers = {
+        model: frozenset().union(*(b.trigger_fields for b in model_bindings))
+        for model, model_bindings in bindings.items()
+    }
+
+    def collect(model, visited, deleted, nulled):
         for rel in model._meta.related_objects:
             if not (rel.one_to_many or rel.one_to_one):
                 continue
             on_delete = getattr(rel, "on_delete", None)
-            if on_delete not in _CASCADING and not getattr(on_delete, "deconstruct", None):
-                continue  # PROTECT / RESTRICT / DO_NOTHING: nothing changes
             related = rel.related_model
-            if related in seen:
-                continue
-            seen.add(related)
             if on_delete is models.CASCADE:
-                reachable(related, seen)
-        return seen
+                if related in visited:
+                    continue
+                visited.add(related)
+                if related in existence:
+                    deleted.add(related)
+                collect(related, visited, deleted, nulled)
+            elif on_delete in _REWRITING or getattr(on_delete, "deconstruct", None):
+                # SET_NULL, SET_DEFAULT, or SET(): the rows stay, their key changes.
+                if _field_names(rel.field) & triggers.get(related, frozenset()):
+                    nulled.add(rel.field)
+            # PROTECT / RESTRICT / DO_NOTHING: nothing changes
 
     cascades = {}
     for model in django_apps.get_models():
-        reached = frozenset(reachable(model, set()) & watched_models)
-        if reached:
-            cascades[model] = reached
+        deleted, nulled = set(), set()
+        collect(model, set(), deleted, nulled)
+        if deleted or nulled:
+            cascades[model] = Cascade(deleted=frozenset(deleted), nulled=frozenset(nulled))
     return cascades
 
 
@@ -349,12 +383,13 @@ def computed_fields_to_refresh(instance, changed_fields=None, created=False):
     dependency on the model is assumed touched. `created=True` (or a deletion,
     which should be passed as such) triggers existence dependencies as well.
 
-    Returns `{(root_model, root_pk): {field_name, ...}}`. One query per relation
-    dependency whose root cannot be read off the instance itself.
+    Returns `{(root_model, root_pk): {field_name, ...}}`. One query per distinct
+    relation lookup whose root cannot be read off the instance itself.
     """
     model = type(instance)
     changed = None if changed_fields is None else set(changed_fields)
     result = defaultdict(set)
+    roots = {}  # (root model, path) -> root pks: one query per distinct lookup
 
     if created:
         for name in computed_fields(model, STORED):
@@ -371,13 +406,15 @@ def computed_fields_to_refresh(instance, changed_fields=None, created=False):
             or binding.trigger_fields & changed
         ):
             continue
-        if binding.fk_attname:
-            root_pks = [getattr(instance, binding.fk_attname, None)]
-        else:
-            root_pks = binding.root_model._base_manager.filter(
-                **{f"{binding.path}__in": [instance.pk]}
-            ).values_list("pk", flat=True)
-        for root_pk in root_pks:
+        key = (binding.root_model, binding.path)
+        if key not in roots:
+            if binding.fk_attname:
+                roots[key] = [getattr(instance, binding.fk_attname, None)]
+            else:
+                roots[key] = list(binding.root_model._base_manager.filter(
+                    **{f"{binding.path}__in": [instance.pk]}
+                ).values_list("pk", flat=True))
+        for root_pk in roots[key]:
             if root_pk is not None:
                 result[(binding.root_model, root_pk)].add(binding.field.name)
 

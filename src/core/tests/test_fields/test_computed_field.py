@@ -25,7 +25,7 @@ from core.orm.fields.computed.dependency import (
 )
 from core.orm.fields.computed.field import is_row_local
 from core.orm.fields.computed.utils import as_subquery
-from core.tests.computed_app.models import Category, Line, Order, Product, Tag
+from core.tests.computed_app.models import Category, Customer, Line, Order, Product, Shipment, Tag
 
 
 class TestRegistries(SimpleTestCase):
@@ -232,8 +232,14 @@ class TestDependencyParsing(SimpleTestCase):
 
     def test_cascades(self):
         cascades = get_registry().cascades
-        self.assertIn(Line, cascades[Product])
+        # deleted lines leave their order: `line_count` watches their existence
+        self.assertEqual(cascades[Product].deleted, {Line})
+        # a nulled `Product.category` changes `top_category`
+        self.assertEqual(cascades[Category].nulled, {Product._meta.get_field("category")})
         self.assertNotIn(Tag, cascades)  # deleting a tag reaches no watched row through on_delete
+        # Orders are nulled and shipments deleted, both models carrying watched
+        # fields: but no binding reads `Order.customer`, nor a shipment's existence.
+        self.assertNotIn(Customer, cascades)
 
 
 class ComputedTestCase(TestCase):
@@ -380,6 +386,56 @@ class TestContext(ComputedTestCase):
             ctx.deleted(queryset)
             queryset.delete()  # cascades to one line
         self.assertEqual(self.fetch(Order, order.pk).line_count, 1)
+
+    def test_deleting_what_nothing_reads_costs_nothing(self):
+        """No cascade collected, not even the pks read, for a write no field reads."""
+        (order,) = self.create_orders("o")
+        (customer,) = Customer.objects.bulk_create([Customer(name="c")])
+        Order.objects.filter(pk=order.pk).update(customer=customer)
+        (shipment,) = Shipment.objects.bulk_create([Shipment(customer=customer, order=order)])
+        with RefreshComputedFieldsContext() as ctx:
+            queryset = Customer.objects.filter(pk=customer.pk)
+            with self.assertNumQueries(0):
+                ctx.deleted(queryset)
+            queryset.delete()  # nulls the order, deletes the shipment
+        order = self.fetch(Order, order.pk)
+        self.assertIsNone(order.customer_id)
+        self.assertEqual(order.label_upper, "O")
+        self.assertFalse(Shipment.objects.filter(pk=shipment.pk).exists())
+
+    def test_fields_sharing_a_lookup_resolve_it_once(self):
+        """`tag_count`, `tag_names` and `tag_popularity` all reach a tag through `tags`."""
+        first, second = self.create_orders("a", "b")
+        red, blue = Tag.objects.bulk_create([Tag(name="red"), Tag(name="blue")])
+        first.tags.set([red, blue])
+        second.tags.set([red])
+        Tag.objects.refresh_computed()
+        Order.objects.refresh_computed()
+        with RefreshComputedFieldsContext() as ctx:
+            queryset = Tag.objects.filter(pk=red.pk)
+            # the pks of the tags, then their orders: once, not once per field
+            with self.assertNumQueries(2):
+                ctx.deleted(queryset)
+            queryset.delete()
+        first, second = self.fetch(Order, first.pk), self.fetch(Order, second.pk)
+        self.assertEqual((first.tag_count, first.tag_names, first.tag_popularity), (1, "blue", 1))
+        self.assertEqual((second.tag_count, second.tag_names, second.tag_popularity), (0, "", 0))
+
+    def test_created_rows_resolve_each_lookup_once(self):
+        (order,) = self.create_orders("o")
+        (tag,) = Tag.objects.bulk_create([Tag(name="red")])
+        order.tags.set([tag])  # before `created()`, as the service writes them
+        with CaptureQueriesContext(connection) as queries:
+            with RefreshComputedFieldsContext() as ctx:
+                ctx.created([tag])
+        # Once for the three fields watching the new tag's existence, not three
+        # times; and once more when its refreshed `order_count`, a write of its
+        # own, makes `tag_popularity` stale.
+        lookups = [q for q in queries if '"computed_app_order_tags"' in q["sql"] and "DISTINCT" in q["sql"]]
+        self.assertEqual(len(lookups), 2)
+        order = self.fetch(Order, order.pk)
+        self.assertEqual((order.tag_count, order.tag_names, order.tag_popularity), (1, "red", 1))
+        self.assertEqual(self.fetch(Tag, tag.pk).order_count, 1)
 
     def test_nesting_flushes_once_at_the_outermost_exit(self):
         (order,) = self.create_orders("o")

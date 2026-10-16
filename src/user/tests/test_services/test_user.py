@@ -244,19 +244,19 @@ class TestUserService(TestCase):
 
     @parameterized.expand(
         [
-            # A deleted user nulls `Budget.user`, and `Budget` carries stored
-            # computed fields: the cascade is collected once more up front, to find
-            # the rows they would go stale on. None reads `user`, so it finds none.
-            ({"username": "Tintin"}, 24, 1),  # simple row, no relations deleted
-            ({"id": USER_ID2, "username": "Tintin"}, 6, 0),  #  no matching row
+            # One more than before budgets existed: django's own UPDATE nulling
+            # `Budget.user`. No computed field reads it, so the computed context
+            # collects nothing up front.
+            ({"username": "Tintin"}, 17, 1),  # simple row, no relations deleted
+            ({"id": USER_ID2, "username": "Tintin"}, 5, 0),  #  no matching row
             (
                 {"username": "notfound"},
-                6,
+                5,
                 0,
             ),  # user nonexistent --> no row deleted
             (
                 {"id": USER_ID2},
-                24,
+                17,
                 1,
             ),  # delete with m2m relations, relations should be deleted too
         ]

@@ -53,15 +53,15 @@ class TestAccountCategoryService(AccountTestMixin, TestCase):
 
     @parameterized.expand(
         [
-            ({"name": "Food"}, 8),
-            ({"name": "Food", "color": 3, "account": ACCOUNT_ID1}, 9),
-            ({"name": "Stock", "account": ACCOUNT_ID2}, 9),  # another account's name
-            ({"name": "Stock"}, 8),  # an account's name, as a general category
+            ({"name": "Food"}, 6),
+            ({"name": "Food", "color": 3, "account": ACCOUNT_ID1}, 7),
+            ({"name": "Stock", "account": ACCOUNT_ID2}, 7),  # another account's name
+            ({"name": "Stock"}, 6),  # an account's name, as a general category
         ]
     )
     def test_create_valid(self, payload, query_count):
-        # Three of them look for the budget positions of the new category, one per
-        # dependency path starting at it: the computed context does not merge them.
+        # One of them looks for the budget positions of the new category: once for
+        # every position field reaching it through `category`.
         data = AccountCategoryCreateSchema(**payload)
         with self.assertNumQueries(query_count):
             instances = async_to_sync(self.service.create)([data])
