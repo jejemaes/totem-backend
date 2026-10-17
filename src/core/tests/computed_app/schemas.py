@@ -1,5 +1,8 @@
 from typing import List, Optional
 
+from ninja import FilterSchema
+from pydantic import Field
+
 from core.schemas import ModelSchema
 from core.tests.computed_app.models import Category, Line, Order, Product, Tag
 
@@ -29,6 +32,33 @@ class ProductUpdateSchema(ModelSchema):
         model = Product
         fields = ["name", "category"]
         optional_fields = "__all__"
+
+
+class CategoryDisplayNameSchema(ModelSchema):
+    class Meta:
+        model = Category
+        fields = ["id", "name"]
+
+
+class ProductSchema(ModelSchema):
+    # Annotated, or the relation would be read lazily, from the async route.
+    category: Optional[CategoryDisplayNameSchema] = None
+
+    class Meta:
+        model = Product
+        fields = ["id", "name", "category"]
+
+
+class ProductBodySchema(ModelSchema):
+    """The body of the nested route: the category comes from its path."""
+
+    class Meta:
+        model = Product
+        fields = ["name"]
+
+
+class ProductFilterSchema(FilterSchema):
+    name: Optional[str] = Field(None, q="name__icontains")
 
 
 class TagCreateSchema(ModelSchema):

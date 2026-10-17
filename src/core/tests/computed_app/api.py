@@ -8,13 +8,16 @@ from totem.api import api_v1
 
 from .schemas import (
     LineCreateSchema,
+    ProductBodySchema,
+    ProductFilterSchema,
+    ProductSchema,
     LineSchema,
     LineUpdateSchema,
     OrderCreateSchema,
     OrderSchema,
     OrderUpdateSchema,
 )
-from .services import LineService, OrderService
+from .services import LineService, OrderService, ProductService
 
 
 class OrderController(ModelController):
@@ -52,3 +55,23 @@ class LineController(ModelController):
     create_response_schema = LineSchema
     update_request_schema = LineUpdateSchema
     update_response_schema = LineSchema
+
+
+class CategoryProductController(ModelController):
+    """Nested: the products of the category named by the path, which a creation
+    files them under."""
+
+    api = api_v1
+    service = ProductService
+    path_prefix = "/computed-app/categories/{category_id}/products/"
+    auth = [OAuthTokenAuthentication()]
+
+    list_response_schema: Schema = List[ProductSchema]
+    list_filter_schema = ProductFilterSchema
+    list_ordering_fields = ["name"]
+    list_ordering_default_fields = ["name"]
+    retrieve_response_schema: Schema = ProductSchema
+    create_request_schema = ProductBodySchema
+    create_response_schema = ProductSchema
+    update_request_schema = ProductBodySchema
+    update_response_schema = ProductSchema

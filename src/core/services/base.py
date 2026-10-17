@@ -358,8 +358,10 @@ class ServiceBase(Service, t.Generic[ModelT]):
     def _apply_filters(
         self,
         queryset: models.QuerySet,
-        filters: t.Union[BaseModel, FilterSchema, t.Dict],
+        filters: t.Union[BaseModel, FilterSchema, t.Dict, models.Q],
     ) -> models.QuerySet:
+        if isinstance(filters, models.Q):
+            return queryset.filter(filters)
         if isinstance(filters, FilterSchema):
             return filters.filter(queryset)
         elif isinstance(filters, BaseModel):

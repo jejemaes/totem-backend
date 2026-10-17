@@ -174,7 +174,7 @@ class ReadMixin:
 
     async def read(
         self,
-        filters: t.Union[BaseModel, FilterSchema, t.Dict] = None,
+        filters: t.Union[BaseModel, FilterSchema, t.Dict, models.Q] = None,
         ordering: t.List[str] = None,
         fields: t.List[str] = None,
     ) -> models.QuerySet:
@@ -183,6 +183,8 @@ class ReadMixin:
                 - a pydantic model with the filter fields defined, the model_dump of the pydantic model will be used as kwargs for filtering the queryset
                 - a ninja FilterSchema instance, the `filter` method of the FilterSchema will be used to filter the queryset
                 - a dict with the filter fields and values, the dict will be used as lookups for filtering the queryset
+                - a `Q`, applied as is: what a caller merging several sources of filters
+                  passes, so that they reach the database as one `WHERE`
             :param ordering: list of ORM field names to order by (`-` prefix for descending), see `ServiceBase.apply_ordering`
             :param fields: list of fields to select (model field name or relational lookup `my_fk_field__field_on_relation`),
                 should be a subset of the model fields, see `ServiceBase.apply_query_fields`.

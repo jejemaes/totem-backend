@@ -12,6 +12,8 @@ Scope: the schemas declared through the CRUD mixin attributes
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db import models
 from django.db.models.constants import LOOKUP_SEP
+from ninja.signature.utils import get_path_param_names
+from ninja.utils import normalize_path
 from pydantic import AliasChoices
 
 from core.orm.fields.computed.utils import VIRTUAL, computed_fields, get_computed_field
@@ -55,6 +57,7 @@ def validate_controllers():
         errors.extend(_check_request_schemas(controller))
         errors.extend(_check_response_schemas(controller))
         errors.extend(_check_derived_fields(controller))
+        errors.extend(_check_path_parameters(controller))
 
     if errors:
         raise ImproperlyConfigured("\n".join(errors))
@@ -67,6 +70,48 @@ def _iter_controllers(base=BaseModelController, seen=None):
             seen.add(subclass)
             yield subclass
         yield from _iter_controllers(subclass, seen)
+
+
+def _check_path_parameters(controller):
+    """The parameters of a nested prefix (`/budgets/{budget_id}/lines/`) name the
+    record the resources belong to, and nothing else may.
+
+    * Each must be a field of the model: the routes filter on it as an ORM lookup,
+      and a creation sets the field it resolves to (`budget_id` sets `budget`).
+    * The list filters must not declare it under either name: ANDed with the path,
+      such a filter could only empty the list, while the client would believe it
+      chooses the record.
+    * The create body must not carry the field: the path sets it, and a body value
+      would be silently overridden.
+    """
+    params = get_path_param_names(normalize_path(controller.path_prefix))
+    if not params:
+        return
+    model = controller.model
+    filter_schema = getattr(controller, "list_filter_schema", None)
+    create_schema = getattr(controller, "create_request_schema", None)
+    for param in params:
+        try:
+            field_name = model._meta.get_field(param).name
+        except FieldDoesNotExist:
+            yield (
+                f"{controller.__name__}: the path parameter {param!r} of "
+                f"{controller.path_prefix!r} is no field of {model.__name__}."
+            )
+            continue
+        names = {param, field_name}
+        if filter_schema is not None and names & set(filter_schema.model_fields):
+            yield (
+                f"{controller.__name__}: {filter_schema.__name__} declares "
+                f"{sorted(names & set(filter_schema.model_fields))}, which the path "
+                f"parameter {param!r} already decides."
+            )
+        if create_schema is not None and names & set(create_schema.model_fields):
+            yield (
+                f"{controller.__name__}: {create_schema.__name__} declares "
+                f"{sorted(names & set(create_schema.model_fields))}, which the path "
+                f"parameter {param!r} sets."
+            )
 
 
 def _check_request_schemas(controller):
