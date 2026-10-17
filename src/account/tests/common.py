@@ -158,6 +158,29 @@ class BudgetTestMixin(AccountTestMixin):
     def grant(self, user, role_pk):
         user.roles.set([self.roles[role_pk]])
 
+    def token_as(self, role_pk):
+        """A token of `user` (Tintin) after granting them `role_pk`. In that order:
+        changing the roles of a user invalidates their tokens."""
+        self.grant(self.user, role_pk)
+        return self.create_token(self.user, f"tintin_{role_pk.lower()}_token").token
+
+    @classmethod
+    def create_token(cls, user, token):
+        """A token of `user` holding every scope: what it reaches is then decided by
+        the access rules of the roles granted to the user alone."""
+        from datetime import timedelta
+
+        from oauth2_provider.scopes import get_scopes_backend
+
+        from oauth.models import AccessToken
+
+        return AccessToken.objects.create(
+            user=user,
+            token=token,
+            scope=" ".join(get_scopes_backend().get_all_scopes()),
+            expires=timezone.now() + timedelta(days=365),
+        )
+
     def assertPositionTotals(self, position_id, planned, practical):
         position = BudgetPosition.objects.get(pk=position_id)
         self.assertEqual(
