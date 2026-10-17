@@ -48,14 +48,15 @@ class TestAccountService(AccountTestMixin, TestCase):
 
     @parameterized.expand(
         [
-            ({"code": "SHOP2", "name": "Shop 2"}, 10),
-            ({"code": "SHOP-2_B", "name": "Shop 2", "description": "Second shop", "active": False}, 10),
+            ({"code": "SHOP2", "name": "Shop 2"}, 12),
+            ({"code": "SHOP-2_B", "name": "Shop 2", "description": "Second shop", "active": False}, 12),
         ]
     )
     def test_create_valid(self, payload, query_count):
         data = AccountCreateSchema(**payload)
         # The insert, then the refresh of its stored totals: one grouped read per
-        # total, one UPDATE, and the read back of the refreshed values.
+        # total, one UPDATE, and the read back of the refreshed values. Plus two
+        # lookups of the budget positions reaching the account, none for a new one.
         with self.assertNumQueries(query_count):
             instances = async_to_sync(self.service.create)([data])
 

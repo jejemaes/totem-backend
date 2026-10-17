@@ -85,9 +85,10 @@ class TestAccountMovementService(AccountTestMixin, TestCase):
 
     def test_create_query_count(self):
         data = AccountMovementCreateSchema(**self._payload(category=CATEGORY_GENERAL_ID))
-        # Resolution of the account and the category, the insert, then the refresh
-        # of the stored totals of that one account.
-        with self.assertNumQueries(11):
+        # Resolution of the account and the category, the insert, the lookup of the
+        # budget positions of the category, then the refresh of the stored totals of
+        # that one account.
+        with self.assertNumQueries(12):
             async_to_sync(self.service.create)([data])
 
     def test_create_many_refreshes_each_account_once(self):
@@ -178,7 +179,7 @@ class TestAccountMovementService(AccountTestMixin, TestCase):
         [
             # Only what the totals read refreshes them: a label costs no recompute.
             ("label only", {"name": "Big sale"}, 5),
-            ("amount", {"amount": "200"}, 10),
+            ("amount", {"amount": "200"}, 11),
         ]
     )
     def test_update_query_count(self, dummy, payload, query_count):
