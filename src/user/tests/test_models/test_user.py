@@ -82,8 +82,10 @@ class TestUserModel(TestCase):
         self, mock
     ):
         def side_effect_assert(sender=None, user_qs=None):
-            ids = [str(pk) for pk in user_qs.values_list('id', flat=True)]
-            self.assertEqual([USER_ID1, USER_ID2], ids)
+            # A set: the queryset has no ordering, so its rows come in whatever
+            # order the table holds them, which earlier tests leave behind.
+            ids = {str(pk) for pk in user_qs.values_list('id', flat=True)}
+            self.assertEqual({USER_ID1, USER_ID2}, ids)
 
         mock.side_effect = side_effect_assert
 
