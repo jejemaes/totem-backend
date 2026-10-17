@@ -5,7 +5,7 @@ from types import FunctionType
 
 import pydantic
 from django.core.exceptions import ImproperlyConfigured, PermissionDenied
-from django.db.models import Model, QuerySet
+from django.db.models import Model, Q, QuerySet
 from django.http import HttpRequest
 from django.conf import settings
 from ninja import Body, FilterSchema, NinjaAPI, Path, Query, Router, Schema
@@ -118,6 +118,24 @@ class BaseModelController(BaseController):
         super().__init_subclass__()
 
     # Route Helpers
+
+    @classmethod
+    def path_prefix_fields(cls) -> t.Dict[str, str]:
+        """`{path parameter: model field name}` of the parameters of `path_prefix`.
+
+        A nested controller (`/budgets/{budget_id}/lines/`) names the record its
+        resources belong to in its prefix. The parameter is an ORM lookup on the
+        model (`budget_id`), which is what the routes filter on, and resolves to the
+        field a creation sets (`budget`). Checked at startup by
+        `validate_controllers`; an unknown parameter maps to itself here.
+        """
+        fields = {}
+        for param in get_path_param_names(normalize_path(cls.path_prefix)):
+            try:
+                fields[param] = cls.model._meta.get_field(param).name
+            except Exception:  # pylint: disable=broad-except
+                fields[param] = param
+        return fields
 
     @classmethod
     def method_to_route_function(
@@ -325,7 +343,18 @@ class ListModelControllerMixin:
         query_parameters: t.Optional[FilterSchema],
         **kwargs: t.Any,
     ) -> QuerySet:
-        # TODO : handle path_parameters
+        # The parameters of a nested prefix restrict the list to the record they
+        # name. Merged with the query filters into one `Q`, so that they reach the
+        # database as one `WHERE`: two chained `.filter()` mean the same on a local
+        # foreign key, but join twice across a multi-valued relation. ANDed, so the
+        # path can only narrow: a query filter cannot reach outside it.
+        filters = query_parameters
+        path_lookups = path_parameters.model_dump() if path_parameters else {}
+        if path_lookups:
+            filters = Q(**path_lookups)
+            if query_parameters is not None:
+                filters &= query_parameters.get_filter_expression()
+
         ordering_fields = None
         ordering_parameters = kwargs.pop("ordering_fields", None)
         if ordering_parameters:
@@ -342,7 +371,7 @@ class ListModelControllerMixin:
             )
 
         return await request.env.get(self.service).read(
-            query_parameters, ordering=ordering_fields, fields=fields
+            filters, ordering=ordering_fields, fields=fields
         )
 
 
@@ -453,7 +482,8 @@ class CreateModelControllerMixin:
             # The body ninja already validated is passed straight through: it is the
             # service's input schema, so there is nothing to convert and nothing to
             # validate twice.
-            instances = await service.create([request_body])
+            data = self._create_input_from_path(service, request_body, path_parameters)
+            instances = await service.create([data])
             if not instances:
                 return None
             # Refetched rather than serialized as built: the in-memory instance only
@@ -472,6 +502,29 @@ class CreateModelControllerMixin:
             raise self.service_validation_error_to_api_error(
                 exc, self.create_response_schema, loc_path=["body", "request_body"]
             )
+
+
+    def _create_input_from_path(self, service, request_body, path_parameters):
+        """The input of the service: the body, completed with the record a nested
+        prefix names (`budget_id` sets `budget`), which the body does not carry.
+
+        Built with `model_construct`, not validated again: the body was validated
+        against the very field definitions the service schema shares, and the path
+        parameters by their own schema; the relation they name is resolved -- and
+        access-checked -- by the service. Validating anew would also break on a
+        field renamed with a strict `validation_alias`, which accepts only its
+        public name.
+        """
+        path_values = path_parameters.model_dump() if path_parameters else {}
+        if not path_values:
+            return request_body
+        path_fields = self.path_prefix_fields()
+        values = {name: getattr(request_body, name) for name in type(request_body).model_fields}
+        values.update({path_fields[param]: value for param, value in path_values.items()})
+        return service.create_schema.model_construct(
+            _fields_set=set(request_body.model_fields_set) | {path_fields[p] for p in path_values},
+            **values,
+        )
 
 
 class UpdateModelControllerMixin:
