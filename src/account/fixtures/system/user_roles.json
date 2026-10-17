@@ -16,5 +16,32 @@
         "permissions": "[\"totem.account.read\", \"totem.accountcategory.read\", \"totem.accountmovement.read\"]",
         "rules": "[]"
     }
+},
+{
+    "model": "user.userrole",
+    "pk": "BUDGET_READER",
+    "fields": {
+        "name": "Reader",
+        "permissions": "[\"totem.budget.read\"]",
+        "rules": "[\"budget_manage_all\", \"budget_position_manage_all\", \"budget_line_manage_all\"]"
+    }
+},
+{
+    "model": "user.userrole",
+    "pk": "BUDGET_USER",
+    "fields": {
+        "name": "User",
+        "permissions": "[\"totem.budget.create\", \"totem.budget.read\", \"totem.budget.update\", \"totem.budget.delete\"]",
+        "rules": "[\"budget_manage_own\", \"budget_position_manage_own\", \"budget_line_manage_own\"]"
+    }
+},
+{
+    "model": "user.userrole",
+    "pk": "BUDGET_ADMINISTRATOR",
+    "fields": {
+        "name": "Administrator",
+        "permissions": "[\"totem.budget.create\", \"totem.budget.read\", \"totem.budget.update\", \"totem.budget.delete\"]",
+        "rules": "[\"budget_manage_all\", \"budget_position_manage_all\", \"budget_line_manage_all\"]"
+    }
 }
 ]

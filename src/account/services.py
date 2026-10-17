@@ -1,7 +1,14 @@
 from django.utils import timezone
 
 from core.services import CreateMixin, DeleteMixin, ReadMixin, ServiceBase, UpdateMixin
-from account.models import Account, AccountCategory, AccountMovement
+from account.models import (
+    Account,
+    AccountCategory,
+    AccountMovement,
+    Budget,
+    BudgetLine,
+    BudgetPosition,
+)
 from account.schemas import (
     AccountCategoryCreateSchema,
     AccountCategoryUpdateSchema,
@@ -9,6 +16,12 @@ from account.schemas import (
     AccountMovementCreateSchema,
     AccountMovementUpdateSchema,
     AccountUpdateSchema,
+    BudgetCreateSchema,
+    BudgetLineCreateSchema,
+    BudgetLineUpdateSchema,
+    BudgetPositionCreateSchema,
+    BudgetPositionUpdateSchema,
+    BudgetUpdateSchema,
 )
 
 
@@ -68,3 +81,73 @@ class AccountMovementService(
 
         if error:
             raise error
+
+
+class BudgetService(
+    CreateMixin[BudgetCreateSchema],
+    ReadMixin,
+    UpdateMixin[BudgetUpdateSchema],
+    DeleteMixin,
+    ServiceBase[Budget],
+):
+
+    async def create(self, data):
+        """A budget whose user is not given is the acting user's.
+
+        Here, before the values are extracted: only the input schema still tells a
+        user left out from one explicitly set to null, which stays null. Resolved
+        afterwards through the user service like any relation, so it is checked
+        the same way. Without it, a user whose access rule only reaches their own
+        budgets could not create one without naming themselves.
+        """
+        if self.user is not None:
+            data = [
+                item if "user" in item.model_fields_set
+                else item.model_copy(update={"user": self.user.pk})
+                for item in data
+            ]
+        return await super().create(data)
+
+
+class BudgetPositionService(
+    CreateMixin[BudgetPositionCreateSchema],
+    ReadMixin,
+    UpdateMixin[BudgetPositionUpdateSchema],
+    DeleteMixin,
+    ServiceBase[BudgetPosition],
+):
+
+    def validate_data(self, data, instance):
+        # The rule of the movements: a position on a category of another account
+        # could never read a practical amount, no movement of the budget's account
+        # can carry it.
+        category = data.get("category")
+        if category is None or category.account_id is None:
+            return
+        account_id = data["budget"].account_id if instance is None else instance.budget.account_id
+        if category.account_id != account_id:
+            raise self.ValidationError(
+                "This category belongs to another account than the budget's.", key="category"
+            )
+
+
+class BudgetLineService(
+    CreateMixin[BudgetLineCreateSchema],
+    ReadMixin,
+    UpdateMixin[BudgetLineUpdateSchema],
+    DeleteMixin,
+    ServiceBase[BudgetLine],
+):
+    """`budget` is derived from the position by the QuerySet. It is still part of the
+    create schema, so that a caller naming a budget -- the nested API route does --
+    gets an error rather than a line silently filed under another one."""
+
+    def validate_data(self, data, instance):
+        position = data.get("position")
+        if position is None:
+            return
+        budget_id = data["budget"].pk if instance is None else instance.budget_id
+        if position.budget_id != budget_id:
+            raise self.ValidationError(
+                "This position belongs to another budget.", key="position"
+            )
