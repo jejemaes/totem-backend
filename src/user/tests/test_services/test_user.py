@@ -244,16 +244,19 @@ class TestUserService(TestCase):
 
     @parameterized.expand(
         [
-            ({"username": "Tintin"}, 16, 1),  # simple row, no relations deleted
-            ({"id": USER_ID2, "username": "Tintin"}, 5, 0),  #  no matching row
+            # A deleted user nulls `Budget.user`, and `Budget` carries stored
+            # computed fields: the cascade is collected once more up front, to find
+            # the rows they would go stale on. None reads `user`, so it finds none.
+            ({"username": "Tintin"}, 24, 1),  # simple row, no relations deleted
+            ({"id": USER_ID2, "username": "Tintin"}, 6, 0),  #  no matching row
             (
                 {"username": "notfound"},
-                5,
+                6,
                 0,
             ),  # user nonexistent --> no row deleted
             (
                 {"id": USER_ID2},
-                16,
+                24,
                 1,
             ),  # delete with m2m relations, relations should be deleted too
         ]

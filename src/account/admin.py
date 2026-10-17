@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from account.models import Account, AccountCategory, AccountMovement
+from account.models import Account, AccountCategory, AccountMovement, Budget, BudgetLine, BudgetPosition
 
 # The admin writes through `Model.save()`, around the service layer: the business
 # rules of `account.services` are not applied here, and the stored totals of an
@@ -27,3 +27,26 @@ class AccountMovementAdmin(admin.ModelAdmin):
     list_filter = ("account", "category")
     search_fields = ("name", "reference")
     date_hierarchy = "date"
+
+
+class BudgetPositionInline(admin.TabularInline):
+    model = BudgetPosition
+    fields = ("sequence", "category", "total_planned", "total_practical")
+    readonly_fields = ("total_planned", "total_practical")
+    extra = 0
+
+
+@admin.register(Budget)
+class BudgetAdmin(admin.ModelAdmin):
+    list_display = ("name", "account", "user", "active", "total_planned_amount", "total_practical_amount")
+    list_filter = ("active", "account")
+    search_fields = ("name",)
+    readonly_fields = ("total_planned_amount", "total_practical_amount")
+    inlines = [BudgetPositionInline]
+
+
+@admin.register(BudgetLine)
+class BudgetLineAdmin(admin.ModelAdmin):
+    list_display = ("name", "position", "budget", "planned_amount", "sequence")
+    list_filter = ("budget",)
+    search_fields = ("name",)
