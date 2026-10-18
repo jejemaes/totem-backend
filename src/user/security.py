@@ -1,3 +1,4 @@
+from django.core.exceptions import ImproperlyConfigured
 from django.db.models import Model, Q
 
 from core.api.permission import BasePermission, check_permissions
@@ -118,6 +119,21 @@ class TokenHasScopePermissionModelControllerMixin:
         permissions = cls._get_action_permissions("delete")
         if permissions:
             decorators.append(check_permissions([TokenHasScopePermission(permissions)]))
+        return decorators
+
+    @classmethod
+    def _resequence_function_decorators(cls):
+        # Required rather than defaulted: a key missing from `permission_map` means
+        # no scope at all, the trap `DELETE` already sets for `ModelController`.
+        if not cls._get_action_permissions("resequence"):
+            raise ImproperlyConfigured(
+                f"{cls.__name__} registers /resequence/ but its permission_map has no "
+                f"'resequence' scopes: the route would require none."
+            )
+        decorators = super()._resequence_function_decorators()
+        decorators.append(
+            check_permissions([TokenHasScopePermission(cls._get_action_permissions("resequence"))])
+        )
         return decorators
 
     @classmethod

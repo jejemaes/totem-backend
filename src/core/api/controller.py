@@ -5,7 +5,7 @@ from types import FunctionType
 
 import pydantic
 from django.core.exceptions import ImproperlyConfigured, PermissionDenied
-from django.db.models import Model, Q, QuerySet
+from django.db.models import IntegerField, Model, Q, QuerySet
 from django.http import HttpRequest
 from django.conf import settings
 from ninja import Body, FilterSchema, NinjaAPI, Path, Query, Router, Schema
@@ -14,7 +14,9 @@ from ninja.security.base import AuthBase
 from ninja.signature.utils import get_path_param_names
 from ninja.utils import normalize_path
 from pydantic import BaseModel
+from ulid import ULID
 
+from core.orm.fields import ULIDField
 from core.schemas.utils import (
     _unwrap_list_schema,
     extract_orm_fields_from_specs,
@@ -651,6 +653,101 @@ class DeleteModelControllerMixin:
                 status_code=404,
                 message=f"{self.model._meta.verbose_name.capitalize()} not found.",
             )
+
+
+class ResequenceModelControllerMixin:
+    """`POST /resequence/`: number records after the order of the pks of the body,
+    through the service's `resequence`. Answers 201 with no body.
+
+    The body is `{"ids": [...], "offset": n}`: the pks in the order wanted, and
+    where the first one sits in the whole list (0 by default), so that a page of a
+    list can be reordered on its own.
+
+    Put it *before* `ModelController` in the bases. After it, the method resolution
+    order puts it behind `BaseController`, whose `add_routes_to` does not chain:
+    the route is never registered. And routes are registered in the order the
+    mixins set them on the class: `/resequence/` must come before `/{id}/`, or
+    django matches `resequence` as an id, against a path that has no POST. Either
+    way POST /resequence/ answers 405, so `validate_controllers` refuses both.
+    """
+
+    @classmethod
+    def add_routes_to(cls, router) -> None:
+        if cls.model:
+            # Registered whenever the mixin is: one inherited but not registered
+            # breaks the import (see the route ordering in `BaseController`).
+            if not hasattr(cls.service, "resequence"):
+                raise ImproperlyConfigured(
+                    f"{cls.__name__} inherits ResequenceModelControllerMixin, but "
+                    f"{cls.service.__name__} provides no `resequence` (ResequenceMixin)."
+                )
+            cls.method_to_route_function(
+                view_func=cls.resequence,
+                path="/resequence/",
+                methods=["POST"],
+                response={201: None},
+                operation_id=f"{cls.model._meta.verbose_name.lower()}Resequence",
+                summary=f"Resequence {cls.model._meta.verbose_name_plural.capitalize()}",
+                decorators=cls._resequence_function_decorators(),
+                view_wrapper=cls._annotate_resequence_view_function,
+                tags=[cls.model._meta.verbose_name],
+            )
+
+        super().add_routes_to(router)
+
+    @classmethod
+    def _resequence_function_decorators(cls):
+        return []
+
+    @classmethod
+    def _resequence_pk_type(cls):
+        """The type of a pk in the body, after the pk field: a ULID is checked for
+        its format and documented as such. `resequence` converts each one with the
+        pk field, and reports one it cannot find."""
+        pk_field = cls.model._meta.pk
+        if isinstance(pk_field, ULIDField):
+            return ULID
+        if isinstance(pk_field, IntegerField):
+            return int
+        return str
+
+    @classmethod
+    def _annotate_resequence_view_function(
+        cls, view_func: t.Callable[..., t.Any], path: str
+    ) -> t.Callable[..., t.Any]:
+        annotations = t.cast(FunctionType, view_func).__annotations__
+        annotations["path_parameters"] = t.Annotated[
+            cls._get_default_path_schema(path, view_func),
+            Path(default=None, include_in_schema=False),
+        ]
+        # A schema per model: its name tells the resources apart in the OpenAPI
+        # document, and the pk type differs from one to the other.
+        annotations["request_body"] = t.Annotated[
+            pydantic.create_model(
+                f"{cls.model.__name__}ResequenceSchema",
+                __base__=Schema,
+                ids=(t.List[cls._resequence_pk_type()], ...),
+                offset=(int, pydantic.Field(0, ge=0)),
+            ),
+            Body(),
+        ]
+        return view_func
+
+    async def resequence(
+        self,
+        request: HttpRequest,
+        path_parameters: t.Optional[BaseModel],
+        request_body: BaseModel,
+    ):
+        filters = path_parameters.model_dump() if path_parameters else {}
+        try:
+            await request.env.get(self.service).resequence(
+                request_body.ids, filters, offset=request_body.offset
+            )
+        except ServiceValidationMultiError as exc:
+            # Where ninja puts the errors of the same body: one `loc` shape.
+            raise self.service_validation_error_to_api_error(exc, loc_path=["body", "request_body"])
+        return 201, None
 
 
 class ModelController(

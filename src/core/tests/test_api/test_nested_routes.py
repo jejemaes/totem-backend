@@ -1,5 +1,6 @@
 import json
 
+from django.core.exceptions import ImproperlyConfigured
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
@@ -82,7 +83,7 @@ class NestedRoutesAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.json(),
-            {"id": self.hammer.pk, "name": "Hammer", "category": {"id": self.tools.pk, "name": "Tools"}},
+            {"id": self.hammer.pk, "name": "Hammer", "rank": 0, "category": {"id": self.tools.pk, "name": "Tools"}},
         )
 
     @parameterized.expand([("GET", None), ("PATCH", {"name": "Hacked"}), ("DELETE", None)])
@@ -163,3 +164,146 @@ class PathParametersValidationTest(TestCase):
 
         self.assertEqual(len(errors), 1)
         self.assertIn(message, errors[0])
+
+
+class ResequenceRouteAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
+    """`POST /categories/{category_id}/products/resequence/`, on
+    `CategoryProductController`, which numbers `Product.rank`."""
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        cls.tools, cls.food = Category.objects.bulk_create([Category(name="Tools"), Category(name="Food")])
+        cls.hammer, cls.saw, cls.bread = Product.objects.bulk_create([
+            Product(name="Hammer", category=cls.tools),
+            Product(name="Saw", category=cls.tools),
+            Product(name="Bread", category=cls.food),
+        ])
+        cls.url = f"/api/v1/computed-app/categories/{cls.tools.pk}/products/resequence/"
+
+    def request(self, data, url=None):
+        return self.do_api_request(
+            url or self.url, "POST", self.user_access_token_frodon.token, data=json.dumps(data)
+        )
+
+    def test_response(self):
+        # Registered before `/{id}/`: not taken for the id `resequence`, which would
+        # find no POST there and answer 405.
+        response = self.request({"ids": [self.saw.pk, self.hammer.pk]})
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.content, b"")
+        self.assertEqual(
+            dict(Product.objects.values_list("name", "rank")), {"Saw": 1, "Hammer": 2, "Bread": 0}
+        )
+
+    def test_retrieve_is_not_shadowed(self):
+        response = self.do_api_request(
+            f"/api/v1/computed-app/categories/{self.tools.pk}/products/{self.hammer.pk}/",
+            "GET", self.user_access_token_frodon.token,
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_offset(self):
+        response = self.request({"ids": [self.saw.pk, self.hammer.pk], "offset": 20})
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(
+            dict(Product.objects.values_list("name", "rank")), {"Saw": 21, "Hammer": 22, "Bread": 0}
+        )
+
+    @parameterized.expand(
+        [
+            ("another category's", lambda t: {"ids": [t.saw.pk, t.bread.pk]}, "ids"),
+            ("unknown", lambda t: {"ids": [t.saw.pk, 999]}, "ids"),
+            ("repeated", lambda t: {"ids": [t.saw.pk, t.saw.pk]}, "ids"),
+            ("not pks", lambda t: {"ids": ["saw"]}, "ids"),
+            ("no ids", lambda t: {"offset": 0}, "ids"),
+            # The body is an object now: a bare list is no more accepted.
+            ("a bare list", lambda t: [t.saw.pk], None),
+            ("negative offset", lambda t: {"ids": [t.saw.pk], "offset": -1}, "offset"),
+            ("offset not an integer", lambda t: {"ids": [t.saw.pk], "offset": "first"}, "offset"),
+        ]
+    )
+    def test_invalid(self, dummy, data, field):
+        response = self.request(data(self))
+
+        self.assertEqual(response.status_code, 422)
+        if field:
+            self.assertEqual(response.json()["detail"][0]["loc"][:3], ["body", "request_body", field])
+        self.assertEqual(set(Product.objects.values_list("rank", flat=True)), {0})
+
+
+class ResequenceDeclarationTest(TestCase):
+
+    def test_service_without_resequence(self):
+        from core.api import ModelController, ResequenceModelControllerMixin
+        from core.tests.computed_app.services import CategoryService
+
+        with self.assertRaises(ImproperlyConfigured) as ctx:
+            class CategoryResequenceController(ResequenceModelControllerMixin, ModelController):  # pylint: disable=unused-variable
+                service = CategoryService
+
+        self.assertIn("CategoryService provides no `resequence`", str(ctx.exception))
+
+    @parameterized.expand(
+        [
+            ("well placed", ["resequence", "retrieve", "update", "delete"], None),
+            # Behind `BaseController` in the MRO: never registered.
+            ("never registered", ["retrieve", "update", "delete"], "registers no /resequence/ route"),
+            ("after /{id}/", ["retrieve", "resequence", "update"], "registered after the /{id}/ routes (retrieve)"),
+        ]
+    )
+    def test_route_order(self, dummy, routes, message):
+        """On stand-ins: the routes a controller registers land in its `__dict__` in
+        registration order. Not a real controller, which `validate_controllers`
+        would meet again in later tests."""
+        from core.api import ResequenceModelControllerMixin
+        from core.api.validation import _check_resequence_route
+
+        controller = type(
+            "StandInController", (ResequenceModelControllerMixin,),
+            {"model": Product, **{name: lambda self: None for name in routes}},
+        )
+        errors = list(_check_resequence_route(controller))
+
+        if message is None:
+            self.assertEqual(errors, [])
+        else:
+            self.assertEqual(len(errors), 1)
+            self.assertIn(message, errors[0])
+
+    def test_real_controller_is_well_placed(self):
+        from core.api.validation import _check_resequence_route
+        from core.tests.computed_app.api import CategoryProductController
+
+        self.assertEqual(list(_check_resequence_route(CategoryProductController)), [])
+
+    @parameterized.expand(
+        [
+            ("a ULID pk", "Order", "ULID"),
+            ("an integer pk", "Product", "int"),
+        ]
+    )
+    def test_pk_type(self, dummy, model_name, type_name):
+        from core.api import ResequenceModelControllerMixin
+        from core.tests.computed_app import models
+
+        controller = type("StandInController", (ResequenceModelControllerMixin,), {"model": getattr(models, model_name)})
+
+        self.assertEqual(controller._resequence_pk_type().__name__, type_name)
+
+    def test_permission_map_requires_resequence(self):
+        from core.api import ResequenceModelControllerMixin
+        from user.security import TokenHasScopePermissionModelControllerMixin
+
+        controller = type(
+            "StandInController",
+            (TokenHasScopePermissionModelControllerMixin, ResequenceModelControllerMixin),
+            {"permission_map": {"update": ["totem.contact.update"]}},
+        )
+        with self.assertRaises(ImproperlyConfigured) as ctx:
+            controller._resequence_function_decorators()
+
+        self.assertIn("no 'resequence' scopes", str(ctx.exception))

@@ -2,7 +2,7 @@ from typing import List
 
 from ninja import Schema
 
-from core.api import ModelController
+from core.api import ModelController, ResequenceModelControllerMixin
 from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 
@@ -57,9 +57,9 @@ class LineController(ModelController):
     update_response_schema = LineSchema
 
 
-class CategoryProductController(ModelController):
+class CategoryProductController(ResequenceModelControllerMixin, ModelController):
     """Nested: the products of the category named by the path, which a creation
-    files them under."""
+    files them under, and which `/resequence/` numbers."""
 
     api = api_v1
     service = ProductService
