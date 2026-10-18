@@ -8,6 +8,7 @@ from core.services import (
     CreateMixin,
     DeleteMixin,
     ReadMixin,
+    ResequenceMixin,
     ServiceBase,
     UpdateMixin,
 )
@@ -76,6 +77,7 @@ class MenuService(
     ReadMixin,
     UpdateMixin[MenuUpdateSchema],
     DeleteMixin,
+    ResequenceMixin,
     ServiceBase[Menu],
 ):
     """`parent_path` upkeep lives on `MenuQuerySet`.

@@ -2,7 +2,7 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
-from core.api import ModelController
+from core.api import ModelController, ResequenceModelControllerMixin
 from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
@@ -17,7 +17,9 @@ from account.services import BudgetLineService
 from .budgets import BUDGET_PERMISSION_MAP
 
 
-class BudgetLineController(TokenHasScopePermissionModelControllerMixin, ModelController):
+class BudgetLineController(
+    TokenHasScopePermissionModelControllerMixin, ResequenceModelControllerMixin, ModelController
+):
     """Nested under its budget, like the positions: the stored `BudgetLine.budget`
     is what the path filters on."""
 

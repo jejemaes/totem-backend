@@ -19,6 +19,8 @@ BUDGET_PERMISSION_MAP = {
     "create": ["totem.budget.create"],
     "update": ["totem.budget.update"],
     "delete": ["totem.budget.delete"],
+    # Numbering the positions or lines of a budget is updating them.
+    "resequence": ["totem.budget.update"],
 }
 
 
