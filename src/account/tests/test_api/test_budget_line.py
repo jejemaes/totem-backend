@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 
 from django.test import TestCase
@@ -19,7 +20,7 @@ from account.tests.common import (
 from core.testing import APITestCaseMixin
 from user.tests.test_api.common import CommonTestMixin
 
-LINE_ID4 = "01JL0000000000000000000099"
+LINE_ID4 = "01JN0000000000000000000099"
 
 LINE_FIELDS = ["id", "budget", "name", "sequence", "position", "planned_amount"]
 
@@ -34,6 +35,7 @@ class BudgetLineAPITest(BudgetTestMixin, CommonTestMixin, APITestCaseMixin, Test
         cls.url = f"/api/v1/accounting/budget/{BUDGET_ID1}/lines/"
         cls.url_detail = f"{cls.url}{LINE_RENT_ID}/"
         cls.url_other = f"/api/v1/accounting/budget/{BUDGET_ID2}/lines/"
+        cls.url_resequence = f"{cls.url}resequence/"
         cls.payload_create = {"name": "Deposit", "sequence": 5, "position": POSITION_RENT_ID, "planned_amount": "-500.00"}
         cls.payload_update = {"name": "Rent (revised)", "sequence": 1, "position": POSITION_STOCK_ID, "planned_amount": "-1100.00"}
 
@@ -311,6 +313,108 @@ class BudgetLineAPITest(BudgetTestMixin, CommonTestMixin, APITestCaseMixin, Test
         response = self.do_api_request(self.url_detail, "DELETE", self.user_access_token_frodon.token)
 
         self.assertEqual(response.status_code, status_code)
+
+    # ------------------------------------------
+    # Resequence Operation
+    # ------------------------------------------
+
+    def test_resequence_response(self):
+        response = self.do_api_request(
+            self.url_resequence, "POST", self.user_access_token_frodon.token,
+            data=json.dumps({"ids": [LINE_STOCK_ID, LINE_RENT_ID]}),
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.content, b"")
+
+    @parameterized.expand(
+        [
+            ("complete list", {"ids": [LINE_STOCK_ID, LINE_RENT_ID]}, 201, None),
+            ("partial list", {"ids": [LINE_STOCK_ID]}, 201, None),
+            ("empty list", {"ids": []}, 201, None),
+            ("offset 0", {"ids": [LINE_STOCK_ID, LINE_RENT_ID], "offset": 0}, 201, None),
+            ("offset", {"ids": [LINE_STOCK_ID, LINE_RENT_ID], "offset": 20}, 201, None),
+            ("unknown pk", {"ids": [LINE_STOCK_ID, LINE_ID4]}, 422, "ids"),
+            ("not a ulid", {"ids": [LINE_STOCK_ID, "not-a-ulid"]}, 422, "ids"),
+            ("repeated pk", {"ids": [LINE_STOCK_ID, LINE_STOCK_ID]}, 422, "ids"),
+            ("another budget's", {"ids": [LINE_STOCK_ID, LINE_FEES_ID]}, 422, "ids"),
+            ("no ids", {"offset": 0}, 422, "ids"),
+            ("negative offset", {"ids": [LINE_STOCK_ID], "offset": -1}, 422, "offset"),
+            ("offset not an integer", {"ids": [LINE_STOCK_ID], "offset": "first"}, 422, "offset"),
+            # An object: neither a bare list nor anything else.
+            ("a bare list", [LINE_STOCK_ID, LINE_RENT_ID], 422, None),
+            ("a string", LINE_STOCK_ID, 422, None),
+        ]
+    )
+    def test_resequence_request_validation(self, dummy, payload, status_code, field):
+        response = self.do_api_request(
+            self.url_resequence, "POST", self.user_access_token_frodon.token, data=json.dumps(payload)
+        )
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 422:
+            if field:
+                self.assertEqual(response.json()["detail"][0]["loc"][:3], ["body", "request_body", field])
+            self.assertEqual(self.sequences(), {LINE_RENT_ID: 10, LINE_STOCK_ID: 10, LINE_FEES_ID: 10})
+
+    @parameterized.expand(
+        [
+            ("reversed", {"ids": [LINE_STOCK_ID, LINE_RENT_ID]}, {LINE_STOCK_ID: 1, LINE_RENT_ID: 2}),
+            # Only the records given are numbered.
+            ("partial", {"ids": [LINE_STOCK_ID]}, {LINE_STOCK_ID: 1, LINE_RENT_ID: 10}),
+            # A page of a list: numbered where it sits in the whole list.
+            ("page of a list", {"ids": [LINE_STOCK_ID, LINE_RENT_ID], "offset": 20}, {LINE_STOCK_ID: 21, LINE_RENT_ID: 22}),
+        ]
+    )
+    def test_resequence_request(self, dummy, payload, expected):
+        self.do_api_request(self.url_resequence, "POST", self.user_access_token_frodon.token, data=json.dumps(payload))
+
+        # Another budget's position is untouched.
+        self.assertEqual(self.sequences(), {**expected, LINE_FEES_ID: 10})
+
+    @parameterized.expand(
+        [
+            ("totem.budget.update", 201),
+            ("totem.budget.read", 403),
+            ("totem.budget.create", 403),
+            ("totem.budget.delete", 403),
+        ]
+    )
+    def test_resequence_access_rights(self, scope, status_code):
+        self.user_access_token_frodon.scope = scope
+        self.user_access_token_frodon.save(update_fields=["scope"])
+
+        response = self.do_api_request(
+            self.url_resequence, "POST", self.user_access_token_frodon.token,
+            data=json.dumps({"ids": [LINE_STOCK_ID, LINE_RENT_ID]}),
+        )
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code != 201:
+            self.assertEqual(response.json(), {"detail": ["You do not have permission to perform this action."]})
+
+    @parameterized.expand(
+        [
+            ("BUDGET_USER", BUDGET_ID1, [LINE_STOCK_ID, LINE_RENT_ID], 201),
+            # Out of scope, another user's lines read as unknown.
+            ("BUDGET_USER", BUDGET_ID2, [LINE_FEES_ID], 422),
+            ("BUDGET_ADMINISTRATOR", BUDGET_ID2, [LINE_FEES_ID], 201),
+        ]
+    )
+    def test_resequence_access_rules(self, role, budget_id, pks, status_code):
+        before = self.sequences()
+
+        response = self.do_api_request(
+            f"/api/v1/accounting/budget/{budget_id}/lines/resequence/", "POST",
+            self.token_as(role), data=json.dumps({"ids": pks}),
+        )
+
+        self.assertEqual(response.status_code, status_code)
+        expected = {**before, **{pk: index + 1 for index, pk in enumerate(pks)}} if status_code == 201 else before
+        self.assertEqual(self.sequences(), expected)
+
+    def sequences(self):
+        return dict(BudgetLine.objects.values_list("id", "sequence"))
 
     # ------------------------------------------
     # Utils

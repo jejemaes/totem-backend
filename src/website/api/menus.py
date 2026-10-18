@@ -2,7 +2,7 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
-from core.api import ModelController
+from core.api import ModelController, ResequenceModelControllerMixin
 from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
@@ -15,7 +15,9 @@ from website.schemas import (
 from website.services import MenuService
 
 
-class MenuController(TokenHasScopePermissionModelControllerMixin, ModelController):
+class MenuController(
+    TokenHasScopePermissionModelControllerMixin, ResequenceModelControllerMixin, ModelController
+):
     api = api_v1
     service = MenuService
 
@@ -26,6 +28,8 @@ class MenuController(TokenHasScopePermissionModelControllerMixin, ModelControlle
         "create": ["totem.websitemenu.create"],
         "update": ["totem.websitemenu.update"],
         "delete": ["totem.websitemenu.delete"],
+        # Numbering menu items is updating them.
+        "resequence": ["totem.websitemenu.update"],
     }
 
     list_response_schema: Schema = List[MenuSchema]

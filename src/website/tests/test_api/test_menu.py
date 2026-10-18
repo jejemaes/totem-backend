@@ -1,11 +1,28 @@
 import json
+from datetime import timedelta
+from pathlib import Path
 
+from django.core import serializers
 from django.test import TestCase
+from django.utils import timezone
 from parameterized import parameterized
 
 from core.testing import APITestCaseMixin
+from oauth.models import AccessToken
 from user.tests.test_api.common import CommonTestMixin
 from website.models import Menu, Page
+
+ROLES_FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "system" / "user_roles.json"
+
+
+def load_website_role(pk):
+    """A role as `populate` loads it, read from the fixture of the app."""
+    for obj in serializers.deserialize("json", ROLES_FIXTURE.read_text()):
+        if obj.object.pk == pk:
+            obj.save()
+            return obj.object
+    raise LookupError(pk)
+
 
 ALL_SCOPES = (
     "totem.websitemenu.create totem.websitemenu.read "
@@ -355,6 +372,108 @@ class MenuAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
 
         self.assertIn(response.status_code, (200, 204))
         self.assertFalse(Menu.objects.filter(pk=self.camp.pk).exists())
+
+    # ------------------------------------------
+    # Resequence Operation
+    # ------------------------------------------
+
+    def resequence(self, payload, token=None):
+        return self.do_api_request(
+            f"{self.url}resequence/", "POST", token or self.token, data=json.dumps(payload)
+        )
+
+    def sequences(self):
+        return {menu.name: menu.sequence for menu in Menu.objects.all()}
+
+    def test_resequence_response(self):
+        response = self.resequence({"ids": [self.camp.pk, self.hike.pk]})
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.content, b"")
+
+    @parameterized.expand(
+        [
+            ("complete list", lambda t: {"ids": [t.camp.pk, t.hike.pk]}, 201, None),
+            ("partial list", lambda t: {"ids": [t.camp.pk]}, 201, None),
+            ("empty list", lambda t: {"ids": []}, 201, None),
+            ("offset 0", lambda t: {"ids": [t.camp.pk], "offset": 0}, 201, None),
+            ("offset", lambda t: {"ids": [t.camp.pk], "offset": 20}, 201, None),
+            ("unknown pk", lambda t: {"ids": [t.camp.pk, "01JZ0000000000000000000099"]}, 422, "ids"),
+            ("not a ulid", lambda t: {"ids": [t.camp.pk, "not-a-ulid"]}, 422, "ids"),
+            ("repeated pk", lambda t: {"ids": [t.camp.pk, t.camp.pk]}, 422, "ids"),
+            ("no ids", lambda t: {"offset": 0}, 422, "ids"),
+            ("negative offset", lambda t: {"ids": [t.camp.pk], "offset": -1}, 422, "offset"),
+            ("offset not an integer", lambda t: {"ids": [t.camp.pk], "offset": "first"}, 422, "offset"),
+            # An object: neither a bare list nor anything else.
+            ("a bare list", lambda t: [t.camp.pk], 422, None),
+            ("a string", lambda t: t.camp.pk, 422, None),
+        ]
+    )
+    def test_resequence_request_validation(self, dummy, payload, status_code, field):
+        before = self.sequences()
+
+        response = self.resequence(payload(self))
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 422:
+            if field:
+                self.assertEqual(response.json()["detail"][0]["loc"][:3], ["body", "request_body", field])
+            self.assertEqual(self.sequences(), before)
+
+    @parameterized.expand(
+        [
+            # Across levels: the sequence orders siblings, numbering is the client's call.
+            ("siblings", lambda t: {"ids": [t.camp.pk, t.hike.pk]}, {"Camp": 1, "Hike": 2}),
+            ("partial", lambda t: {"ids": [t.activities.pk]}, {"Activities": 1}),
+            # A page of a list: numbered where it sits in the whole list.
+            ("page of a list", lambda t: {"ids": [t.camp.pk, t.hike.pk], "offset": 20}, {"Camp": 21, "Hike": 22}),
+        ]
+    )
+    def test_resequence_request(self, dummy, payload, expected):
+        before = self.sequences()
+
+        self.resequence(payload(self))
+
+        # The others are untouched.
+        self.assertEqual(self.sequences(), {**before, **expected})
+
+    @parameterized.expand(
+        [
+            ("totem.websitemenu.update", 201),
+            ("totem.websitemenu.read", 403),
+            ("totem.websitemenu.create", 403),
+            ("totem.websitemenu.delete", 403),
+        ]
+    )
+    def test_resequence_access_rights(self, scope, status_code):
+        self.user_access_token_frodon.scope = scope
+        self.user_access_token_frodon.save(update_fields=["scope"])
+
+        response = self.resequence({"ids": [self.camp.pk, self.hike.pk]})
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code != 201:
+            self.assertEqual(response.json(), {"detail": ["You do not have permission to perform this action."]})
+
+    @parameterized.expand(
+        [
+            # No access rule on menus: both roles reach every item.
+            ("WEBSITE_USER", 201),
+            ("WEBSITE_ADMIN", 201),
+        ]
+    )
+    def test_resequence_access_rules(self, role, status_code):
+        self.user_frodon.roles.set([load_website_role(role)])
+        # After the roles: changing them invalidates the user's tokens.
+        token = AccessToken.objects.create(
+            user=self.user_frodon, token=f"frodon_{role.lower()}", scope=ALL_SCOPES,
+            expires=timezone.now() + timedelta(days=1),
+        ).token
+
+        response = self.resequence({"ids": [self.camp.pk, self.hike.pk]}, token=token)
+
+        self.assertEqual(response.status_code, status_code)
+        self.assertEqual((self.sequences()["Camp"], self.sequences()["Hike"]), (1, 2))
 
     # ------------------------------------------
     # Permissions

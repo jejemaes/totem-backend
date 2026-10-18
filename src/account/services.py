@@ -1,6 +1,6 @@
 from django.utils import timezone
 
-from core.services import CreateMixin, DeleteMixin, ReadMixin, ServiceBase, UpdateMixin
+from core.services import CreateMixin, DeleteMixin, ReadMixin, ResequenceMixin, ServiceBase, UpdateMixin
 from account.models import (
     Account,
     AccountCategory,
@@ -114,6 +114,7 @@ class BudgetPositionService(
     ReadMixin,
     UpdateMixin[BudgetPositionUpdateSchema],
     DeleteMixin,
+    ResequenceMixin,
     ServiceBase[BudgetPosition],
 ):
 
@@ -136,6 +137,7 @@ class BudgetLineService(
     ReadMixin,
     UpdateMixin[BudgetLineUpdateSchema],
     DeleteMixin,
+    ResequenceMixin,
     ServiceBase[BudgetLine],
 ):
     """`budget` is derived from the position by the QuerySet. It is still part of the

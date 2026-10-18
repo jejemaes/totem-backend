@@ -2,7 +2,7 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
-from core.api import ModelController
+from core.api import ModelController, ResequenceModelControllerMixin
 from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
@@ -17,9 +17,12 @@ from account.services import BudgetPositionService
 from .budgets import BUDGET_PERMISSION_MAP
 
 
-class BudgetPositionController(TokenHasScopePermissionModelControllerMixin, ModelController):
+class BudgetPositionController(
+    TokenHasScopePermissionModelControllerMixin, ResequenceModelControllerMixin, ModelController
+):
     """Nested under its budget: every route stays within the budget of the path,
-    and a creation files the position under it."""
+    a creation files the position under it, and `/resequence/` numbers the
+    positions of that budget only."""
 
     api = api_v1
     service = BudgetPositionService
