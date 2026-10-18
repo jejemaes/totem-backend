@@ -1,5 +1,5 @@
 from core.services import ServiceBase
-from core.services.mixins import CreateMixin, DeleteMixin, ReadMixin, UpdateMixin
+from core.services.mixins import CreateMixin, DeleteMixin, ReadMixin, ResequenceMixin, UpdateMixin
 
 from .models import Category, Line, Order, Product, Tag
 from .schemas import (
@@ -25,9 +25,9 @@ class CategoryService(
 
 class ProductService(
     CreateMixin[ProductCreateSchema], ReadMixin, UpdateMixin[ProductUpdateSchema], DeleteMixin,
-    ServiceBase[Product],
+    ResequenceMixin, ServiceBase[Product],
 ):
-    pass
+    sequence_field = "rank"
 
 
 class TagService(

@@ -18,8 +18,9 @@ import typing as t
 
 from asgiref.sync import sync_to_async
 from django.core import exceptions
+from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db import models, transaction
-from django.db.models import ManyToManyField
+from django.db.models import Case, IntegerField, ManyToManyField, Value, When
 from django.db.utils import DatabaseError
 from ninja import FilterSchema
 from pydantic import BaseModel
@@ -419,3 +420,95 @@ class DeleteMixin:
 
     def _delete_postprocess(self):
         pass
+
+
+class ResequenceMixin:
+    """Provides `resequence`: number records after the order of a list of their pks.
+
+    The record at index `i` gets `offset + i + 1` in `sequence_field`: with an
+    offset, a page of a list is numbered where it sits in the whole list (the
+    second page of 20 gets 21..40), leaving the other pages alone. A partial list
+    is allowed -- only the records given are numbered -- but the list is all or
+    nothing: one pk unknown, out of reach or repeated, and nothing is written.
+
+    Reached through the *update* access rules: numbering a record is updating it.
+    """
+
+    sequence_field: t.ClassVar[str] = "sequence"
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        model = getattr(cls, "model", None)
+        if model is None:
+            return
+        # At declaration, so a typo fails at startup rather than on a request.
+        try:
+            model._meta.get_field(cls.sequence_field)
+        except FieldDoesNotExist:
+            raise ImproperlyConfigured(
+                f"{cls.__name__}.sequence_field is {cls.sequence_field!r}, which is no "
+                f"field of {model.__name__}."
+            )
+
+    async def resequence(self, pks: t.List, filters=None, offset: int = 0) -> int:
+        """Number the records of `pks` `offset + 1`..`offset + n` in that order, among
+        those the acting user may update and `filters` -- a nested route's path --
+        selects.
+
+        Returns how many were numbered. Raises `ServiceValidationMultiError` on
+        `ids` for a pk repeated, ill-typed, unknown or out of reach, telling none of
+        those apart: distinguishing them would leak the existence of records out of
+        the caller's scope, as `RelationNotFound` would.
+        """
+        if not pks:
+            return 0
+
+        pk_field = self.model._meta.pk
+        coerced = []
+        invalid = []
+        for value in pks:
+            try:
+                coerced.append(pk_field.to_python(value))
+            except exceptions.ValidationError:
+                invalid.append(value)
+        duplicates = {pk for pk in coerced if coerced.count(pk) > 1}
+        if duplicates:
+            raise ServiceValidationMultiError(
+                {"ids": ServiceValidationError(
+                    f"Repeated value(s): {','.join(sorted(str(pk) for pk in duplicates))}", key="ids"
+                )},
+                code="invalid_data",
+            )
+
+        queryset = await self.apply_access_rules(self.get_queryset(), "update")
+        if filters:
+            queryset = self._apply_filters(queryset, filters)
+        queryset = queryset.filter(pk__in=coerced)
+
+        return await sync_to_async(self._resequence, thread_sensitive=True)(
+            queryset, coerced, invalid, offset
+        )
+
+    def _resequence(self, queryset: models.QuerySet, pks: t.List, invalid: t.List, offset: int) -> int:
+        with transaction.atomic(), self.env.computed_refresh() as computed:
+            found = set(queryset.values_list("pk", flat=True))
+            missing = invalid + [pk for pk in pks if pk not in found]
+            if missing:
+                raise ServiceValidationMultiError(
+                    {"ids": ServiceValidationError(
+                        f"Invalid value(s): {','.join(str(pk) for pk in missing)}", key="ids"
+                    )},
+                    code="invalid_data",
+                )
+
+            # One UPDATE whatever the number of records, through the QuerySet: its
+            # overrides (an `update_date` stamped, say) apply as to any update.
+            queryset.update(**{
+                self.sequence_field: Case(
+                    *(When(pk=pk, then=Value(offset + index + 1)) for index, pk in enumerate(pks)),
+                    output_field=IntegerField(),
+                )
+            })
+            # A stored computed field may read the sequence.
+            computed.modified(self.model, pks, {self.sequence_field})
+        return len(pks)

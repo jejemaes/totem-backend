@@ -43,6 +43,8 @@ class Category(models.Model):
 
 class Product(models.Model):
     name = models.CharField("Name", max_length=64)
+    # Not named `sequence`: exercises `ResequenceMixin.sequence_field`.
+    rank = models.IntegerField("Rank", default=0)
     category = models.ForeignKey(
         Category, verbose_name="Category", related_name="products", null=True, blank=True,
         on_delete=models.SET_NULL,

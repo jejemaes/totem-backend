@@ -46,7 +46,7 @@ class ProductSchema(ModelSchema):
 
     class Meta:
         model = Product
-        fields = ["id", "name", "category"]
+        fields = ["id", "name", "rank", "category"]
 
 
 class ProductBodySchema(ModelSchema):
