@@ -2,26 +2,29 @@ from typing import List
 
 from ninja import Schema
 
-from core.api import ModelController, ResequenceModelControllerMixin
+from core.api import DisplayNameModelControllerMixin, ModelController, ResequenceModelControllerMixin
 from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 
 from .schemas import (
     LineCreateSchema,
     ProductBodySchema,
+    ProductDisplayNameSchema,
     ProductFilterSchema,
     ProductSchema,
     LineSchema,
     LineUpdateSchema,
     OrderCreateSchema,
+    OrderDisplayNameSchema,
     OrderSchema,
     OrderUpdateSchema,
 )
 from .services import LineService, OrderService, ProductService
 
 
-class OrderController(ModelController):
-    """All five operations, for any valid token: a test-only resource."""
+class OrderController(DisplayNameModelControllerMixin, ModelController):
+    """All five operations and `/display-name/`, for any valid token: a test-only
+    resource, with a ULID pk."""
 
     api = api_v1
     service = OrderService
@@ -37,6 +40,7 @@ class OrderController(ModelController):
     create_response_schema = OrderSchema
     update_request_schema = OrderUpdateSchema
     update_response_schema = OrderSchema
+    display_name_response_schema = OrderDisplayNameSchema
 
 
 class LineController(ModelController):
@@ -57,9 +61,11 @@ class LineController(ModelController):
     update_response_schema = LineSchema
 
 
-class CategoryProductController(ResequenceModelControllerMixin, ModelController):
+class CategoryProductController(
+    DisplayNameModelControllerMixin, ResequenceModelControllerMixin, ModelController
+):
     """Nested: the products of the category named by the path, which a creation
-    files them under, and which `/resequence/` numbers."""
+    files them under, which `/resequence/` numbers and `/display-name/` names."""
 
     api = api_v1
     service = ProductService
@@ -75,3 +81,4 @@ class CategoryProductController(ResequenceModelControllerMixin, ModelController)
     create_response_schema = ProductSchema
     update_request_schema = ProductBodySchema
     update_response_schema = ProductSchema
+    display_name_response_schema = ProductDisplayNameSchema

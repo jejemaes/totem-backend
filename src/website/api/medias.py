@@ -8,6 +8,7 @@ from core.api import (
     BaseModelController,
     CreateModelControllerMixin,
     DeleteModelControllerMixin,
+    DisplayNameModelControllerMixin,
     ListModelControllerMixin,
     RetrieveModelControllerMixin,
 )
@@ -17,6 +18,7 @@ from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
 from website.schemas import (
     MediaCreateSchema,
+    MediaDisplayNameSchema,
     MediaListFilterSchema,
     MediaListSchema,
     MediaSchema,
@@ -26,6 +28,7 @@ from website.services import MediaService
 
 class MediaController(
     TokenHasScopePermissionModelControllerMixin,
+    DisplayNameModelControllerMixin,
     CreateModelControllerMixin,
     ListModelControllerMixin,
     RetrieveModelControllerMixin,
@@ -70,6 +73,7 @@ class MediaController(
         "read": ["totem.websitemedia.read"],
         "create": ["totem.websitemedia.create"],
         "delete": ["totem.websitemedia.delete"],
+        "display_name": ["totem.websitemedia.read"],
     }
 
     # Kept declared even though the body annotation is replaced below: it is
@@ -82,6 +86,7 @@ class MediaController(
     create_request_schema = MediaCreateSchema
     create_response_schema = MediaSchema
     retrieve_response_schema: Schema = MediaSchema
+    display_name_response_schema = MediaDisplayNameSchema
 
     # The library behind the editor's image picker. `MediaListSchema` rather
     # than `MediaSchema`: a picker needs a thumbnail, a caption and a mimetype,

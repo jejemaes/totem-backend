@@ -1,11 +1,12 @@
 import inspect
 import typing as t
+import uuid
 from contextlib import contextmanager
 from types import FunctionType
 
 import pydantic
 from django.core.exceptions import ImproperlyConfigured, PermissionDenied
-from django.db.models import IntegerField, Model, Q, QuerySet
+from django.db.models import IntegerField, Model, Q, QuerySet, UUIDField
 from django.http import HttpRequest
 from django.conf import settings
 from ninja import Body, FilterSchema, NinjaAPI, Path, Query, Router, Schema
@@ -194,6 +195,20 @@ class BaseModelController(BaseController):
             schema_fields[param] = func_params.get(param, str)
 
         return pydantic.create_model("PathParameters", **schema_fields)
+
+    @classmethod
+    def _pk_type(cls):
+        """The type of a pk a client sends, after the pk field: a ULID or a UUID is
+        checked for its format and documented as such. The service still converts
+        each one with the pk field."""
+        pk_field = cls.model._meta.pk
+        if isinstance(pk_field, ULIDField):
+            return ULID
+        if isinstance(pk_field, UUIDField):
+            return uuid.UUID
+        if isinstance(pk_field, IntegerField):
+            return int
+        return str
 
     # Response loading
 
@@ -700,18 +715,6 @@ class ResequenceModelControllerMixin:
         return []
 
     @classmethod
-    def _resequence_pk_type(cls):
-        """The type of a pk in the body, after the pk field: a ULID is checked for
-        its format and documented as such. `resequence` converts each one with the
-        pk field, and reports one it cannot find."""
-        pk_field = cls.model._meta.pk
-        if isinstance(pk_field, ULIDField):
-            return ULID
-        if isinstance(pk_field, IntegerField):
-            return int
-        return str
-
-    @classmethod
     def _annotate_resequence_view_function(
         cls, view_func: t.Callable[..., t.Any], path: str
     ) -> t.Callable[..., t.Any]:
@@ -726,7 +729,7 @@ class ResequenceModelControllerMixin:
             pydantic.create_model(
                 f"{cls.model.__name__}ResequenceSchema",
                 __base__=Schema,
-                ids=(t.List[cls._resequence_pk_type()], ...),
+                ids=(t.List[cls._pk_type()], ...),
                 offset=(int, pydantic.Field(0, ge=0)),
             ),
             Body(),
@@ -748,6 +751,87 @@ class ResequenceModelControllerMixin:
             # Where ninja puts the errors of the same body: one `loc` shape.
             raise self.service_validation_error_to_api_error(exc, loc_path=["body", "request_body"])
         return 201, None
+
+
+class DisplayNameModelControllerMixin:
+    """`GET /display-name/?id=a,b,c`: the records among those ids the user may read,
+    serialized with `display_name_response_schema`, in the order asked, through the
+    service's `display_name`. An id unknown or out of reach is absent, not an error.
+
+    Same constraints as `ResequenceModelControllerMixin`, for the same reasons: put it
+    *before* `ModelController` in the bases, or the route is never registered, or is
+    registered after `/{id}/`, which serves `GET /display-name/` as the retrieve of
+    the id "display-name" and answers 404. `validate_controllers` refuses both.
+    """
+
+    display_name_response_schema: Schema = None
+
+    @classmethod
+    def add_routes_to(cls, router) -> None:
+        if cls.model:
+            # Registered whenever the mixin is: one inherited but not registered
+            # breaks the import (see the route ordering in `BaseController`).
+            if cls.display_name_response_schema is None:
+                raise ImproperlyConfigured(
+                    f"{cls.__name__} inherits DisplayNameModelControllerMixin but declares "
+                    f"no display_name_response_schema."
+                )
+            cls.method_to_route_function(
+                view_func=cls.display_name,
+                path="/display-name/",
+                methods=["GET"],
+                response=t.List[cls.display_name_response_schema],
+                operation_id=f"{cls.model._meta.verbose_name.lower()}DisplayName",
+                summary=f"Display names of {cls.model._meta.verbose_name_plural.capitalize()}",
+                decorators=cls._display_name_function_decorators(),
+                view_wrapper=cls._annotate_display_name_view_function,
+                tags=[cls.model._meta.verbose_name],
+            )
+
+        super().add_routes_to(router)
+
+    @classmethod
+    def _display_name_function_decorators(cls):
+        return []
+
+    @classmethod
+    def _annotate_display_name_view_function(
+        cls, view_func: t.Callable[..., t.Any], path: str
+    ) -> t.Callable[..., t.Any]:
+        annotations = t.cast(FunctionType, view_func).__annotations__
+        annotations["path_parameters"] = t.Annotated[
+            cls._get_default_path_schema(path, view_func),
+            Path(default=None, include_in_schema=False),
+        ]
+        # One comma-separated parameter, not a repeated one (`?id=a&id=b`): the form
+        # the clients send, and the shortest url for a list of ULIDs.
+        annotations["ids"] = t.Annotated[
+            str, Query(alias="id", description="Comma-separated ids.")
+        ]
+        return view_func
+
+    async def display_name(
+        self,
+        request: HttpRequest,
+        path_parameters: t.Optional[BaseModel],
+        ids: str,
+    ) -> t.List[Model]:
+        # Typed here rather than left to the service, which only drops what it cannot
+        # convert: a malformed id is the client's mistake, answered 422 like a
+        # malformed body.
+        values = [value.strip() for value in ids.split(",") if value.strip()]
+        try:
+            pks = pydantic.TypeAdapter(t.List[self._pk_type()]).validate_python(values)
+        except pydantic.ValidationError as exc:
+            raise ValidationError([
+                {**error, "loc": ["query", "id", *error["loc"]]}
+                for error in exc.errors(include_url=False, include_context=False)
+            ]) from exc
+        return await request.env.get(self.service).display_name(
+            pks,
+            self._response_orm_fields(self.display_name_response_schema),
+            filters=path_parameters.model_dump() if path_parameters else None,
+        )
 
 
 class ModelController(

@@ -49,6 +49,15 @@ class ProductSchema(ModelSchema):
         fields = ["id", "name", "rank", "category"]
 
 
+class ProductDisplayNameSchema(ModelSchema):
+    # A relation: `display_name` must load it, or the async route reads it lazily.
+    category: Optional[CategoryDisplayNameSchema] = None
+
+    class Meta:
+        model = Product
+        fields = ["id", "name", "category"]
+
+
 class ProductBodySchema(ModelSchema):
     """The body of the nested route: the category comes from its path."""
 

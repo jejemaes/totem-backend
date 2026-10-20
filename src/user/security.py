@@ -137,6 +137,20 @@ class TokenHasScopePermissionModelControllerMixin:
         return decorators
 
     @classmethod
+    def _display_name_function_decorators(cls):
+        # Required, as for `resequence`: a missing key would mean no scope at all.
+        if not cls._get_action_permissions("display_name"):
+            raise ImproperlyConfigured(
+                f"{cls.__name__} registers /display-name/ but its permission_map has no "
+                f"'display_name' scopes: the route would require none."
+            )
+        decorators = super()._display_name_function_decorators()
+        decorators.append(
+            check_permissions([TokenHasScopePermission(cls._get_action_permissions("display_name"))])
+        )
+        return decorators
+
+    @classmethod
     def _get_action_permissions(cls, action):
         permission_map = getattr(cls, "permission_map", {})
         return permission_map.get(action, [])

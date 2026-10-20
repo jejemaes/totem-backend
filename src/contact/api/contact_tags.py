@@ -2,12 +2,13 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
-from core.api import ModelController
+from core.api import DisplayNameModelControllerMixin, ModelController
 from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
 from contact.schemas import (
     ContactTagCreateSchema,
+    ContactTagDisplayNameSchema,
     ContactTagFilterSchema,
     ContactTagSchema,
     ContactTagUpdateSchema,
@@ -15,7 +16,9 @@ from contact.schemas import (
 from contact.services import ContactTagService
 
 
-class ContactTagController(TokenHasScopePermissionModelControllerMixin, ModelController):
+class ContactTagController(
+    TokenHasScopePermissionModelControllerMixin, DisplayNameModelControllerMixin, ModelController
+):
     api = api_v1
     service = ContactTagService
 
@@ -26,6 +29,7 @@ class ContactTagController(TokenHasScopePermissionModelControllerMixin, ModelCon
         "create": ["totem.contacttag.create"],
         "update": ["totem.contacttag.update"],
         "delete": ["totem.contacttag.delete"],
+        "display_name": ["totem.contacttag.read"],
     }
 
     list_response_schema: Schema = List[ContactTagSchema]
@@ -41,3 +45,4 @@ class ContactTagController(TokenHasScopePermissionModelControllerMixin, ModelCon
     create_response_schema = ContactTagSchema
     update_request_schema = ContactTagUpdateSchema
     update_response_schema = ContactTagSchema
+    display_name_response_schema = ContactTagDisplayNameSchema

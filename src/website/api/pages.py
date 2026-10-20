@@ -2,12 +2,13 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
-from core.api import ModelController
+from core.api import DisplayNameModelControllerMixin, ModelController
 from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
 from website.schemas import (
     PageCreateSchema,
+    PageDisplayNameSchema,
     PageFilterSchema,
     PageSchema,
     PageUpdateSchema,
@@ -15,7 +16,9 @@ from website.schemas import (
 from website.services import PageService
 
 
-class PageController(TokenHasScopePermissionModelControllerMixin, ModelController):
+class PageController(
+    TokenHasScopePermissionModelControllerMixin, DisplayNameModelControllerMixin, ModelController
+):
     api = api_v1
     service = PageService
 
@@ -26,6 +29,7 @@ class PageController(TokenHasScopePermissionModelControllerMixin, ModelControlle
         "create": ["totem.websitepage.create"],
         "update": ["totem.websitepage.update"],
         "delete": ["totem.websitepage.delete"],
+        "display_name": ["totem.websitepage.read"],
     }
 
     list_response_schema: Schema = List[PageSchema]
@@ -47,3 +51,4 @@ class PageController(TokenHasScopePermissionModelControllerMixin, ModelControlle
     create_response_schema = PageSchema
     update_request_schema = PageUpdateSchema
     update_response_schema = PageSchema
+    display_name_response_schema = PageDisplayNameSchema

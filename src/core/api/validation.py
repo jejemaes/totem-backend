@@ -20,7 +20,11 @@ from core.orm.fields.computed.utils import VIRTUAL, computed_fields, get_compute
 
 from core.schemas.utils import _unwrap_list_schema
 
-from .controller import BaseModelController, ResequenceModelControllerMixin
+from .controller import (
+    BaseModelController,
+    DisplayNameModelControllerMixin,
+    ResequenceModelControllerMixin,
+)
 
 REQUEST_TO_SERVICE_SCHEMA = (
     ("create_request_schema", "create_schema"),
@@ -59,6 +63,7 @@ def validate_controllers():
         errors.extend(_check_derived_fields(controller))
         errors.extend(_check_path_parameters(controller))
         errors.extend(_check_resequence_route(controller))
+        errors.extend(_check_display_name_route(controller))
 
     if errors:
         raise ImproperlyConfigured("\n".join(errors))
@@ -74,32 +79,40 @@ def _iter_controllers(base=BaseModelController, seen=None):
 
 
 def _check_resequence_route(controller):
-    """A controller inheriting `ResequenceModelControllerMixin` registers
-    `/resequence/`, and before `/{id}/`.
+    return _check_static_route(controller, ResequenceModelControllerMixin, "resequence", "/resequence/")
+
+
+def _check_display_name_route(controller):
+    return _check_static_route(controller, DisplayNameModelControllerMixin, "display_name", "/display-name/")
+
+
+def _check_static_route(controller, mixin, name, route):
+    """A controller inheriting `mixin` registers its fixed-path `route`, and before
+    `/{id}/`.
 
     Neither is visible otherwise: misplaced in the bases, the mixin registers
-    nothing, or registers after `/{id}/`, which takes `resequence` for an id; both
-    answer POST /resequence/ with a 405. Read from the class `__dict__`, whose order
-    is the order the routes are registered in.
+    nothing, or registers after `/{id}/`, which takes the fixed segment for an id;
+    the client gets a 405 or a 404, never the route. Read from the class `__dict__`,
+    whose order is the order the routes are registered in.
     """
-    if not issubclass(controller, ResequenceModelControllerMixin) or controller.model is None:
+    if not issubclass(controller, mixin) or controller.model is None:
         return
     names = list(controller.__dict__)
-    if "resequence" not in names:
+    if name not in names:
         yield (
-            f"{controller.__name__}: inherits ResequenceModelControllerMixin but registers "
-            f"no /resequence/ route. Put the mixin before ModelController in the bases."
+            f"{controller.__name__}: inherits {mixin.__name__} but registers "
+            f"no {route} route. Put the mixin before ModelController in the bases."
         )
         return
     shadowing = [
-        name for name in ("retrieve", "update", "delete")
-        if name in names and names.index(name) < names.index("resequence")
+        other for other in ("retrieve", "update", "delete")
+        if other in names and names.index(other) < names.index(name)
     ]
     if shadowing:
         yield (
-            f"{controller.__name__}: /resequence/ is registered after the /{{id}}/ routes "
+            f"{controller.__name__}: {route} is registered after the /{{id}}/ routes "
             f"({', '.join(shadowing)}), which take it for an id. Put "
-            f"ResequenceModelControllerMixin before the CRUD mixins in the bases."
+            f"{mixin.__name__} before the CRUD mixins in the bases."
         )
 
 

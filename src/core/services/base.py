@@ -120,6 +120,42 @@ class ServiceBase(Service, t.Generic[ModelT]):
         queryset = await self.apply_access_rules(self.get_queryset(), "read")
         return queryset.filter(pk__in=pks)
 
+    async def display_name(self, pks: t.Iterable, fields: t.List[str], filters=None) -> t.List[models.Model]:
+        """The records among `pks` the acting user may read, loaded with `fields` only,
+        in the order of `pks`.
+
+        What a client resolving a few ids to their label needs, without the full read
+        schema nor one retrieve per id. Here and not in an opt-in mixin, as `browse`:
+        a read capability every model-bound service has, whatever it exposes.
+
+        A pk unknown, ill-typed or out of reach is absent from the result, and none of
+        those is told apart, as for `browse`. A repeated pk appears once. `filters` --
+        a nested route's path -- narrows the records further, as for `resequence`.
+
+        `fields` are ORM lookups, see `apply_query_fields`: the result is evaluated,
+        so whatever serialization reads must be among them.
+        """
+        # Coerced first: an ill-typed value (a malformed ULID) would raise inside the
+        # filter, where it should merely be absent.
+        pk_field = self.model._meta.pk
+        coerced = []
+        for value in pks:
+            try:
+                pk = pk_field.to_python(value)
+            except exceptions.ValidationError:
+                continue
+            if pk not in coerced:
+                coerced.append(pk)
+        if not coerced:
+            return []
+
+        queryset = await self.browse(coerced)
+        if filters:
+            queryset = self._apply_filters(queryset, filters)
+        queryset = self.apply_query_fields(queryset, fields)
+        by_pk = {instance.pk: instance async for instance in queryset}
+        return [by_pk[pk] for pk in coerced if pk in by_pk]
+
     # -----------------------------------------------------------------
     # Utils
     # -----------------------------------------------------------------

@@ -284,15 +284,18 @@ class ResequenceDeclarationTest(TestCase):
         [
             ("a ULID pk", "Order", "ULID"),
             ("an integer pk", "Product", "int"),
+            ("a UUID pk", "User", "UUID"),
         ]
     )
     def test_pk_type(self, dummy, model_name, type_name):
-        from core.api import ResequenceModelControllerMixin
+        from core.api import BaseModelController
         from core.tests.computed_app import models
+        from user.models import User
 
-        controller = type("StandInController", (ResequenceModelControllerMixin,), {"model": getattr(models, model_name)})
+        model = User if model_name == "User" else getattr(models, model_name)
+        controller = type("StandInController", (BaseModelController,), {"model": model})
 
-        self.assertEqual(controller._resequence_pk_type().__name__, type_name)
+        self.assertEqual(controller._pk_type().__name__, type_name)
 
     def test_permission_map_requires_resequence(self):
         from core.api import ResequenceModelControllerMixin
