@@ -2,12 +2,13 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
-from core.api import ModelController, ResequenceModelControllerMixin
+from core.api import DisplayNameModelControllerMixin, ModelController, ResequenceModelControllerMixin
 from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
 from account.schemas import (
     BudgetPositionCreateBodySchema,
+    BudgetPositionDisplayNameSchema,
     BudgetPositionFilterSchema,
     BudgetPositionSchema,
     BudgetPositionUpdateSchema,
@@ -18,7 +19,10 @@ from .budgets import BUDGET_PERMISSION_MAP
 
 
 class BudgetPositionController(
-    TokenHasScopePermissionModelControllerMixin, ResequenceModelControllerMixin, ModelController
+    TokenHasScopePermissionModelControllerMixin,
+    DisplayNameModelControllerMixin,
+    ResequenceModelControllerMixin,
+    ModelController,
 ):
     """Nested under its budget: every route stays within the budget of the path,
     a creation files the position under it, and `/resequence/` numbers the
@@ -42,3 +46,4 @@ class BudgetPositionController(
     create_response_schema = BudgetPositionSchema
     update_request_schema = BudgetPositionUpdateSchema
     update_response_schema = BudgetPositionSchema
+    display_name_response_schema = BudgetPositionDisplayNameSchema

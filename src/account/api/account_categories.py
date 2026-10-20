@@ -2,12 +2,13 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
-from core.api import ModelController
+from core.api import DisplayNameModelControllerMixin, ModelController
 from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
 from account.schemas import (
     AccountCategoryCreateSchema,
+    AccountCategoryDisplayNameSchema,
     AccountCategoryFilterSchema,
     AccountCategorySchema,
     AccountCategoryUpdateSchema,
@@ -15,7 +16,9 @@ from account.schemas import (
 from account.services import AccountCategoryService
 
 
-class AccountCategoryController(TokenHasScopePermissionModelControllerMixin, ModelController):
+class AccountCategoryController(
+    TokenHasScopePermissionModelControllerMixin, DisplayNameModelControllerMixin, ModelController
+):
     api = api_v1
     service = AccountCategoryService
 
@@ -26,6 +29,7 @@ class AccountCategoryController(TokenHasScopePermissionModelControllerMixin, Mod
         "create": ["totem.accountcategory.create"],
         "update": ["totem.accountcategory.update"],
         "delete": ["totem.accountcategory.delete"],
+        "display_name": ["totem.accountcategory.read"],
     }
 
     list_response_schema: Schema = List[AccountCategorySchema]
@@ -38,3 +42,4 @@ class AccountCategoryController(TokenHasScopePermissionModelControllerMixin, Mod
     create_response_schema = AccountCategorySchema
     update_request_schema = AccountCategoryUpdateSchema
     update_response_schema = AccountCategorySchema
+    display_name_response_schema = AccountCategoryDisplayNameSchema

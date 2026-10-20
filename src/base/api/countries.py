@@ -2,16 +2,22 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
-from core.api import BaseModelController, ListModelControllerMixin, RetrieveModelControllerMixin
+from core.api import (
+    BaseModelController,
+    DisplayNameModelControllerMixin,
+    ListModelControllerMixin,
+    RetrieveModelControllerMixin,
+)
 from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
-from base.schemas import CountryFilterSchema, CountryPathParam, CountrySchema
+from base.schemas import CountryDisplayNameSchema, CountryFilterSchema, CountryPathParam, CountrySchema
 from base.services import CountryService
 
 
 class CountryController(
     TokenHasScopePermissionModelControllerMixin,
+    DisplayNameModelControllerMixin,
     ListModelControllerMixin,
     RetrieveModelControllerMixin,
     BaseModelController,
@@ -24,6 +30,7 @@ class CountryController(
     auth = [OAuthTokenAuthentication()]
     permission_map = {
         "read": ["totem.country.read"],
+        "display_name": ["totem.country.read"],
     }
 
     list_response_schema: Schema = List[CountrySchema]
@@ -35,3 +42,4 @@ class CountryController(
     list_ordering_default_fields = ["name"]
 
     retrieve_response_schema: Schema = CountrySchema
+    display_name_response_schema = CountryDisplayNameSchema

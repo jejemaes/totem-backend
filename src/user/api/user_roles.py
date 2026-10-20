@@ -2,7 +2,13 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
-from core.api import BaseModelController, ListModelControllerMixin, Route, route
+from core.api import (
+    BaseModelController,
+    DisplayNameModelControllerMixin,
+    ListModelControllerMixin,
+    Route,
+    route,
+)
 from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.access_policy import access_policy
@@ -10,6 +16,7 @@ from user.access_rights import get_all_permission
 from user.schemas import (
     AccessRuleSchema,
     PermissionSchema,
+    UserRoleDisplayNameSchema,
     UserRoleFilterSchema,
     UserRoleSchema,
 )
@@ -22,6 +29,7 @@ from user.services import UserRoleService
 
 class UserRoleController(
     TokenHasScopePermissionModelControllerMixin,
+    DisplayNameModelControllerMixin,
     ListModelControllerMixin,
     BaseModelController,
 ):
@@ -32,6 +40,7 @@ class UserRoleController(
     auth = [OAuthTokenAuthentication()]
     permission_map = {
         "read": ["totem.userrole.read"],
+        "display_name": ["totem.userrole.read"],
     }
 
     list_response_schema: Schema = List[UserRoleSchema]
@@ -41,6 +50,8 @@ class UserRoleController(
         "id",
     ]
     list_ordering_default_fields = ["id"]
+
+    display_name_response_schema = UserRoleDisplayNameSchema
 
     @route.get(
         "/permissions/",

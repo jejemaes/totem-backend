@@ -2,12 +2,13 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
-from core.api import ModelController, ResequenceModelControllerMixin
+from core.api import DisplayNameModelControllerMixin, ModelController, ResequenceModelControllerMixin
 from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
 from website.schemas import (
     MenuCreateSchema,
+    MenuDisplayNameSchema,
     MenuFilterSchema,
     MenuSchema,
     MenuUpdateSchema,
@@ -16,7 +17,10 @@ from website.services import MenuService
 
 
 class MenuController(
-    TokenHasScopePermissionModelControllerMixin, ResequenceModelControllerMixin, ModelController
+    TokenHasScopePermissionModelControllerMixin,
+    DisplayNameModelControllerMixin,
+    ResequenceModelControllerMixin,
+    ModelController,
 ):
     api = api_v1
     service = MenuService
@@ -30,6 +34,7 @@ class MenuController(
         "delete": ["totem.websitemenu.delete"],
         # Numbering menu items is updating them.
         "resequence": ["totem.websitemenu.update"],
+        "display_name": ["totem.websitemenu.read"],
     }
 
     list_response_schema: Schema = List[MenuSchema]
@@ -48,3 +53,4 @@ class MenuController(
     create_response_schema = MenuSchema
     update_request_schema = MenuUpdateSchema
     update_response_schema = MenuSchema
+    display_name_response_schema = MenuDisplayNameSchema

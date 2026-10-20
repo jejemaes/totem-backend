@@ -2,12 +2,13 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
-from core.api import ModelController
+from core.api import DisplayNameModelControllerMixin, ModelController
 from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
 from account.schemas import (
     BudgetCreateSchema,
+    BudgetDisplayNameSchema,
     BudgetFilterSchema,
     BudgetSchema,
     BudgetUpdateSchema,
@@ -21,10 +22,13 @@ BUDGET_PERMISSION_MAP = {
     "delete": ["totem.budget.delete"],
     # Numbering the positions or lines of a budget is updating them.
     "resequence": ["totem.budget.update"],
+    "display_name": ["totem.budget.read"],
 }
 
 
-class BudgetController(TokenHasScopePermissionModelControllerMixin, ModelController):
+class BudgetController(
+    TokenHasScopePermissionModelControllerMixin, DisplayNameModelControllerMixin, ModelController
+):
     api = api_v1
     service = BudgetService
 
@@ -44,3 +48,4 @@ class BudgetController(TokenHasScopePermissionModelControllerMixin, ModelControl
     create_response_schema = BudgetSchema
     update_request_schema = BudgetUpdateSchema
     update_response_schema = BudgetSchema
+    display_name_response_schema = BudgetDisplayNameSchema
