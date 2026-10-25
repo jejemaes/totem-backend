@@ -23,6 +23,7 @@ from core.schemas.utils import _unwrap_list_schema
 from .controller import (
     BaseModelController,
     DisplayNameModelControllerMixin,
+    GroupByModelControllerMixin,
     ResequenceModelControllerMixin,
 )
 
@@ -64,6 +65,7 @@ def validate_controllers():
         errors.extend(_check_path_parameters(controller))
         errors.extend(_check_resequence_route(controller))
         errors.extend(_check_display_name_route(controller))
+        errors.extend(_check_group_by_route(controller))
 
     if errors:
         raise ImproperlyConfigured("\n".join(errors))
@@ -84,6 +86,10 @@ def _check_resequence_route(controller):
 
 def _check_display_name_route(controller):
     return _check_static_route(controller, DisplayNameModelControllerMixin, "display_name", "/display-name/")
+
+
+def _check_group_by_route(controller):
+    return _check_static_route(controller, GroupByModelControllerMixin, "group_by", "/group-by/")
 
 
 def _check_static_route(controller, mixin, name, route):

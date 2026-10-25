@@ -1,4 +1,4 @@
-from core.services import ServiceBase
+from core.services import Dimension, GroupByMixin, ServiceBase, number_measures, share_measure
 from core.services.mixins import CreateMixin, DeleteMixin, ReadMixin, ResequenceMixin, UpdateMixin
 
 from .models import Category, Line, Order, Product, Tag
@@ -24,10 +24,11 @@ class CategoryService(
 
 
 class ProductService(
-    CreateMixin[ProductCreateSchema], ReadMixin, UpdateMixin[ProductUpdateSchema], DeleteMixin,
+    CreateMixin[ProductCreateSchema], ReadMixin, GroupByMixin, UpdateMixin[ProductUpdateSchema], DeleteMixin,
     ResequenceMixin, ServiceBase[Product],
 ):
     sequence_field = "rank"
+    group_by_dimensions = {"rank": Dimension("rank")}
 
 
 class TagService(
@@ -43,6 +44,20 @@ class OrderService(
 
 
 class LineService(
-    CreateMixin[LineCreateSchema], ReadMixin, UpdateMixin[LineUpdateSchema], DeleteMixin, ServiceBase[Line]
+    CreateMixin[LineCreateSchema], ReadMixin, GroupByMixin, UpdateMixin[LineUpdateSchema], DeleteMixin,
+    ServiceBase[Line],
 ):
-    pass
+    # A relation rendered by the list (`order`) and one that is not (`product`), a
+    # stored computed field, a plain column.
+    group_by_dimensions = {
+        "order": Dimension("order"),
+        "product": Dimension("product"),
+        "order_status": Dimension("order_status"),
+        "quantity": Dimension("quantity"),
+    }
+    group_by_measures = {
+        **number_measures("quantity"),
+        # A generated column: typed after its `output_field`.
+        **number_measures("amount", ["sum"]),
+        **share_measure("quantity", exclude=["product"]),
+    }

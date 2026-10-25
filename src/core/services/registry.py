@@ -41,7 +41,8 @@ class ServiceRegistry:
 
     @classmethod
     def validate(cls):
-        """Check that every writable relation can be resolved through a service.
+        """Check that every writable relation, and every relation grouped by, can be
+        resolved through a service.
 
         Resolution goes through `env[related_model]`, which raises when the related
         model has no service. Without this check that failure would surface as a
@@ -85,6 +86,17 @@ class ServiceRegistry:
                             f"{field.related_model._meta.label} has no service, so it "
                             f"cannot be resolved with access rules."
                         )
+
+            # A relation grouped by comes back as its record, read through its
+            # service: same requirement, for the same reason.
+            for name, dimension in getattr(service_class, "_group_by_dimensions", {}).items():
+                related_model = dimension.related_model
+                if related_model is not None and related_model not in cls._by_model:
+                    errors.append(
+                        f"{service_class.__name__}: the dimension {name!r} groups by a "
+                        f"relation to {related_model._meta.label}, which has no service, "
+                        f"so it cannot be resolved with access rules."
+                    )
 
         if errors:
             raise ImproperlyConfigured("\n".join(errors))

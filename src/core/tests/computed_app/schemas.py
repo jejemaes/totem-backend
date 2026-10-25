@@ -70,6 +70,10 @@ class ProductFilterSchema(FilterSchema):
     name: Optional[str] = Field(None, q="name__icontains")
 
 
+class LineFilterSchema(FilterSchema):
+    status: Optional[str] = Field(None, q="order__status")
+
+
 class TagCreateSchema(ModelSchema):
     class Meta:
         model = Tag
