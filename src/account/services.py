@@ -1,6 +1,20 @@
+from django.db.models import Q, Sum
 from django.utils import timezone
 
-from core.services import CreateMixin, DeleteMixin, ReadMixin, ResequenceMixin, ServiceBase, UpdateMixin
+from core.services import (
+    CreateMixin,
+    DeleteMixin,
+    Dimension,
+    GroupByMixin,
+    Measure,
+    ReadMixin,
+    ResequenceMixin,
+    ServiceBase,
+    UpdateMixin,
+    date_dimensions,
+    number_measures,
+    share_measure,
+)
 from account.models import (
     Account,
     AccountCategory,
@@ -49,12 +63,32 @@ class AccountCategoryService(
 class AccountMovementService(
     CreateMixin[AccountMovementCreateSchema],
     ReadMixin,
+    GroupByMixin,
     UpdateMixin[AccountMovementUpdateSchema],
     DeleteMixin,
     ServiceBase[AccountMovement],
 ):
     """Every write here goes stale the stored totals of the accounts concerned,
-    which the computed-field context of the write refreshes before it commits."""
+    which the computed-field context of the write refreshes before it commits.
+
+    Grouped by account, category and period. The amount is signed, so its sum is
+    the balance: the debits and the credits are measures of their own, as there is
+    no direction column to group by.
+    """
+
+    group_by_dimensions = {
+        "account": Dimension("account"),
+        "category": Dimension("category"),
+        **date_dimensions("date", ["day", "week", "month", "quarter", "year"]),
+    }
+    group_by_measures = {
+        **number_measures("amount"),
+        "debit_sum": Measure(Sum("amount", filter=Q(amount__lt=0)), "amount", label="Debits"),
+        "credit_sum": Measure(Sum("amount", filter=Q(amount__gt=0)), "amount", label="Credits"),
+        # The share of each category in its period, or in the whole when grouped by
+        # category alone.
+        **share_measure("amount", exclude=["category"]),
+    }
 
     def validate_data(self, data, instance):
         error = self.ValidationError({})

@@ -2,7 +2,7 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
-from core.api import ModelController
+from core.api import GroupByModelControllerMixin, ModelController
 from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
@@ -15,7 +15,9 @@ from account.schemas import (
 from account.services import AccountMovementService
 
 
-class AccountMovementController(TokenHasScopePermissionModelControllerMixin, ModelController):
+class AccountMovementController(
+    TokenHasScopePermissionModelControllerMixin, GroupByModelControllerMixin, ModelController
+):
     api = api_v1
     service = AccountMovementService
 
@@ -26,6 +28,8 @@ class AccountMovementController(TokenHasScopePermissionModelControllerMixin, Mod
         "create": ["totem.accountmovement.create"],
         "update": ["totem.accountmovement.update"],
         "delete": ["totem.accountmovement.delete"],
+        # A group sums movements the list would show: no scope of its own.
+        "group_by": ["totem.accountmovement.read"],
     }
 
     list_response_schema: Schema = List[AccountMovementSchema]

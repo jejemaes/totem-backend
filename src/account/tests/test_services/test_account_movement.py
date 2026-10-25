@@ -1,4 +1,6 @@
-from datetime import timedelta
+from datetime import date, timedelta
+from decimal import Decimal
+from unittest import mock
 
 from asgiref.sync import async_to_sync
 from django.test import TestCase
@@ -7,9 +9,9 @@ from freezegun import freeze_time
 from parameterized import parameterized
 from pydantic import ValidationError as PydanticValidationError
 
-from account.models import AccountMovement
+from account.models import AccountCategory, AccountMovement
 from account.schemas import AccountMovementCreateSchema, AccountMovementUpdateSchema
-from account.services import AccountMovementService
+from account.services import AccountCategoryService, AccountMovementService
 from core.services import Environment
 from core.services.exceptions import ServiceValidationMultiError
 
@@ -22,6 +24,7 @@ from account.tests.common import (
     MOVEMENT_ID1,
     MOVEMENT_ID2,
     MOVEMENT_ID3,
+    AccountGroupByTestMixin,
     AccountTestMixin,
 )
 
@@ -237,3 +240,147 @@ class TestAccountMovementService(AccountTestMixin, TestCase):
 
         self.assertEqual(count, affected_row)
         self.assertTotals(ACCOUNT_ID1, *totals)
+
+
+@freeze_time(NOW)
+class TestAccountMovementGroupBy(AccountGroupByTestMixin, TestCase):
+    """`group_by` over the ledger of `AccountGroupByTestMixin`."""
+
+    def setUp(self):
+        super().setUp()
+        self.env = Environment(user=self.user, language="en-us")
+        self.service = self.env.get(AccountMovementService)
+
+    def group_by(self, *args, **kwargs):
+        return async_to_sync(self.service.group_by)(*args, **kwargs)
+
+    def test_group_by_measures(self):
+        total, rows = self.group_by(["account"], ["count", "amount_sum", "debit_sum", "credit_sum"])
+
+        self.assertEqual(total, 2)
+        # The sum is the balance; BANK has no credit, a NULL rather than a zero.
+        self.assertEqual(
+            [(row["account"], row["count"], row["amount_sum"], row["debit_sum"], row["credit_sum"]) for row in rows],
+            [
+                (self.account_shop, 5, Decimal("9.50"), Decimal("-180.50"), Decimal("190.00")),
+                (self.account_bank, 1, Decimal("-12.30"), Decimal("-12.30"), None),
+            ],
+        )
+
+    @parameterized.expand(
+        [
+            ("date_day", [date(2026, 9, 3), date(2026, 9, 20), date(2026, 9, 25), date(2026, 10, 15)]),
+            ("date_week", [date(2026, 8, 31), date(2026, 9, 14), date(2026, 9, 21), date(2026, 10, 12)]),
+            ("date_month", [date(2026, 9, 1), date(2026, 10, 1)]),
+            ("date_quarter", [date(2026, 7, 1), date(2026, 10, 1)]),
+            ("date_year", [date(2026, 1, 1)]),
+        ]
+    )
+    def test_group_by_date(self, dimension, periods):
+        total, rows = self.group_by([dimension], ["count"])
+
+        self.assertEqual((total, [row[dimension] for row in rows]), (len(periods), periods))
+
+    def test_group_by_null_group(self):
+        total, rows = self.group_by(["date_month", "category"], ["amount_sum"])
+
+        self.assertEqual(
+            [(row["date_month"], row["category"], row["amount_sum"]) for row in rows],
+            [
+                (date(2026, 9, 1), self.category_general, Decimal("-80.00")),
+                (date(2026, 9, 1), self.category_bank, Decimal("-12.30")),
+                (date(2026, 9, 1), None, Decimal("40.00")),
+                (date(2026, 10, 1), self.category_general, Decimal("-80.00")),
+                (date(2026, 10, 1), self.category_shop, Decimal("-20.50")),
+                (date(2026, 10, 1), None, Decimal("150.00")),
+            ],
+        )
+
+    def test_group_by_share(self):
+        # The share of each category in the expenses of its month.
+        total, rows = self.group_by(["date_month", "category"], ["amount_share"], filters={"amount__lt": 0})
+
+        self.assertEqual(
+            [(row["date_month"].month, row["category"], round(row["amount_share"], 2)) for row in rows],
+            [
+                (9, self.category_general, 86.67),
+                (9, self.category_bank, 13.33),
+                (10, self.category_general, 79.6),
+                (10, self.category_shop, 20.4),
+            ],
+        )
+
+    @parameterized.expand(
+        [
+            ("by a measure", ["-amount_sum"], [None, "Fees", "Stock", "Rent"]),
+            ("by a measure, then a key", ["count", "-category"], ["Fees", "Stock", "Rent", None]),
+            ("by default, the keys", None, ["Rent", "Stock", "Fees", None]),
+        ]
+    )
+    def test_group_by_ordering(self, dummy, ordering, names):
+        # Rent -160 (2), Stock -20.50 (1), Fees -12.30 (1), none +190 (2). By pk,
+        # Rent < Stock < Fees, and NULL last whatever the direction.
+        total, rows = self.group_by(["category"], ["amount_sum", "count"], ordering=ordering)
+
+        self.assertEqual([row["category"].name if row["category"] else None for row in rows], names)
+
+    def test_group_by_pagination(self):
+        total, rows = self.group_by(["date_day"], ["count"], ordering=["-date_day"], limit=2, offset=1)
+
+        self.assertEqual((total, [row["date_day"] for row in rows]), (4, [date(2026, 9, 25), date(2026, 9, 20)]))
+
+    def test_group_by_access_rules(self):
+        # A rule crossing a to-many relation: SHOP has two categories, so each of
+        # its movements joins twice. The sums must not see it.
+        AccountCategory.objects.create(name="Packaging", account=self.account_shop)
+
+        async def apply_access_rules(service, queryset, operation):
+            return queryset.filter(account__categories__isnull=False)
+
+        with mock.patch.object(AccountMovementService, "apply_access_rules", apply_access_rules):
+            total, rows = self.group_by(["account"], ["count", "amount_sum"])
+
+        self.assertEqual(
+            [(row["account"], row["count"], row["amount_sum"]) for row in rows],
+            [(self.account_shop, 5, Decimal("9.50")), (self.account_bank, 1, Decimal("-12.30"))],
+        )
+
+    def test_group_by_access_rules_of_a_category(self):
+        # A category the user may not read stays its bare pk.
+        async def apply_access_rules(service, queryset, operation):
+            return queryset.filter(account__isnull=True)
+
+        with mock.patch.object(AccountCategoryService, "apply_access_rules", apply_access_rules):
+            total, rows = self.group_by(["category"], ["count"])
+
+        self.assertEqual(
+            [row["category"] for row in rows],
+            [self.category_general, self.category_shop.pk, self.category_bank.pk, None],
+        )
+
+    @parameterized.expand(
+        [
+            ("unknown dimension", {"dimensions": ["date"]}, "dimensions"),
+            ("unknown measure", {"measures": ["amount"]}, "measures"),
+            ("ordering not asked", {"ordering": ["-amount_sum"]}, "ordering"),
+            ("offset without limit", {"offset": 1}, "offset"),
+        ]
+    )
+    def test_group_by_invalid(self, dummy, arguments, key):
+        arguments = {"dimensions": ["account"], "measures": ["count"], **arguments}
+
+        with self.assertNumQueries(0):
+            with self.assertRaises(ServiceValidationMultiError) as ctx:
+                self.group_by(**arguments)
+
+        self.assertEqual(list(ctx.exception.dict()["__all__"]), [key])
+
+    def test_group_by_query_count(self):
+        # The roles of the user, the number of groups, the groups, then one query
+        # per relation grouped by -- whatever the number of groups.
+        with self.assertNumQueries(5):
+            self.group_by(["account", "category"], ["count"])
+        self.env = Environment(user=self.user, language="en-us")
+        self.service = self.env.get(AccountMovementService)
+        with self.assertNumQueries(3):
+            self.group_by(["date_month"], ["count", "amount_share"])

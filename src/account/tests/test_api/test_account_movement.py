@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 
 from django.test import TestCase
@@ -15,9 +16,11 @@ from account.tests.common import (
     MOVEMENT_ID1,
     MOVEMENT_ID2,
     MOVEMENT_ID3,
+    AccountGroupByTestMixin,
     AccountTestMixin,
 )
 from core.testing import APITestCaseMixin
+from totem.api import api_v1
 from user.tests.test_api.common import CommonTestMixin
 
 MOVEMENT_ID4 = "01JM0000000000000000000099"
@@ -521,3 +524,192 @@ class AccountMovementAPITest(AccountTestMixin, CommonTestMixin, APITestCaseMixin
             set(fields),
             set(api_data.keys()),
         )
+
+
+@freeze_time("2026-10-15 11:12:13")
+class AccountMovementGroupByAPITest(AccountGroupByTestMixin, CommonTestMixin, APITestCaseMixin, TestCase):
+    """`POST /accounting/movements/group-by/`, over the ledger of
+    `AccountGroupByTestMixin`."""
+
+    url = "/api/v1/accounting/movements/group-by/"
+
+    def request(self, data):
+        return self.do_api_request(self.url, "POST", self.user_access_token_frodon.token, data=json.dumps(data))
+
+    def body(self, **values):
+        return {"group_by_fields": ["date_month"], "measures": ["count"], **values}
+
+    def test_group_by_response(self):
+        response = self.request({
+            "group_by_fields": ["account", "date_month"],
+            "measures": ["count", "amount_sum", "debit_sum", "credit_sum"],
+        })
+
+        self.assertEqual(response.status_code, 200)
+        # The account as the list renders it; only the keys asked; BANK has no
+        # credit, a null rather than a zero.
+        shop = {"id": ACCOUNT_ID1, "code": "SHOP", "name": "Shop"}
+        bank = {"id": ACCOUNT_ID2, "code": "BANK", "name": "Bank"}
+        self.assertEqual(
+            response.json(),
+            {
+                "count": 3,
+                "results": [
+                    {"account": shop, "date_month": "2026-09-01", "count": 2,
+                     "amount_sum": "-40.00", "debit_sum": "-80.00", "credit_sum": "40.00"},
+                    {"account": shop, "date_month": "2026-10-01", "count": 3,
+                     "amount_sum": "49.50", "debit_sum": "-100.50", "credit_sum": "150.00"},
+                    {"account": bank, "date_month": "2026-09-01", "count": 1,
+                     "amount_sum": "-12.30", "debit_sum": "-12.30", "credit_sum": None},
+                ],
+            },
+        )
+
+    def test_group_by_response_category(self):
+        response = self.request({
+            "group_by_fields": ["date_month", "category"],
+            "measures": ["amount_share"],
+            "filters": {"direction": "debit"},
+        })
+
+        self.assertEqual(response.status_code, 200)
+        # The category as the list renders it, and its share of the expenses of
+        # the month.
+        self.assertEqual(
+            [
+                (group["date_month"], group["category"]["name"], round(group["amount_share"], 2))
+                for group in response.json()["results"]
+            ],
+            [
+                ("2026-09-01", "Rent", 86.67),
+                ("2026-09-01", "Fees", 13.33),
+                ("2026-10-01", "Rent", 79.6),
+                ("2026-10-01", "Stock", 20.4),
+            ],
+        )
+        self.assertEqual(
+            response.json()["results"][0]["category"],
+            {"id": CATEGORY_GENERAL_ID, "name": "Rent", "color": self.category_general.color},
+        )
+
+    @parameterized.expand(
+        [
+            ("no dimension", {"group_by_fields": []}, ["group_by_fields"]),
+            ("unknown dimension", {"group_by_fields": ["date"]}, ["group_by_fields", 0]),
+            ("too many dimensions", {"group_by_fields": ["account", "category", "date_month", "date_year"]}, ["group_by_fields"]),
+            # Reported by the service, under the name of the body.
+            ("repeated dimension", {"group_by_fields": ["account", "account"]}, ["group_by_fields"]),
+            ("no measure", {"measures": []}, ["measures"]),
+            ("unknown measure", {"measures": ["amount"]}, ["measures", 0]),
+            ("unknown ordering", {"ordering": ["date"]}, ["ordering", 0]),
+            ("ordering not asked", {"ordering": ["-amount_sum"]}, ["ordering"]),
+            ("limit too small", {"limit": 0}, ["limit"]),
+            ("limit too large", {"limit": 1001}, ["limit"]),
+            ("offset without limit", {"limit": None, "offset": 1}, ["offset"]),
+        ]
+    )
+    def test_group_by_request_field_validation(self, dummy, values, loc):
+        response = self.request(self.body(**values))
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual([error["loc"] for error in response.json()["detail"]], [["body", "request_body", *loc]])
+
+    @parameterized.expand(
+        [
+            ({}, [("2026-09-01", 3), ("2026-10-01", 3)]),
+            ({"account": ACCOUNT_ID2}, [("2026-09-01", 1)]),
+            ({"category": CATEGORY_GENERAL_ID}, [("2026-09-01", 1), ("2026-10-01", 1)]),
+            ({"direction": "debit"}, [("2026-09-01", 2), ("2026-10-01", 2)]),
+            ({"direction": "credit"}, [("2026-09-01", 1), ("2026-10-01", 1)]),
+            ({"date_from": "2026-10-01"}, [("2026-10-01", 3)]),
+            ({"date_to": "2026-09-20"}, [("2026-09-01", 2)]),
+            ({"search": "rent"}, [("2026-09-01", 1), ("2026-10-01", 1)]),
+            ({"account": ACCOUNT_ID1, "direction": "debit", "category": CATEGORY_SHOP_ID}, [("2026-10-01", 1)]),
+        ]
+    )
+    def test_group_by_filters(self, filters, groups):
+        response = self.request(self.body(filters=filters))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["count"], len(groups))
+        self.assertEqual([(group["date_month"], group["count"]) for group in response.json()["results"]], groups)
+
+    @parameterized.expand(
+        [
+            ({"direction": "sideways"},),
+            ({"date_from": "not a date"},),
+            ({"date_to": "2026-10-14T09:30:00Z"},),  # a time of day is no date
+        ]
+    )
+    def test_group_by_invalid_filters(self, filters):
+        response = self.request(self.body(filters=filters))
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json()["detail"][0]["loc"][:3], ["body", "request_body", "filters"])
+
+    @parameterized.expand(
+        [
+            # Rent -160 (2), Stock -20.50 (1), Fees -12.30 (1), none +190 (2). By
+            # pk, Rent < Stock < Fees, and NULL last whatever the direction.
+            ([], ["Rent", "Stock", "Fees", None]),
+            (["-amount_sum"], [None, "Fees", "Stock", "Rent"]),
+            (["count", "-category"], ["Fees", "Stock", "Rent", None]),
+        ]
+    )
+    def test_group_by_ordering(self, ordering, names):
+        response = self.request({
+            "group_by_fields": ["category"], "measures": ["amount_sum", "count"], "ordering": ordering,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [group["category"]["name"] if group["category"] else None for group in response.json()["results"]],
+            names,
+        )
+
+    def test_group_by_pagination(self):
+        response = self.request({
+            "group_by_fields": ["date_day"], "measures": ["count"], "ordering": ["-date_day"], "limit": 2, "offset": 1,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            {"count": 4, "results": [{"date_day": "2026-09-25", "count": 1}, {"date_day": "2026-09-20", "count": 1}]},
+        )
+
+    @parameterized.expand(
+        [
+            ("totem.accountmovement.create", 403),
+            ("totem.accountmovement.read", 200),
+            ("totem.accountmovement.update", 403),
+            ("totem.accountmovement.delete", 403),
+            ("totem.account.read", 403),
+        ]
+    )
+    def test_group_by_access_rights(self, scope, status_code):
+        self.user_access_token_frodon.scope = scope
+        self.user_access_token_frodon.save(update_fields=["scope"])
+
+        response = self.request(self.body())
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code != 200:
+            self.assertEqual(response.json(), {"detail": ["You do not have permission to perform this action."]})
+
+    def test_group_by_openapi(self):
+        components = api_v1.get_openapi_schema()["components"]["schemas"]
+
+        request = components["AccountMovementGroupBySchema"]["properties"]
+        self.assertEqual(
+            request["group_by_fields"]["items"]["enum"],
+            ["account", "category", "date_day", "date_week", "date_month", "date_quarter", "date_year"],
+        )
+        self.assertEqual(
+            request["measures"]["items"]["enum"],
+            ["count", "amount_sum", "amount_avg", "amount_min", "amount_max", "debit_sum", "credit_sum", "amount_share"],
+        )
+        self.assertIn("filters", request)
+        group = components["AccountMovementGroupSchema"]["properties"]
+        self.assertEqual(group["date_month"]["title"], "Date (month)")
+        self.assertEqual(group["debit_sum"]["title"], "Debits")
