@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
@@ -87,6 +88,46 @@ class AccountTestMixin:
             (account.total_debit, account.total_credit, account.balance),
             (Decimal(debit), Decimal(credit), Decimal(balance)),
         )
+
+
+MOVEMENT_SEPTEMBER_FEE_ID = "01JM0000000000000000000004"
+MOVEMENT_SEPTEMBER_SALE_ID = "01JM0000000000000000000005"
+MOVEMENT_SEPTEMBER_RENT_ID = "01JM0000000000000000000006"
+
+
+class AccountGroupByTestMixin(AccountTestMixin):
+    """The ledger, and three more movements in September, so that it spans two
+    months and two accounts:
+
+        2026-09-03  BANK  -12.30  Fees
+        2026-09-20  SHOP  +40.00  -
+        2026-09-25  SHOP  -80.00  Rent
+        today       SHOP +150.00  -        (ledger)
+        today       SHOP  -80.00  Rent     (ledger)
+        today       SHOP  -20.50  Stock    (ledger)
+
+    The tests freeze today on 2026-10-15. Shared by the service and the API tests
+    of the group by.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        AccountMovement.objects.bulk_create([
+            AccountMovement(
+                id=MOVEMENT_SEPTEMBER_FEE_ID, account=cls.account_bank, amount=Decimal("-12.30"),
+                name="Fee", date=date(2026, 9, 3), category=cls.category_bank,
+            ),
+            AccountMovement(
+                id=MOVEMENT_SEPTEMBER_SALE_ID, account=cls.account_shop, amount=Decimal("40.00"),
+                name="Sale", date=date(2026, 9, 20),
+            ),
+            AccountMovement(
+                id=MOVEMENT_SEPTEMBER_RENT_ID, account=cls.account_shop, amount=Decimal("-80.00"),
+                name="Rent", date=date(2026, 9, 25), category=cls.category_general,
+            ),
+        ])
+        Account.objects.refresh_computed()
 
 
 BUDGET_ID1 = "01JB0000000000000000000001"
