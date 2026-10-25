@@ -151,6 +151,22 @@ class TokenHasScopePermissionModelControllerMixin:
         return decorators
 
     @classmethod
+    def _group_by_function_decorators(cls):
+        # Required, as for `resequence`: a missing key would mean no scope at all.
+        # Its own key rather than `read`'s, though it is a read: the route is opt-in,
+        # and so is saying which scopes reach it.
+        if not cls._get_action_permissions("group_by"):
+            raise ImproperlyConfigured(
+                f"{cls.__name__} registers /group-by/ but its permission_map has no "
+                f"'group_by' scopes: the route would require none."
+            )
+        decorators = super()._group_by_function_decorators()
+        decorators.append(
+            check_permissions([TokenHasScopePermission(cls._get_action_permissions("group_by"))])
+        )
+        return decorators
+
+    @classmethod
     def _get_action_permissions(cls, action):
         permission_map = getattr(cls, "permission_map", {})
         return permission_map.get(action, [])

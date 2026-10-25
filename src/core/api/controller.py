@@ -18,10 +18,12 @@ from pydantic import BaseModel
 from ulid import ULID
 
 from core.orm.fields import ULIDField
+from core.schemas.fields import convert_db_field
 from core.schemas.utils import (
     _unwrap_list_schema,
     extract_orm_fields_from_specs,
     extract_orm_fields_map,
+    extract_schemas_from_annotation,
     schema_orm_to_public_fields,
 )
 from core.services import (
@@ -244,6 +246,7 @@ class BaseModelController(BaseController):
         exc: ServiceValidationMultiError,
         response_schema: t.Optional[BaseModel] = None,
         loc_path: t.List[str] = ["body", "request_body"],
+        fields_map: t.Optional[t.Dict[str, str]] = None,
     ) -> ValidationError:
         """Convert a ServiceValidationMultiError to a Ninja ValidationError, with error location mapped to the response schema fields.
 
@@ -253,12 +256,19 @@ class BaseModelController(BaseController):
         `response_schema` may be None, for a route that has no response body to
         translate against: the delete route, whose errors are never about a field of
         a payload it does not have. The ORM name is then used as it comes.
+
+        `fields_map` renames keys the service reports that are no field at all, to
+        the body field they come from: `group_by` reports its `dimensions`, which
+        the body names `group_by_fields`.
         """
-        fields_map = (
-            schema_orm_to_public_fields(response_schema, self.model)
-            if response_schema is not None
-            else {}
-        )
+        fields_map = {
+            **(
+                schema_orm_to_public_fields(response_schema, self.model)
+                if response_schema is not None
+                else {}
+            ),
+            **(fields_map or {}),
+        }
 
         result = []
         for key, error_dict in exc.dict().items():
@@ -832,6 +842,211 @@ class DisplayNameModelControllerMixin:
             self._response_orm_fields(self.display_name_response_schema),
             filters=path_parameters.model_dump() if path_parameters else None,
         )
+
+
+class GroupByModelControllerMixin:
+    """`POST /group-by/`: the groups of the records, by dimensions, with measures,
+    through the service's `group_by` (`GroupByMixin`). Answers
+    `{"count": <number of groups>, "results": [<group>, ...]}`.
+
+    The body names dimensions and measures the service declares -- an enum each in
+    the OpenAPI document -- orders on them as the list does (`name` / `-name`), and
+    filters with the list's `list_filter_schema`. A relation grouped by is rendered
+    with the sub-schema `list_response_schema` renders it with: a group reads like a
+    row of the list.
+
+    Same constraints as `ResequenceModelControllerMixin`, for the same reasons: put
+    it *before* `ModelController` in the bases, or the route is never registered,
+    or is registered after `/{id}/`, which takes `group-by` for an id and answers
+    405. `validate_controllers` refuses both.
+    """
+
+    group_by_default_limit: int = 80
+    group_by_max_limit: int = 1000
+    group_by_max_dimensions: int = 3
+
+    @classmethod
+    def add_routes_to(cls, router) -> None:
+        if cls.model:
+            # Registered whenever the mixin is: one inherited but not registered
+            # breaks the import (see the route ordering in `BaseController`).
+            if not getattr(cls.service, "_group_by_dimensions", None):
+                raise ImproperlyConfigured(
+                    f"{cls.__name__} inherits GroupByModelControllerMixin, but "
+                    f"{cls.service.__name__} provides no `group_by` (GroupByMixin) or "
+                    f"declares no group_by_dimensions."
+                )
+            cls.method_to_route_function(
+                view_func=cls.group_by,
+                path="/group-by/",
+                methods=["POST"],
+                response=cls._group_by_response_schema(),
+                operation_id=f"{cls.model._meta.verbose_name.lower()}GroupBy",
+                summary=f"Group {cls.model._meta.verbose_name_plural.capitalize()}",
+                decorators=cls._group_by_function_decorators(),
+                view_wrapper=cls._annotate_group_by_view_function,
+                tags=[cls.model._meta.verbose_name],
+                # A group holds only the keys asked: the others are unset, not null.
+                exclude_unset=True,
+            )
+
+        super().add_routes_to(router)
+
+    @classmethod
+    def _group_by_function_decorators(cls):
+        return []
+
+    @classmethod
+    def _group_by_relations(cls) -> t.Dict[str, t.Tuple[t.Type[Schema], t.List[str]]]:
+        """`{dimension: (sub-schema, ORM lookups on the related model)}` of the
+        relation dimensions the list renders with a sub-schema. One the list renders
+        as a bare pk is rendered so here too."""
+        list_schema = getattr(cls, "list_response_schema", None)
+        if list_schema is None:
+            return {}
+        list_schema = _unwrap_list_schema(list_schema)
+        relations = {}
+        for name, dimension in cls.service._group_by_dimensions.items():
+            if dimension.related_model is None:
+                continue
+            field_name = dimension.output_field.name
+            field_info = list_schema.model_fields.get(field_name)
+            schemas = extract_schemas_from_annotation(field_info.annotation) if field_info else []
+            if not schemas:
+                continue
+            prefix = f"{field_name}__"
+            lookups = [
+                lookup[len(prefix):]
+                for lookup in cls._response_orm_fields(list_schema, [field_name])
+                if lookup.startswith(prefix)
+            ]
+            relations[name] = (schemas[0], lookups)
+        return relations
+
+    @classmethod
+    def _group_by_relation_fields(cls) -> t.Dict[str, t.List[str]]:
+        """What the service loads of each relation dimension: what its sub-schema
+        reads, or nothing for one rendered as a bare pk."""
+        relations = cls._group_by_relations()
+        return {
+            name: relations[name][1] if name in relations else []
+            for name, dimension in cls.service._group_by_dimensions.items()
+            if dimension.related_model is not None
+        }
+
+    @classmethod
+    def _group_by_response_schema(cls):
+        """`{count, results}`, a group typed key by key after its declaration.
+
+        Only the python type is taken from the field converter, never its
+        constraints: an aggregate is no value of the column, and a `ge`/`le` of an
+        integer column would refuse a sum it cannot hold in one row.
+        """
+        service = cls.service
+        relations = cls._group_by_relations()
+        fields = {}
+        for name, declaration in {**service._group_by_dimensions, **service._group_by_measures}.items():
+            python_type, _ = convert_db_field(declaration.output_field, optional=True)
+            if name in relations:
+                python_type = t.Optional[t.Union[relations[name][0], python_type]]
+            fields[name] = (python_type, pydantic.Field(None, title=declaration.label))
+        group_schema = pydantic.create_model(
+            f"{cls.model.__name__}GroupSchema", __base__=Schema, **fields
+        )
+        return pydantic.create_model(
+            f"{cls.model.__name__}GroupByResponseSchema",
+            __base__=Schema,
+            count=(int, pydantic.Field(..., description="The number of groups, over every page.")),
+            results=(t.List[group_schema], ...),
+        )
+
+    @classmethod
+    def _group_by_request_schema(cls):
+        service = cls.service
+        dimensions = service._group_by_dimensions
+        measures = service._group_by_measures
+
+        def described(declarations):
+            return ", ".join(f"`{name}` ({d.label})" for name, d in declarations.items())
+
+        names = [*dimensions, *measures]
+        fields = {
+            "group_by_fields": (
+                t.List[t.Literal[tuple(dimensions)]],
+                pydantic.Field(
+                    ..., min_length=1, max_length=cls.group_by_max_dimensions,
+                    description=f"The keys to group by, in order: {described(dimensions)}.",
+                ),
+            ),
+            "measures": (
+                t.List[t.Literal[tuple(measures)]],
+                pydantic.Field(..., min_length=1, description=f"The aggregates of each group: {described(measures)}."),
+            ),
+            "ordering": (
+                t.List[t.Literal[tuple(token for name in names for token in (name, f"-{name}"))]],
+                pydantic.Field(
+                    default_factory=list,
+                    description=(
+                        "Keys and aggregates asked to order by, prefixed with '-' for "
+                        "descending order; then the keys not named. NULLs come last."
+                    ),
+                ),
+            ),
+            "limit": (
+                t.Optional[int],
+                pydantic.Field(cls.group_by_default_limit, ge=1, le=cls.group_by_max_limit),
+            ),
+            "offset": (int, pydantic.Field(0, ge=0)),
+        }
+        filter_schema = getattr(cls, "list_filter_schema", None)
+        if filter_schema is not None:
+            fields["filters"] = (t.Optional[filter_schema], None)
+        return pydantic.create_model(
+            f"{cls.model.__name__}GroupBySchema", __base__=Schema, **fields
+        )
+
+    @classmethod
+    def _annotate_group_by_view_function(
+        cls, view_func: t.Callable[..., t.Any], path: str
+    ) -> t.Callable[..., t.Any]:
+        annotations = t.cast(FunctionType, view_func).__annotations__
+        annotations["path_parameters"] = t.Annotated[
+            cls._get_default_path_schema(path, view_func),
+            Path(default=None, include_in_schema=False),
+        ]
+        annotations["request_body"] = t.Annotated[cls._group_by_request_schema(), Body()]
+        return view_func
+
+    async def group_by(
+        self,
+        request: HttpRequest,
+        path_parameters: t.Optional[BaseModel],
+        request_body: BaseModel,
+    ) -> t.Dict:
+        # As the list: the path narrows, the filters narrow further, in one `Q`.
+        filters = getattr(request_body, "filters", None)
+        path_lookups = path_parameters.model_dump() if path_parameters else {}
+        if path_lookups:
+            expression = Q(**path_lookups)
+            if filters is not None:
+                expression &= filters.get_filter_expression()
+            filters = expression
+
+        try:
+            total, rows = await request.env.get(self.service).group_by(
+                request_body.group_by_fields,
+                request_body.measures,
+                filters=filters,
+                ordering=request_body.ordering,
+                limit=request_body.limit,
+                offset=request_body.offset,
+                relation_fields=self._group_by_relation_fields(),
+            )
+        except ServiceValidationMultiError as exc:
+            raise self.service_validation_error_to_api_error(
+                exc, loc_path=["body", "request_body"], fields_map={"dimensions": "group_by_fields"}
+            )
+        return {"count": total, "results": rows}
 
 
 class ModelController(

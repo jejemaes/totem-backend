@@ -2,12 +2,18 @@ from typing import List
 
 from ninja import Schema
 
-from core.api import DisplayNameModelControllerMixin, ModelController, ResequenceModelControllerMixin
+from core.api import (
+    DisplayNameModelControllerMixin,
+    GroupByModelControllerMixin,
+    ModelController,
+    ResequenceModelControllerMixin,
+)
 from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 
 from .schemas import (
     LineCreateSchema,
+    LineFilterSchema,
     ProductBodySchema,
     ProductDisplayNameSchema,
     ProductFilterSchema,
@@ -43,8 +49,9 @@ class OrderController(DisplayNameModelControllerMixin, ModelController):
     display_name_response_schema = OrderDisplayNameSchema
 
 
-class LineController(ModelController):
-    """Reads its order's stored `line_count` through the relation, which is fine."""
+class LineController(GroupByModelControllerMixin, ModelController):
+    """Reads its order's stored `line_count` through the relation, which is fine.
+    `/group-by/` renders `order` as the list does, `product` as a bare pk."""
 
     api = api_v1
     service = LineService
@@ -52,6 +59,7 @@ class LineController(ModelController):
     auth = [OAuthTokenAuthentication()]
 
     list_response_schema: Schema = List[LineSchema]
+    list_filter_schema = LineFilterSchema
     list_ordering_fields = ["quantity"]
     list_ordering_default_fields = ["quantity"]
     retrieve_response_schema: Schema = LineSchema
@@ -62,10 +70,12 @@ class LineController(ModelController):
 
 
 class CategoryProductController(
-    DisplayNameModelControllerMixin, ResequenceModelControllerMixin, ModelController
+    DisplayNameModelControllerMixin, ResequenceModelControllerMixin, GroupByModelControllerMixin,
+    ModelController,
 ):
     """Nested: the products of the category named by the path, which a creation
-    files them under, which `/resequence/` numbers and `/display-name/` names."""
+    files them under, which `/resequence/` numbers, `/display-name/` names and
+    `/group-by/` groups."""
 
     api = api_v1
     service = ProductService
