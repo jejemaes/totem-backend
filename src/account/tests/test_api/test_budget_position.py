@@ -18,6 +18,7 @@ from account.tests.common import (
     BudgetTestMixin,
 )
 from core.testing import APITestCaseMixin
+from totem.api import api_v1
 from user.tests.test_api.common import CommonTestMixin
 
 POSITION_ID4 = "01JP0000000000000000000099"
@@ -458,3 +459,109 @@ class BudgetPositionAPITest(BudgetTestMixin, CommonTestMixin, APITestCaseMixin, 
                 self.assertEqual(Decimal(api_data[amount]), getattr(obj, amount))
 
         self.assertEqual(set(fields), set(api_data.keys()))
+
+    # ------------------------------------------
+    # Group By Operation
+    # ------------------------------------------
+
+    def group_by(self, body, url=None, token=None):
+        return self.do_api_request(
+            f"{url or self.url}group-by/", "POST", token or self.user_access_token_frodon.token,
+            data=json.dumps(body),
+        )
+
+    def test_group_by_response(self):
+        response = self.group_by({
+            "group_by_fields": ["category"],
+            "measures": ["total_planned_sum", "total_planned_avg", "total_practical_sum", "total_practical_avg"],
+        })
+
+        self.assertEqual(response.status_code, 200)
+        # The budget of the path only; the category as the list renders it.
+        self.assertEqual(
+            response.json(),
+            {
+                "count": 2,
+                "results": [
+                    {
+                        "category": {"id": CATEGORY_GENERAL_ID, "name": "Rent", "color": self.category_general.color},
+                        "total_planned_sum": "-1000.00", "total_planned_avg": -1000.0,
+                        "total_practical_sum": "-80.00", "total_practical_avg": -80.0,
+                    },
+                    {
+                        "category": {"id": CATEGORY_SHOP_ID, "name": "Stock", "color": self.category_shop.color},
+                        "total_planned_sum": "-300.00", "total_planned_avg": -300.0,
+                        "total_practical_sum": "-20.50", "total_practical_avg": -20.5,
+                    },
+                ],
+            },
+        )
+
+    @parameterized.expand(
+        [
+            ("unknown dimension", {"group_by_fields": ["budget"]}, ["group_by_fields", 0]),
+            ("unknown measure", {"measures": ["total_planned"]}, ["measures", 0]),
+            ("ordering not asked", {"ordering": ["-total_practical_sum"]}, ["ordering"]),
+        ]
+    )
+    def test_group_by_request_field_validation(self, dummy, values, loc):
+        response = self.group_by({"group_by_fields": ["category"], "measures": ["total_planned_sum"], **values})
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual([error["loc"] for error in response.json()["detail"]], [["body", "request_body", *loc]])
+
+    @parameterized.expand(
+        [
+            ([], [CATEGORY_GENERAL_ID, CATEGORY_SHOP_ID]),
+            (["total_planned_sum"], [CATEGORY_GENERAL_ID, CATEGORY_SHOP_ID]),
+            (["-total_planned_sum"], [CATEGORY_SHOP_ID, CATEGORY_GENERAL_ID]),
+        ]
+    )
+    def test_group_by_ordering(self, ordering, category_ids):
+        response = self.group_by({
+            "group_by_fields": ["category"], "measures": ["total_planned_sum"], "ordering": ordering,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([group["category"]["id"] for group in response.json()["results"]], category_ids)
+
+    @parameterized.expand(
+        [
+            ("totem.budget.create", 403),
+            ("totem.budget.read", 200),
+            ("totem.budget.update", 403),
+            ("totem.budget.delete", 403),
+        ]
+    )
+    def test_group_by_access_rights(self, scope, status_code):
+        self.user_access_token_frodon.scope = scope
+        self.user_access_token_frodon.save(update_fields=["scope"])
+
+        response = self.group_by({"group_by_fields": ["category"], "measures": ["count"]})
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code != 200:
+            self.assertEqual(response.json(), {"detail": ["You do not have permission to perform this action."]})
+
+    @parameterized.expand(
+        [
+            ("BUDGET_USER", 0),  # another user's budget: no group
+            ("BUDGET_READER", 1),
+        ]
+    )
+    def test_group_by_access_rules(self, role, count):
+        response = self.group_by(
+            {"group_by_fields": ["category"], "measures": ["count"]}, url=self.url_other, token=self.token_as(role)
+        )
+
+        self.assertEqual((response.status_code, response.json()["count"]), (200, count))
+
+    def test_group_by_openapi(self):
+        request = api_v1.get_openapi_schema()["components"]["schemas"]["BudgetPositionGroupBySchema"]["properties"]
+
+        # A single value: pydantic documents it as a `const`, not a one-value `enum`.
+        self.assertEqual(request["group_by_fields"]["items"]["const"], "category")
+        self.assertEqual(
+            request["measures"]["items"]["enum"],
+            ["count", "total_planned_sum", "total_planned_avg", "total_practical_sum", "total_practical_avg"],
+        )

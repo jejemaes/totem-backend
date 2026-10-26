@@ -146,11 +146,23 @@ class BudgetService(
 class BudgetPositionService(
     CreateMixin[BudgetPositionCreateSchema],
     ReadMixin,
+    GroupByMixin,
     UpdateMixin[BudgetPositionUpdateSchema],
     DeleteMixin,
     ResequenceMixin,
     ServiceBase[BudgetPosition],
 ):
+    """Grouped by category, with the planned and practical totals of the positions.
+
+    A budget has one position per category at most, so within one budget a group
+    is one position: the aggregates only add up across budgets.
+    """
+
+    group_by_dimensions = {"category": Dimension("category")}
+    group_by_measures = {
+        **number_measures("total_planned", ["sum", "avg"]),
+        **number_measures("total_practical", ["sum", "avg"]),
+    }
 
     def validate_data(self, data, instance):
         # The rule of the movements: a position on a category of another account

@@ -23,6 +23,7 @@ BUDGET_PERMISSION_MAP = {
     # Numbering the positions or lines of a budget is updating them.
     "resequence": ["totem.budget.update"],
     "display_name": ["totem.budget.read"],
+    "group_by": ["totem.budget.read"],
 }
 
 
