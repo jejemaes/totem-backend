@@ -1,9 +1,11 @@
+from decimal import Decimal
+
 from asgiref.sync import async_to_sync
 from django.test import TestCase
 from parameterized import parameterized
 from pydantic import ValidationError as PydanticValidationError
 
-from account.models import AccountCategory, BudgetLine, BudgetPosition
+from account.models import AccountCategory, Budget, BudgetLine, BudgetPosition
 from account.schemas import BudgetPositionCreateSchema, BudgetPositionUpdateSchema
 from account.services import BudgetPositionService
 from account.tests.common import (
@@ -218,3 +220,72 @@ class TestBudgetPositionService(BudgetTestMixin, TestCase):
             )
 
         self.assertEqual(list(ctx.exception.dict()[0]), ["budget"])
+
+
+class TestBudgetPositionGroupBy(BudgetTestMixin, TestCase):
+    """`group_by` over the budgets of `BudgetTestMixin`, and a second budget of
+    SHOP with a Rent position: a budget has one position per category, so only
+    across budgets does a group hold more than one.
+
+        Rent   Shop 2026  -1000.00 planned  -80.00 practical
+        Rent   Shop 2027  -1200.00 planned  -80.00 practical (the same movements)
+        Stock  Shop 2026   -300.00 planned  -20.50 practical
+        Fees   Bank 2026    -60.00 planned    0.00 practical
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+        budget = Budget.objects.create(name="Shop 2027", account=cls.account_shop, user=cls.user)
+        position = BudgetPosition.objects.create(budget=budget, category=cls.category_general)
+        BudgetLine.objects.create(name="Rent", position=position, planned_amount=Decimal("-1200.00"))
+        BudgetPosition.objects.refresh_computed()
+
+    def setUp(self):
+        super().setUp()
+        self.service = Environment(user=self.user, language="en-us").get(BudgetPositionService)
+
+    def as_role(self, role_pk):
+        self.grant(self.user, role_pk)
+        return Environment(user=self.user, language="en-us").get(BudgetPositionService)
+
+    def test_group_by_measures(self):
+        total, rows = async_to_sync(self.service.group_by)(
+            ["category"], ["count", "total_planned_sum", "total_planned_avg", "total_practical_sum", "total_practical_avg"],
+        )
+
+        self.assertEqual(total, 3)
+        self.assertEqual(
+            [
+                (row["category"], row["count"], row["total_planned_sum"], row["total_planned_avg"],
+                 row["total_practical_sum"], row["total_practical_avg"])
+                for row in rows
+            ],
+            [
+                (self.category_general, 2, Decimal("-2200.00"), -1100.0, Decimal("-160.00"), -80.0),
+                (self.category_shop, 1, Decimal("-300.00"), -300.0, Decimal("-20.50"), -20.5),
+                (self.category_bank, 1, Decimal("-60.00"), -60.0, Decimal("0.00"), 0.0),
+            ],
+        )
+
+    def test_group_by_filters(self):
+        # As the nested route does: one budget, one position per group.
+        total, rows = async_to_sync(self.service.group_by)(
+            ["category"], ["count", "total_planned_sum"], filters={"budget_id": BUDGET_ID1},
+        )
+
+        self.assertEqual(
+            [(row["category"], row["count"], row["total_planned_sum"]) for row in rows],
+            [(self.category_general, 1, Decimal("-1000.00")), (self.category_shop, 1, Decimal("-300.00"))],
+        )
+
+    @parameterized.expand(
+        [
+            ("BUDGET_USER", [CATEGORY_GENERAL_ID, CATEGORY_SHOP_ID]),  # not Haddock's Fees
+            ("BUDGET_READER", [CATEGORY_GENERAL_ID, CATEGORY_SHOP_ID, CATEGORY_BANK_ID]),
+        ]
+    )
+    def test_group_by_access_rules(self, role, category_ids):
+        total, rows = async_to_sync(self.as_role(role).group_by)(["category"], ["count"])
+
+        self.assertEqual([str(row["category"].pk) for row in rows], category_ids)

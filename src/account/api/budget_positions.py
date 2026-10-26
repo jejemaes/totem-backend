@@ -2,7 +2,12 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
-from core.api import DisplayNameModelControllerMixin, ModelController, ResequenceModelControllerMixin
+from core.api import (
+    DisplayNameModelControllerMixin,
+    GroupByModelControllerMixin,
+    ModelController,
+    ResequenceModelControllerMixin,
+)
 from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
@@ -22,11 +27,12 @@ class BudgetPositionController(
     TokenHasScopePermissionModelControllerMixin,
     DisplayNameModelControllerMixin,
     ResequenceModelControllerMixin,
+    GroupByModelControllerMixin,
     ModelController,
 ):
     """Nested under its budget: every route stays within the budget of the path,
-    a creation files the position under it, and `/resequence/` numbers the
-    positions of that budget only."""
+    a creation files the position under it, `/resequence/` numbers the positions
+    of that budget only, and `/group-by/` groups them."""
 
     api = api_v1
     service = BudgetPositionService
