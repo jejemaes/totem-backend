@@ -247,7 +247,11 @@ class TestUserService(TestCase):
             # One more than before budgets existed: django's own UPDATE nulling
             # `Budget.user`. No computed field reads it, so the computed context
             # collects nothing up front.
-            ({"username": "Tintin"}, 17, 1),  # simple row, no relations deleted
+            # And one more again for `authentication_refreshtoken`, which cascades
+            # on the user. A single DELETE with no SELECT before it, because the
+            # table has no dependents of its own -- django fast-deletes it. The
+            # count drops by five once the oauth tables go with the toolkit.
+            ({"username": "Tintin"}, 18, 1),  # simple row, no relations deleted
             ({"id": USER_ID2, "username": "Tintin"}, 5, 0),  #  no matching row
             (
                 {"username": "notfound"},
@@ -256,7 +260,7 @@ class TestUserService(TestCase):
             ),  # user nonexistent --> no row deleted
             (
                 {"id": USER_ID2},
-                17,
+                18,
                 1,
             ),  # delete with m2m relations, relations should be deleted too
         ]
