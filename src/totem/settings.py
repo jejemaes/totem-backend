@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 import sys
+from datetime import timedelta
 from pathlib import Path
 
 from core.utils.various import env
@@ -40,6 +41,7 @@ INSTALLED_APPS = [
     "oauth2_provider",
     "django_celery_beat",
     "base",
+    "authentication",
     "oauth",
     "user",
     "website",
@@ -240,6 +242,17 @@ OAUTH2_PROVIDER_ACCESS_TOKEN_MODEL = 'oauth.AccessToken'
 OAUTH2_PROVIDER_REFRESH_TOKEN_MODEL = 'oauth.RefreshToken'
 OAUTH2_PROVIDER_ID_TOKEN_MODEL = 'oauth.IDToken'
 OAUTH2_PROVIDER_GRANT_MODEL = 'oauth.Grant'
+
+# Authentication (JWT access tokens + API keys)
+# A signing key of its own in production: rotating `SECRET_KEY` also invalidates
+# the sessions and the password reset links, so the two should not be one lever.
+JWT_SIGNING_KEY = env("TOTEM_JWT_SIGNING_KEY", default=SECRET_KEY)
+JWT_ALGORITHM = "HS256"
+# `int()` because `core.utils.various.env` always returns a string.
+JWT_ACCESS_TOKEN_LIFETIME = timedelta(seconds=int(env("TOTEM_JWT_ACCESS_TTL", default=15 * 60)))
+JWT_REFRESH_TOKEN_LIFETIME = timedelta(
+    seconds=int(env("TOTEM_JWT_REFRESH_TTL", default=14 * 24 * 3600))
+)
 
 OAUTH2_PROVIDER = {
     'SCOPES_BACKEND_CLASS': 'oauth.scopes.TotemScopes',

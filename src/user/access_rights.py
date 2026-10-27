@@ -9,6 +9,7 @@ __all__ = [
     "get_all_permission",
     "get_public_permission",
     "get_permission_choices",
+    "get_user_scopes",
 ]
 
 
@@ -57,3 +58,20 @@ def get_permission_choices():
     for perm, record in _PERMISSIONS.items():
         result.append((perm, record.permission))
     return result
+
+
+def get_user_scopes(user):
+    """ The permissions granted to a user: the union of those of their roles.
+
+    Sorted, so that the `scope` claim of an access token is deterministic: two
+    tokens minted from the same roles carry the same string, which a test can
+    assert on and a log can be grepped for.
+
+    Lives here, with the registry it reads from, rather than in `authentication`:
+    it answers "what may this user do", which is an access-rights question, and
+    the authentication app only freezes the answer into a token.
+    """
+    scopes = set()
+    for role in user.roles.all():
+        scopes |= set(role.permissions or [])
+    return sorted(scopes)
