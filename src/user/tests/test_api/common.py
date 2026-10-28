@@ -14,6 +14,11 @@ API_KEY_SECRET = "a-machine-caller-secret"
 class CommonTestMixin:
     """ The users, roles and credentials every API test case builds on.
 
+    Data only: no helper belongs here. The tests of `user` grant their scopes and
+    rules on `role` -- the role Frodon and Gollum hold -- and mint Frodon's token
+    from it on each request, so they do not use `AccessTokenStub`. The stub stays
+    for the modules not yet migrated to that convention.
+
     The access tokens are `AccessTokenStub`s, not rows: an access token is a
     signed JWT with no database row behind it, so there is nothing to create.
     The stub mints a real token from the production encoder on each access to

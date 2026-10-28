@@ -147,9 +147,12 @@ def grade_eval1(files):
 def grade_eval2(files):
     tests = joined(files, r".*tests/.*\.py$")
     keyset = bool(
-        re.search(r"set\(fields\)\s*,?\s*\n?\s*set\(\s*\w+\.keys\(\)\s*\)", tests)
-        or re.search(r"set\(\s*\w+\.keys\(\)\s*\)\s*,?\s*\n?\s*set\(fields\)", tests)
+        re.search(r"set\(fields\)\s*,?\s*\n?\s*set\(\s*\w+(\.keys\(\))?\s*\)", tests)
+        or re.search(r"set\(\s*\w+(\.keys\(\))?\s*\)\s*,?\s*\n?\s*set\(fields\)", tests)
     )
+    # Test methods aside, a class defines `do_request` and `assert_api_format`, nothing else.
+    helpers = set(re.findall(r"^    def (?!test_|setUp)(\w+)", tests, re.M))
+    role_grant = "role.permissions" in tests and "api_key.scope" in tests
     return [
         (
             "Uses CommonTestMixin and APITestCaseMixin",
@@ -157,20 +160,22 @@ def grade_eval2(files):
             "both present" if ("CommonTestMixin" in tests and "APITestCaseMixin" in tests) else "missing one",
         ),
         (
-            "Defines an _assert_api_format helper",
-            "def _assert_api_format" in tests,
-            "defined" if "def _assert_api_format" in tests else "absent",
+            "Defines do_request and assert_api_format helpers, and no other helper method",
+            helpers == {"do_request", "assert_api_format"},
+            f"helpers: {sorted(helpers)}",
         ),
         (
-            "_assert_api_format asserts the exact key set of the response",
+            "assert_api_format asserts the exact key set of the response",
             keyset,
-            "key-set assertion present" if keyset else "no set(fields)==set(keys) assertion",
+            "key-set assertion present" if keyset else "no set(fields)==set(api_data) assertion",
         ),
         (
-            "Has permission tests parameterized over (scope, status_code)",
-            bool(re.search(r"access_rights|requires_its_own_scope", tests))
-            and "parameterized.expand" in tests,
-            "present" if re.search(r"access_rights|requires_its_own_scope", tests) and "parameterized.expand" in tests else "absent",
+            "Has user and apikey access-rights tests parameterized over (permissions, status_code), granted on the role",
+            bool(re.search(r"_user_access_rights", tests))
+            and bool(re.search(r"_apikey_access_rights", tests))
+            and "parameterized.expand" in tests
+            and role_grant,
+            "present" if re.search(r"_user_access_rights", tests) and re.search(r"_apikey_access_rights", tests) and role_grant else "absent",
         ),
         (
             "Declares module-level id constants and url/url_detail in setUpTestData",

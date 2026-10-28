@@ -36,13 +36,13 @@
       "id": 2,
       "name": "api-tests-for-existing-controller",
       "prompt": "Écris les tests d'API pour le MenuController de l'app website, en suivant les conventions de test du projet.",
-      "expected_output": "A test module following user/tests/test_api/test_user.py: CommonTestMixin + APITestCaseMixin, module-level id constants, url/url_detail in setUpTestData, per-operation sections, test_*_access_rights parameterized over (scope, status), and an _assert_api_format helper ending with the set(fields) == set(api_data.keys()) key-set assertion.",
+      "expected_output": "Test modules following user/tests/test_api/: CommonTestMixin + APITestCaseMixin, module-level id constants, url/url_detail in setUpTestData, per-operation sections, test_*_user_access_rights and test_*_apikey_access_rights parameterized over (permissions, status) and granted on the current role / API key, only do_request and assert_api_format as helpers, and assert_api_format ending with the set(fields) == set(api_data) key-set assertion.",
       "files": [],
       "assertions": [
         "Uses CommonTestMixin and APITestCaseMixin",
-        "Defines an _assert_api_format helper",
-        "_assert_api_format asserts the exact key set of the response (set(fields) == set(api_data.keys()))",
-        "Has permission tests parameterized over (scope, status_code)",
+        "Defines do_request and assert_api_format helpers, and no other helper method",
+        "assert_api_format asserts the exact key set of the response (set(fields) == set(api_data))",
+        "Has user and apikey access-rights tests parameterized over (permissions, status_code), granted on the role",
         "Declares module-level id constants and url/url_detail in setUpTestData",
         "Covers every operation the controller exposes, one section each"
       ]
