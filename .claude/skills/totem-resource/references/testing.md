@@ -67,7 +67,9 @@ confusing `KeyError` rather than a failed assertion.
 
 ## API tests
 
-`src/user/tests/test_api/` is the reference. The other apps still use an older
+`src/user/tests/test_api/` is the reference; `src/account/tests/test_api/` follows
+it too, with nested routes, budget rules, resequence and group by. The other apps
+still use an older
 style (an `AccessTokenStub` holding every scope, `request` and payload helpers);
 do not copy it, and migrate a module to this convention when you rewrite its
 tests.
@@ -100,9 +102,11 @@ class ThingAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         cls.url_detail = f"/api/v1/things/{THING_ID1}/"
 ```
 
-- `CommonTestMixin` holds shared data only: there is one per module (for now,
-  `user.tests.test_api.common`, which provides Frodon and Gollum, `cls.role` and
-  the API key). `core.testing.APITestCaseMixin` is not modified.
+- `CommonTestMixin` holds shared data only: there is one per module, in
+  `<app>/tests/test_api/common.py`. `user.tests.test_api.common` provides Frodon
+  and Gollum, `cls.role` and the API key; a module's own one extends it (see
+  `account.tests.test_api.common`) and leaves the data of the service tests
+  (`<app>/tests/common.py`) alone. `core.testing.APITestCaseMixin` is not modified.
 - Put id constants at module level. Build records with `bulk_create` whenever
   the model allows it.
 - Test data uses Lord of the Rings names: Frodon, Gollum, Pipin, Galadriel, Sam;

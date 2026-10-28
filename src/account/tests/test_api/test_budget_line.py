@@ -1,167 +1,333 @@
-import json
 from decimal import Decimal
 
 from django.test import TestCase
 from freezegun import freeze_time
 from parameterized import parameterized
 
-from account.models import BudgetLine
-from account.tests.common import (
+from account.models import Budget, BudgetLine, BudgetPosition
+from authentication.testing import mint_access_token
+from core.testing import APITestCaseMixin
+from user.access_rights import get_user_scopes
+
+from .common import (
     BUDGET_ID1,
     BUDGET_ID2,
-    LINE_FEES_ID,
-    LINE_RENT_ID,
-    LINE_STOCK_ID,
-    POSITION_FEES_ID,
-    POSITION_RENT_ID,
-    POSITION_STOCK_ID,
-    BudgetTestMixin,
+    BUDGET_SCOPES,
+    LINE_ALE_ID,
+    LINE_BREAKFAST_ID,
+    LINE_PIPEWEED_ID,
+    PERMISSION_DENIED,
+    POSITION_ALE_ID,
+    POSITION_BREAKFAST_ID,
+    POSITION_PIPEWEED_ID,
+    CommonTestMixin,
 )
-from core.testing import APITestCaseMixin
-from user.tests.test_api.common import CommonTestMixin
 
-LINE_ID4 = "01JN0000000000000000000099"
+LINE_ID4 = "01JN0000000000000000000099"  # matches no line
 
 LINE_FIELDS = ["id", "budget", "name", "sequence", "position", "planned_amount"]
 
+OWN = "budget_line_manage_own"
+ALL = "budget_line_manage_all"
+
 
 @freeze_time("2026-10-15 11:12:13")
-class BudgetLineAPITest(BudgetTestMixin, CommonTestMixin, APITestCaseMixin, TestCase):
+class BudgetLineAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
+    """ The lines of a budget, nested under it: every route stays within the budget
+    of the path.
+
+    Frodon is in charge of BUDGET_ID1 (Second breakfast, Pipe-weed), Gollum of
+    BUDGET_ID2 (Ale): that split is what `budget_line_manage_own` is tested against.
+    """
 
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
 
+        cls.role.permissions = BUDGET_SCOPES
+        cls.role.rules = []
+        cls.role.save()
+
         cls.url = f"/api/v1/accounting/budget/{BUDGET_ID1}/lines/"
-        cls.url_detail = f"{cls.url}{LINE_RENT_ID}/"
+        cls.url_detail = f"{cls.url}{LINE_BREAKFAST_ID}/"
         cls.url_other = f"/api/v1/accounting/budget/{BUDGET_ID2}/lines/"
-        cls.url_resequence = f"{cls.url}resequence/"
-        cls.payload_create = {"name": "Deposit", "sequence": 5, "position": POSITION_RENT_ID, "planned_amount": "-500.00"}
-        cls.payload_update = {"name": "Rent (revised)", "sequence": 1, "position": POSITION_STOCK_ID, "planned_amount": "-1100.00"}
+        cls.payload_create = {
+            "name": "Elevenses",
+            "sequence": 5,
+            "position": POSITION_BREAKFAST_ID,
+            "planned_amount": "-500.00",
+        }
+        cls.payload_update = {
+            "name": "Second breakfast (revised)",
+            "sequence": 1,
+            "position": POSITION_PIPEWEED_ID,
+            "planned_amount": "-1100.00",
+        }
 
     # ------------------------------------------
     # List Operation
     # ------------------------------------------
 
     def test_list_response(self):
-        response = self.do_api_request(self.url, "GET", self.user_access_token_frodon.token)
+        response = self.do_request("GET", self.url)
         data = response.json()
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("count", data)
-        self.assertIn("results", data)
-        self.assertIn("next", data)
-        self.assertIn("previous", data)
-        self.assertEqual(sorted(item["id"] for item in data["results"]), [LINE_RENT_ID, LINE_STOCK_ID])
+        self.assertEqual(set(data), {"count", "results", "next", "previous"})
+        # The budget of the path only.
         self.assertEqual(data["count"], 2)
+        self.assertEqual({item["id"] for item in data["results"]}, {LINE_BREAKFAST_ID, LINE_PIPEWEED_ID})
 
         for item in data["results"]:
-            self._assert_api_format(item, BudgetLine.objects.get(id=item["id"]), LINE_FIELDS)
+            self.assert_api_format(item, BudgetLine.objects.get(id=item["id"]))
 
     @parameterized.expand(
         [
-            ({"name": "rest"}, [LINE_STOCK_ID]),
-            ({"position": POSITION_RENT_ID}, [LINE_RENT_ID]),
-            ({"position": POSITION_RENT_ID, "name": "rest"}, []),
+            ({"name": "weed"}, [LINE_PIPEWEED_ID]),
+            ({"position": POSITION_BREAKFAST_ID}, [LINE_BREAKFAST_ID]),
+            ({"position": POSITION_BREAKFAST_ID, "name": "weed"}, []),
             # A position of another budget: the path wins, nothing is listed.
-            ({"position": POSITION_FEES_ID}, []),
+            ({"position": POSITION_ALE_ID}, []),
+            # Nor can a name reach outside the budget of the path.
+            ({"name": "ale"}, []),
         ]
     )
-    def test_list_filters(self, filters, ids):
-        response = self.do_api_request(self.url, "GET", self.user_access_token_frodon.token, params=filters)
+    def test_list_filters(self, filters, expected_pks):
+        response = self.do_request("GET", self.url, params=filters)
         data = response.json()
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(sorted(item["id"] for item in data["results"]), ids)
-        self.assertEqual(data["count"], len(ids))
+        self.assertEqual(data["count"], len(expected_pks))
+        self.assertEqual({item["id"] for item in data["results"]}, set(expected_pks))
+
+    # No `test_list_invalid_filters`: every filter of `BudgetLineFilterSchema` is a
+    # string, so no value can fail to parse.
 
     @parameterized.expand(
         [
             ([], ["sequence", "id"]),  # default
+            (["sequence"], ["sequence", "id"]),
+            (["-sequence"], ["-sequence", "id"]),
             (["name"], ["name", "id"]),
+            (["-name"], ["-name", "id"]),
+            (["planned_amount"], ["planned_amount", "id"]),
             (["-planned_amount"], ["-planned_amount", "id"]),
         ]
     )
     def test_list_ordering(self, ordering_fields, order_by):
         params = {"ordering": ",".join(ordering_fields)} if ordering_fields else {}
-        response = self.do_api_request(self.url, "GET", self.user_access_token_frodon.token, params=params)
 
+        response = self.do_request("GET", self.url, params=params)
+
+        self.assertEqual(response.status_code, 200)
         self.assertEqual(
             [item["id"] for item in response.json()["results"]],
             list(BudgetLine.objects.filter(budget_id=BUDGET_ID1).order_by(*order_by).values_list("pk", flat=True)),
         )
 
+    # The query counts include the one minting the token reads the roles with.
     @parameterized.expand(
         [
-            ([], LINE_FIELDS, 6),  # the budget and the position prefetched
-            (["budget"], ["id", "budget"], 5),
-            (["name", "planned_amount"], ["id", "name", "planned_amount"], 4),
+            ([], LINE_FIELDS, 7),  # default means all fields: the budget and position prefetched
+            (["budget"], ["id", "budget"], 6),  # `id` is always returned
+            (["name", "planned_amount"], ["id", "name", "planned_amount"], 5),
         ]
     )
     def test_list_query_fields(self, query_fields, received_fields, query_count):
         params = {"fields": ",".join(query_fields)} if query_fields else {}
 
         with self.assertNumQueries(query_count):
-            response = self.do_api_request(self.url, "GET", self.user_access_token_frodon.token, params=params)
-            data = response.json()
+            response = self.do_request("GET", self.url, params=params)
+        data = response.json()
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(data["count"], 2)
         for item in data["results"]:
-            self._assert_api_format(item, BudgetLine.objects.get(pk=item["id"]), received_fields)
+            self.assert_api_format(item, BudgetLine.objects.get(pk=item["id"]), received_fields)
 
     @parameterized.expand(
         [
-            ("totem.budget.create", 403),
-            ("totem.budget.read", 200),
-            ("totem.budget.update", 403),
-            ("totem.budget.delete", 403),
+            (["not_existing_field"],),
+            (["not_existing_field", "position"],),  # with a relation
+            (["not_existing_field", "name"],),
+            (["budget_id"],),  # the column of a relation is not a public token
         ]
     )
-    def test_list_access_rights(self, scope, status_code):
-        self.user_access_token_frodon.scope = scope
-        self.user_access_token_frodon.save(update_fields=["scope"])
+    def test_list_invalid_query_fields(self, query_fields):
+        response = self.do_request("GET", self.url, params={"fields": ",".join(query_fields)})
 
-        response = self.do_api_request(self.url, "GET", self.user_access_token_frodon.token)
+        self.assertEqual(response.status_code, 422)
+
+    # No `test_list_searching`: `BudgetLineFilterSchema` has no `search` field.
+
+    @parameterized.expand(
+        [
+            ([], 403),
+            (["totem.budget.read"], 200),
+            (["totem.budget.create", "totem.budget.update", "totem.budget.delete"], 403),
+            (["totem.account.read"], 403),
+        ]
+    )
+    def test_list_user_access_rights(self, permissions, status_code):
+        self.role.permissions = permissions
+        self.role.save()
+
+        response = self.do_request("GET", self.url)
 
         self.assertEqual(response.status_code, status_code)
-        if status_code != 200:
-            self.assertEqual(response.json(), {"detail": ["You do not have permission to perform this action."]})
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
 
-    @parameterized.expand([("BUDGET_USER", 0), ("BUDGET_READER", 1)])
-    def test_list_access_rules(self, role, count):
-        response = self.do_api_request(self.url_other, "GET", self.token_as(role))
+    @parameterized.expand(
+        [
+            ([], 403),
+            (["totem.budget.read"], 200),
+            (["totem.budget.create", "totem.budget.update", "totem.budget.delete"], 403),
+            (["totem.account.read"], 403),
+        ]
+    )
+    def test_list_apikey_access_rights(self, permissions, status_code):
+        self.api_key.scope = permissions
+        self.api_key.save()
 
-        self.assertEqual((response.status_code, response.json()["count"]), (200, count))
+        response = self.do_request("GET", self.url, auth="apikey")
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([], BUDGET_ID1, [LINE_BREAKFAST_ID, LINE_PIPEWEED_ID]),
+            ([], BUDGET_ID2, [LINE_ALE_ID]),
+            ([OWN], BUDGET_ID1, [LINE_BREAKFAST_ID, LINE_PIPEWEED_ID]),
+            ([OWN], BUDGET_ID2, []),  # Gollum's budget
+            ([ALL], BUDGET_ID2, [LINE_ALE_ID]),
+            # The rules of one role combine with AND.
+            ([OWN, ALL], BUDGET_ID2, []),
+        ]
+    )
+    def test_list_user_access_rules(self, rules, budget_id, expected_pks):
+        self.role.rules = rules
+        self.role.save()
+
+        response = self.do_request("GET", f"/api/v1/accounting/budget/{budget_id}/lines/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual({item["id"] for item in response.json()["results"]}, set(expected_pks))
+
+    @parameterized.expand(
+        [
+            ([],),
+            ([OWN],),
+            ([ALL],),
+            ([OWN, ALL],),
+        ]
+    )
+    def test_list_apikey_access_rules(self, rules):
+        # A key has no user, hence no role: whatever the rules of the roles, it
+        # reads the lines of every budget. See `ApiKeyAuth`.
+        self.role.rules = rules
+        self.role.save()
+
+        response = self.do_request("GET", self.url_other, auth="apikey")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual({item["id"] for item in response.json()["results"]}, {LINE_ALE_ID})
 
     # ------------------------------------------
     # Retrieve Operation
     # ------------------------------------------
 
     def test_retrieve_response(self):
-        response = self.do_api_request(self.url_detail, "GET", self.user_access_token_frodon.token)
+        response = self.do_request("GET", self.url_detail)
 
         self.assertEqual(response.status_code, 200)
-        self._assert_api_format(response.json(), BudgetLine.objects.get(pk=LINE_RENT_ID), None)
+        self.assert_api_format(response.json(), BudgetLine.objects.get(pk=LINE_BREAKFAST_ID))
 
     @parameterized.expand(
         [
             ("unknown", LINE_ID4),
-            ("another budget's", LINE_FEES_ID),
+            # Within the budget of the path only.
+            ("another_budgets", LINE_ALE_ID),
         ]
     )
     def test_retrieve_not_found(self, dummy, line_id):
-        response = self.do_api_request(f"{self.url}{line_id}/", "GET", self.user_access_token_frodon.token)
+        response = self.do_request("GET", f"{self.url}{line_id}/")
 
         self.assertEqual(response.status_code, 404)
 
-    @parameterized.expand([("totem.budget.read", 200), ("totem.budget.create", 403)])
-    def test_retrieve_access_rights(self, scope, status_code):
-        self.user_access_token_frodon.scope = scope
-        self.user_access_token_frodon.save(update_fields=["scope"])
+    @parameterized.expand(
+        [
+            ([], 403),
+            (["totem.budget.read"], 200),
+            (["totem.budget.create", "totem.budget.update", "totem.budget.delete"], 403),
+            (["totem.account.read"], 403),
+        ]
+    )
+    def test_retrieve_user_access_rights(self, permissions, status_code):
+        self.role.permissions = permissions
+        self.role.save()
 
-        response = self.do_api_request(self.url_detail, "GET", self.user_access_token_frodon.token)
+        response = self.do_request("GET", self.url_detail)
 
         self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([], 403),
+            (["totem.budget.read"], 200),
+            (["totem.budget.create", "totem.budget.update", "totem.budget.delete"], 403),
+            (["totem.account.read"], 403),
+        ]
+    )
+    def test_retrieve_apikey_access_rights(self, permissions, status_code):
+        self.api_key.scope = permissions
+        self.api_key.save()
+
+        response = self.do_request("GET", self.url_detail, auth="apikey")
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([], BUDGET_ID2, LINE_ALE_ID, 200),
+            ([OWN], BUDGET_ID1, LINE_BREAKFAST_ID, 200),
+            ([OWN], BUDGET_ID2, LINE_ALE_ID, 404),  # out of reach reads as missing
+            ([ALL], BUDGET_ID2, LINE_ALE_ID, 200),
+            ([OWN, ALL], BUDGET_ID2, LINE_ALE_ID, 404),
+        ]
+    )
+    def test_retrieve_user_access_rules(self, rules, budget_id, pk, status_code):
+        self.role.rules = rules
+        self.role.save()
+
+        response = self.do_request("GET", f"/api/v1/accounting/budget/{budget_id}/lines/{pk}/")
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 200:
+            self.assertEqual(response.json()["id"], pk)
+
+    @parameterized.expand(
+        [
+            ([],),
+            ([OWN],),
+            ([ALL],),
+        ]
+    )
+    def test_retrieve_apikey_access_rules(self, rules):
+        # The rules of the roles do not bound a key. See `ApiKeyAuth`.
+        self.role.rules = rules
+        self.role.save()
+
+        response = self.do_request("GET", f"{self.url_other}{LINE_ALE_ID}/", auth="apikey")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["id"], LINE_ALE_ID)
 
     # ------------------------------------------
     # Create Operation
@@ -171,64 +337,127 @@ class BudgetLineAPITest(BudgetTestMixin, CommonTestMixin, APITestCaseMixin, Test
         [
             ({"name": None}, 422, "name"),
             ({"position": None}, 422, "position"),
-            ({"position": POSITION_FEES_ID}, 422, "position"),  # another budget's
+            ({"position": POSITION_ALE_ID}, 422, "position"),  # another budget's
             ({"planned_amount": None}, 422, "planned_amount"),
             ({"planned_amount": "1.001"}, 422, "planned_amount"),
             ({"sequence": None}, 422, "sequence"),
+            ({"name": "Elevenses"}, 201, None),
         ]
     )
     def test_create_request_field_validation(self, extra_body, status_code, error_field):
-        response = self.do_api_request(
-            self.url, "POST", self.user_access_token_frodon.token, data={**self.payload_create, **extra_body}
-        )
+        response = self.do_request("POST", self.url, data={**self.payload_create, **extra_body})
 
         self.assertEqual(response.status_code, status_code)
-        self.assertEqual([detail["loc"][-1] for detail in response.json()["detail"]], [error_field])
+        if status_code == 422:
+            self.assertEqual([detail["loc"][-1] for detail in response.json()["detail"]], [error_field])
 
     def test_create_response(self):
-        response = self.do_api_request(self.url, "POST", self.user_access_token_frodon.token, data=self.payload_create)
+        response = self.do_request("POST", self.url, data=self.payload_create)
         data = response.json()
 
         self.assertEqual(response.status_code, 201)
         obj = BudgetLine.objects.get(id=data["id"])
-        self._assert_api_format(data, obj, LINE_FIELDS)
+        self.assert_api_format(data, obj)
         self.assertEqual(obj.budget_id, BUDGET_ID1)
-        self.assertPositionTotals(POSITION_RENT_ID, "-1500.00", "-80.00")
-        self.assertBudgetTotals(BUDGET_ID1, "-1800.00", "-100.50")
+        # The totals of the position and of the budget follow.
+        position = BudgetPosition.objects.get(pk=POSITION_BREAKFAST_ID)
+        self.assertEqual((position.total_planned, position.total_practical), (Decimal("-1500.00"), Decimal("-80.00")))
+        budget = Budget.objects.get(pk=BUDGET_ID1)
+        self.assertEqual(
+            (budget.total_planned_amount, budget.total_practical_amount), (Decimal("-1800.00"), Decimal("-100.50"))
+        )
 
     def test_create_ignores_a_budget_in_the_body(self):
-        response = self.do_api_request(
-            self.url, "POST", self.user_access_token_frodon.token, data={**self.payload_create, "budget": BUDGET_ID2}
-        )
+        response = self.do_request("POST", self.url, data={**self.payload_create, "budget": BUDGET_ID2})
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(BudgetLine.objects.get(pk=response.json()["id"]).budget_id, BUDGET_ID1)
 
-    @parameterized.expand([("BUDGET_USER", 422), ("BUDGET_ADMINISTRATOR", 201)])
-    def test_create_access_rules(self, role, status_code):
-        response = self.do_api_request(
-            self.url_other, "POST", self.token_as(role), data={**self.payload_create, "position": POSITION_FEES_ID}
-        )
+    @parameterized.expand(
+        [
+            ([], 403),
+            (["totem.budget.create"], 201),
+            (["totem.budget.read", "totem.budget.update", "totem.budget.delete"], 403),
+            (["totem.account.create"], 403),
+        ]
+    )
+    def test_create_user_access_rights(self, permissions, status_code):
+        self.role.permissions = permissions
+        self.role.save()
+
+        response = self.do_request("POST", self.url, data=self.payload_create)
 
         self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
 
     @parameterized.expand(
         [
-            ("totem.budget.create", 201),
-            ("totem.budget.read", 403),
-            ("totem.budget.update", 403),
-            ("totem.budget.delete", 403),
+            ([], 403),
+            (["totem.budget.create"], 201),
+            (["totem.budget.read", "totem.budget.update", "totem.budget.delete"], 403),
+            (["totem.account.create"], 403),
         ]
     )
-    def test_create_access_rights(self, scope, status_code):
-        self.user_access_token_frodon.scope = scope
-        self.user_access_token_frodon.save(update_fields=["scope"])
+    def test_create_apikey_access_rights(self, permissions, status_code):
+        self.api_key.scope = permissions
+        self.api_key.save()
 
-        response = self.do_api_request(self.url, "POST", self.user_access_token_frodon.token, data=self.payload_create)
+        response = self.do_request("POST", self.url, auth="apikey", data=self.payload_create)
 
         self.assertEqual(response.status_code, status_code)
-        if status_code != 201:
-            self.assertEqual(response.json(), {"detail": ["You do not have permission to perform this action."]})
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([], BUDGET_ID2, POSITION_ALE_ID, 201),
+            ([OWN], BUDGET_ID1, POSITION_BREAKFAST_ID, 201),
+            # Gollum's budget: the position resolves (the role holds no rule on
+            # positions), but the line created is out of reach of the line rules,
+            # so the whole creation is refused -- a 403, not a 422 nor a 404.
+            ([OWN], BUDGET_ID2, POSITION_ALE_ID, 403),
+            ([ALL], BUDGET_ID2, POSITION_ALE_ID, 201),
+            ([OWN, ALL], BUDGET_ID2, POSITION_ALE_ID, 403),
+        ]
+    )
+    def test_create_user_access_rules(self, rules, budget_id, position_id, status_code):
+        self.role.rules = rules
+        self.role.save()
+
+        response = self.do_request(
+            "POST",
+            f"/api/v1/accounting/budget/{budget_id}/lines/",
+            data={**self.payload_create, "position": position_id},
+        )
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 201:
+            self.assertEqual(BudgetLine.objects.get(pk=response.json()["id"]).budget_id, budget_id)
+        else:
+            self.assertEqual(
+                response.json(), {"detail": ["You do not have permission to create some of the objects."]}
+            )
+            self.assertFalse(BudgetLine.objects.filter(name="Elevenses").exists())
+
+    @parameterized.expand(
+        [
+            ([],),
+            ([OWN],),
+            ([ALL],),
+        ]
+    )
+    def test_create_apikey_access_rules(self, rules):
+        # The rules of the roles do not bound a key. See `ApiKeyAuth`.
+        self.role.rules = rules
+        self.role.save()
+
+        response = self.do_request(
+            "POST", self.url_other, auth="apikey", data={**self.payload_create, "position": POSITION_ALE_ID}
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(BudgetLine.objects.get(pk=response.json()["id"]).budget_id, BUDGET_ID2)
 
     # ------------------------------------------
     # Update Operation
@@ -236,198 +465,236 @@ class BudgetLineAPITest(BudgetTestMixin, CommonTestMixin, APITestCaseMixin, Test
 
     @parameterized.expand(
         [
-            ({"name": None}, 422),
-            ({"position": POSITION_FEES_ID}, 422),  # another budget's
-            ({"planned_amount": None}, 422),
+            ({"name": None}, 422, "name"),
+            # Not refused by a validation: the derived `budget` comes out null and
+            # the database constraint answers, its SQL message in the response.
+            # Pinned as found; it reads like a missing null check on `position`.
+            ({"position": None}, 422, "__all__"),
+            ({"position": POSITION_ALE_ID}, 422, "position"),  # another budget's
+            ({"planned_amount": None}, 422, "planned_amount"),
+            ({"planned_amount": "1.001"}, 422, "planned_amount"),
+            ({"name": "Second breakfast"}, 200, None),
         ]
     )
-    def test_update_request_field_validation(self, extra_body, status_code):
-        response = self.do_api_request(
-            self.url_detail, "PATCH", self.user_access_token_frodon.token, data={**self.payload_update, **extra_body}
-        )
+    def test_update_request_field_validation(self, extra_body, status_code, error_field):
+        response = self.do_request("PATCH", self.url_detail, data={**self.payload_update, **extra_body})
 
         self.assertEqual(response.status_code, status_code)
+        if status_code == 422:
+            self.assertEqual([detail["loc"][-1] for detail in response.json()["detail"]], [error_field])
 
     def test_update_response(self):
-        response = self.do_api_request(self.url_detail, "PATCH", self.user_access_token_frodon.token, data=self.payload_update)
+        response = self.do_request("PATCH", self.url_detail, data=self.payload_update)
 
         self.assertEqual(response.status_code, 200)
-        self._assert_api_format(response.json(), BudgetLine.objects.get(pk=LINE_RENT_ID), LINE_FIELDS)
-        # Moved to the other position, and changed.
-        self.assertPositionTotals(POSITION_RENT_ID, "0", "-80.00")
-        self.assertPositionTotals(POSITION_STOCK_ID, "-1400.00", "-20.50")
-        self.assertBudgetTotals(BUDGET_ID1, "-1400.00", "-100.50")
-
-    def test_update_another_budgets_line(self):
-        response = self.do_api_request(
-            f"{self.url}{LINE_FEES_ID}/", "PATCH", self.user_access_token_frodon.token, data={"name": "Mine"}
+        self.assert_api_format(response.json(), BudgetLine.objects.get(pk=LINE_BREAKFAST_ID))
+        # Moved to the other position, and changed: both positions follow.
+        position = BudgetPosition.objects.get(pk=POSITION_BREAKFAST_ID)
+        self.assertEqual((position.total_planned, position.total_practical), (Decimal("0"), Decimal("-80.00")))
+        position = BudgetPosition.objects.get(pk=POSITION_PIPEWEED_ID)
+        self.assertEqual((position.total_planned, position.total_practical), (Decimal("-1400.00"), Decimal("-20.50")))
+        budget = Budget.objects.get(pk=BUDGET_ID1)
+        self.assertEqual(
+            (budget.total_planned_amount, budget.total_practical_amount), (Decimal("-1400.00"), Decimal("-100.50"))
         )
 
+    def test_update_another_budgets_line(self):
+        response = self.do_request("PATCH", f"{self.url}{LINE_ALE_ID}/", data={"name": "Mine"})
+
         self.assertEqual(response.status_code, 404)
+        self.assertEqual(BudgetLine.objects.get(pk=LINE_ALE_ID).name, "Ale")
 
     @parameterized.expand(
         [
-            ("totem.budget.create", 403),
-            ("totem.budget.read", 403),
-            ("totem.budget.update", 200),
-            ("totem.budget.delete", 403),
+            ([], 403),
+            (["totem.budget.update"], 200),
+            (["totem.budget.create", "totem.budget.read", "totem.budget.delete"], 403),
+            (["totem.account.update"], 403),
         ]
     )
-    def test_update_access_rights(self, scope, status_code):
-        self.user_access_token_frodon.scope = scope
-        self.user_access_token_frodon.save(update_fields=["scope"])
+    def test_update_user_access_rights(self, permissions, status_code):
+        self.role.permissions = permissions
+        self.role.save()
 
-        response = self.do_api_request(self.url_detail, "PATCH", self.user_access_token_frodon.token, data=self.payload_update)
+        response = self.do_request("PATCH", self.url_detail, data=self.payload_update)
 
         self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([], 403),
+            (["totem.budget.update"], 200),
+            (["totem.budget.create", "totem.budget.read", "totem.budget.delete"], 403),
+            (["totem.account.update"], 403),
+        ]
+    )
+    def test_update_apikey_access_rights(self, permissions, status_code):
+        self.api_key.scope = permissions
+        self.api_key.save()
+
+        response = self.do_request("PATCH", self.url_detail, auth="apikey", data=self.payload_update)
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([], BUDGET_ID2, LINE_ALE_ID, 200),
+            ([OWN], BUDGET_ID1, LINE_BREAKFAST_ID, 200),
+            ([OWN], BUDGET_ID2, LINE_ALE_ID, 404),
+            ([ALL], BUDGET_ID2, LINE_ALE_ID, 200),
+            ([OWN, ALL], BUDGET_ID2, LINE_ALE_ID, 404),
+        ]
+    )
+    def test_update_user_access_rules(self, rules, budget_id, pk, status_code):
+        self.role.rules = rules
+        self.role.save()
+
+        response = self.do_request(
+            "PATCH", f"/api/v1/accounting/budget/{budget_id}/lines/{pk}/", data={"name": "Lembas"}
+        )
+
+        self.assertEqual(response.status_code, status_code)
+        # Only the record in reach was written.
+        self.assertEqual(BudgetLine.objects.get(pk=pk).name == "Lembas", status_code == 200)
+
+    @parameterized.expand(
+        [
+            ([],),
+            ([OWN],),
+            ([ALL],),
+        ]
+    )
+    def test_update_apikey_access_rules(self, rules):
+        # The rules of the roles do not bound a key. See `ApiKeyAuth`.
+        self.role.rules = rules
+        self.role.save()
+
+        response = self.do_request("PATCH", f"{self.url_other}{LINE_ALE_ID}/", auth="apikey", data={"name": "Lembas"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(BudgetLine.objects.get(pk=LINE_ALE_ID).name, "Lembas")
 
     # ------------------------------------------
     # Delete Operation
     # ------------------------------------------
 
     def test_delete_response(self):
-        response = self.do_api_request(self.url_detail, "DELETE", self.user_access_token_frodon.token)
+        response = self.do_request("DELETE", self.url_detail)
 
         self.assertEqual(response.status_code, 204)
         self.assertEqual(response.content, b"")
-        self.assertBudgetTotals(BUDGET_ID1, "-300.00", "-100.50")
+        self.assertFalse(BudgetLine.objects.filter(pk=LINE_BREAKFAST_ID).exists())
+        # The budget totals follow.
+        budget = Budget.objects.get(pk=BUDGET_ID1)
+        self.assertEqual(
+            (budget.total_planned_amount, budget.total_practical_amount), (Decimal("-300.00"), Decimal("-100.50"))
+        )
 
     def test_delete_another_budgets_line(self):
-        response = self.do_api_request(f"{self.url}{LINE_FEES_ID}/", "DELETE", self.user_access_token_frodon.token)
+        response = self.do_request("DELETE", f"{self.url}{LINE_ALE_ID}/")
 
         self.assertEqual(response.status_code, 404)
-        self.assertTrue(BudgetLine.objects.filter(pk=LINE_FEES_ID).exists())
+        self.assertTrue(BudgetLine.objects.filter(pk=LINE_ALE_ID).exists())
 
     @parameterized.expand(
         [
-            ("totem.budget.create", 403),
-            ("totem.budget.read", 403),
-            ("totem.budget.update", 403),
-            ("totem.budget.delete", 204),
+            ([], 403),
+            (["totem.budget.delete"], 204),
+            (["totem.budget.create", "totem.budget.read", "totem.budget.update"], 403),
+            (["totem.account.delete"], 403),
         ]
     )
-    def test_delete_access_rights(self, scope, status_code):
-        self.user_access_token_frodon.scope = scope
-        self.user_access_token_frodon.save(update_fields=["scope"])
+    def test_delete_user_access_rights(self, permissions, status_code):
+        self.role.permissions = permissions
+        self.role.save()
 
-        response = self.do_api_request(self.url_detail, "DELETE", self.user_access_token_frodon.token)
+        response = self.do_request("DELETE", self.url_detail)
 
         self.assertEqual(response.status_code, status_code)
-
-    # ------------------------------------------
-    # Resequence Operation
-    # ------------------------------------------
-
-    def test_resequence_response(self):
-        response = self.do_api_request(
-            self.url_resequence, "POST", self.user_access_token_frodon.token,
-            data=json.dumps({"ids": [LINE_STOCK_ID, LINE_RENT_ID]}),
-        )
-
-        self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.content, b"")
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
 
     @parameterized.expand(
         [
-            ("complete list", {"ids": [LINE_STOCK_ID, LINE_RENT_ID]}, 201, None),
-            ("partial list", {"ids": [LINE_STOCK_ID]}, 201, None),
-            ("empty list", {"ids": []}, 201, None),
-            ("offset 0", {"ids": [LINE_STOCK_ID, LINE_RENT_ID], "offset": 0}, 201, None),
-            ("offset", {"ids": [LINE_STOCK_ID, LINE_RENT_ID], "offset": 20}, 201, None),
-            ("unknown pk", {"ids": [LINE_STOCK_ID, LINE_ID4]}, 422, "ids"),
-            ("not a ulid", {"ids": [LINE_STOCK_ID, "not-a-ulid"]}, 422, "ids"),
-            ("repeated pk", {"ids": [LINE_STOCK_ID, LINE_STOCK_ID]}, 422, "ids"),
-            ("another budget's", {"ids": [LINE_STOCK_ID, LINE_FEES_ID]}, 422, "ids"),
-            ("no ids", {"offset": 0}, 422, "ids"),
-            ("negative offset", {"ids": [LINE_STOCK_ID], "offset": -1}, 422, "offset"),
-            ("offset not an integer", {"ids": [LINE_STOCK_ID], "offset": "first"}, 422, "offset"),
-            # An object: neither a bare list nor anything else.
-            ("a bare list", [LINE_STOCK_ID, LINE_RENT_ID], 422, None),
-            ("a string", LINE_STOCK_ID, 422, None),
+            ([], 403),
+            (["totem.budget.delete"], 204),
+            (["totem.budget.create", "totem.budget.read", "totem.budget.update"], 403),
+            (["totem.account.delete"], 403),
         ]
     )
-    def test_resequence_request_validation(self, dummy, payload, status_code, field):
-        response = self.do_api_request(
-            self.url_resequence, "POST", self.user_access_token_frodon.token, data=json.dumps(payload)
-        )
+    def test_delete_apikey_access_rights(self, permissions, status_code):
+        self.api_key.scope = permissions
+        self.api_key.save()
+
+        response = self.do_request("DELETE", self.url_detail, auth="apikey")
 
         self.assertEqual(response.status_code, status_code)
-        if status_code == 422:
-            if field:
-                self.assertEqual(response.json()["detail"][0]["loc"][:3], ["body", "request_body", field])
-            self.assertEqual(self.sequences(), {LINE_RENT_ID: 10, LINE_STOCK_ID: 10, LINE_FEES_ID: 10})
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
 
     @parameterized.expand(
         [
-            ("reversed", {"ids": [LINE_STOCK_ID, LINE_RENT_ID]}, {LINE_STOCK_ID: 1, LINE_RENT_ID: 2}),
-            # Only the records given are numbered.
-            ("partial", {"ids": [LINE_STOCK_ID]}, {LINE_STOCK_ID: 1, LINE_RENT_ID: 10}),
-            # A page of a list: numbered where it sits in the whole list.
-            ("page of a list", {"ids": [LINE_STOCK_ID, LINE_RENT_ID], "offset": 20}, {LINE_STOCK_ID: 21, LINE_RENT_ID: 22}),
+            ([], BUDGET_ID2, LINE_ALE_ID, 204),
+            ([OWN], BUDGET_ID1, LINE_BREAKFAST_ID, 204),
+            ([OWN], BUDGET_ID2, LINE_ALE_ID, 404),
+            ([ALL], BUDGET_ID2, LINE_ALE_ID, 204),
+            ([OWN, ALL], BUDGET_ID2, LINE_ALE_ID, 404),
         ]
     )
-    def test_resequence_request(self, dummy, payload, expected):
-        self.do_api_request(self.url_resequence, "POST", self.user_access_token_frodon.token, data=json.dumps(payload))
+    def test_delete_user_access_rules(self, rules, budget_id, pk, status_code):
+        self.role.rules = rules
+        self.role.save()
 
-        # Another budget's position is untouched.
-        self.assertEqual(self.sequences(), {**expected, LINE_FEES_ID: 10})
-
-    @parameterized.expand(
-        [
-            ("totem.budget.update", 201),
-            ("totem.budget.read", 403),
-            ("totem.budget.create", 403),
-            ("totem.budget.delete", 403),
-        ]
-    )
-    def test_resequence_access_rights(self, scope, status_code):
-        self.user_access_token_frodon.scope = scope
-        self.user_access_token_frodon.save(update_fields=["scope"])
-
-        response = self.do_api_request(
-            self.url_resequence, "POST", self.user_access_token_frodon.token,
-            data=json.dumps({"ids": [LINE_STOCK_ID, LINE_RENT_ID]}),
-        )
+        response = self.do_request("DELETE", f"/api/v1/accounting/budget/{budget_id}/lines/{pk}/")
 
         self.assertEqual(response.status_code, status_code)
-        if status_code != 201:
-            self.assertEqual(response.json(), {"detail": ["You do not have permission to perform this action."]})
+        self.assertEqual(BudgetLine.objects.filter(pk=pk).exists(), status_code != 204)
 
     @parameterized.expand(
         [
-            ("BUDGET_USER", BUDGET_ID1, [LINE_STOCK_ID, LINE_RENT_ID], 201),
-            # Out of scope, another user's lines read as unknown.
-            ("BUDGET_USER", BUDGET_ID2, [LINE_FEES_ID], 422),
-            ("BUDGET_ADMINISTRATOR", BUDGET_ID2, [LINE_FEES_ID], 201),
+            ([],),
+            ([OWN],),
+            ([ALL],),
         ]
     )
-    def test_resequence_access_rules(self, role, budget_id, pks, status_code):
-        before = self.sequences()
+    def test_delete_apikey_access_rules(self, rules):
+        # The rules of the roles do not bound a key. See `ApiKeyAuth`.
+        self.role.rules = rules
+        self.role.save()
 
-        response = self.do_api_request(
-            f"/api/v1/accounting/budget/{budget_id}/lines/resequence/", "POST",
-            self.token_as(role), data=json.dumps({"ids": pks}),
-        )
+        response = self.do_request("DELETE", f"{self.url_other}{LINE_ALE_ID}/", auth="apikey")
 
-        self.assertEqual(response.status_code, status_code)
-        expected = {**before, **{pk: index + 1 for index, pk in enumerate(pks)}} if status_code == 201 else before
-        self.assertEqual(self.sequences(), expected)
-
-    def sequences(self):
-        return dict(BudgetLine.objects.values_list("id", "sequence"))
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(BudgetLine.objects.filter(pk=LINE_ALE_ID).exists())
 
     # ------------------------------------------
     # Utils
     # ------------------------------------------
 
-    def _assert_api_format(self, api_data, obj, fields):
-        if not fields:
-            fields = LINE_FIELDS
+    def do_request(self, method, url, auth="user", data=None, params=None):
+        """ Call the API as Frodon (`auth="user"`) or as the API key (`"apikey"`).
+
+        Frodon's token is minted on each call from the permissions his roles hold
+        at that moment, as the login would.
+        """
+        if auth == "apikey":
+            return self.do_api_key_request(url, method, self.api_key_secret, data=data, params=params or {})
+        token = mint_access_token(self.user_frodon, get_user_scopes(self.user_frodon))
+        return self.do_api_request(url, method, token, data=data, params=params or {})
+
+    def assert_api_format(self, api_data, obj, fields=None):
+        fields = fields or LINE_FIELDS
+
         if "id" in fields:
             self.assertEqual(api_data["id"], str(obj.id))
-        for name in ("name", "sequence"):
-            if name in fields:
-                self.assertEqual(api_data[name], getattr(obj, name))
+        if "name" in fields:
+            self.assertEqual(api_data["name"], obj.name)
+        if "sequence" in fields:
+            self.assertEqual(api_data["sequence"], obj.sequence)
         if "budget" in fields:
             self.assertEqual(api_data["budget"], {"id": obj.budget.pk, "name": obj.budget.name})
         if "position" in fields:
@@ -438,4 +705,4 @@ class BudgetLineAPITest(BudgetTestMixin, CommonTestMixin, APITestCaseMixin, Test
         if "planned_amount" in fields:
             self.assertEqual(Decimal(api_data["planned_amount"]), obj.planned_amount)
 
-        self.assertEqual(set(fields), set(api_data.keys()))
+        self.assertEqual(set(fields), set(api_data))
