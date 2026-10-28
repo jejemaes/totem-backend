@@ -3,6 +3,7 @@ from typing import Optional
 from django.db.models import Q
 from ninja import FilterSchema
 from pydantic import Field
+from ulid import ULID
 
 from core.schemas import ModelSchema
 from account.models import AccountCategory
@@ -55,13 +56,15 @@ class AccountCategoryUpdateSchema(ModelSchema):
 
 
 class AccountCategoryFilterSchema(FilterSchema):
-    account: Optional[str] = Field(
+    # `ULID` rather than `str`: a malformed id is refused (422) instead of
+    # silently matching nothing.
+    account: Optional[ULID] = Field(
         None,
         q="account__id",
         title="Account",
         description="Identifier of the account the categories are scoped to.",
     )
-    applicable_to: Optional[str] = Field(
+    applicable_to: Optional[ULID] = Field(
         None,
         title="Applicable To",
         description="Identifier of an account: the categories usable on its movements, "

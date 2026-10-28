@@ -1,7 +1,9 @@
+import uuid
 from typing import Optional
 
 from ninja import FilterSchema
 from pydantic import Field
+from ulid import ULID
 
 from core.schemas import ModelSchema
 from user.schemas import UserDisplayNameSchema
@@ -71,13 +73,15 @@ class BudgetFilterSchema(FilterSchema):
         title="Name",
         description="Search term in the name.",
     )
-    user: Optional[str] = Field(
+    # Typed after the columns, not `str`: a malformed id is then refused by the
+    # schema (422) instead of failing in the database against a UUID column (400).
+    user: Optional[uuid.UUID] = Field(
         None,
         q="user__id",
         title="User",
         description="Identifier of the user in charge.",
     )
-    account: Optional[str] = Field(
+    account: Optional[ULID] = Field(
         None,
         q="account__id",
         title="Account",
