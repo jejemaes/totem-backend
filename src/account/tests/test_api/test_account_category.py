@@ -77,9 +77,6 @@ class AccountCategoryAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             ({"applicable_to": ACCOUNT_ID1}, [CATEGORY_GENERAL_ID, CATEGORY_SHIRE_ID]),
             ({"applicable_to": ACCOUNT_ID2}, [CATEGORY_GENERAL_ID, CATEGORY_BREE_ID]),
             ({"applicable_to": ACCOUNT_ID3}, [CATEGORY_GENERAL_ID]),
-            # A malformed id is not refused: it matches no account.
-            ({"account": "not-a-ulid"}, []),
-            ({"applicable_to": "not-a-ulid"}, [CATEGORY_GENERAL_ID]),
         ]
     )
     def test_list_filters(self, filters, expected_pks):
@@ -93,9 +90,17 @@ class AccountCategoryAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         for item in data["results"]:
             self.assert_api_format(item, AccountCategory.objects.get(id=item["id"]))
 
-    # No `test_list_invalid_filters`: every filter of `AccountCategoryFilterSchema`
-    # is a string, so no value can fail to parse. An id that is not a ULID simply
-    # matches nothing.
+    @parameterized.expand(
+        [
+            ({"account": "not-a-ulid"}, "account"),
+            ({"applicable_to": "not-a-ulid"}, "applicable_to"),
+        ]
+    )
+    def test_list_invalid_filters(self, filters, error_field):
+        response = self.do_request("GET", self.url, params=filters)
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual([detail["loc"][-1] for detail in response.json()["detail"]], [error_field])
 
     @parameterized.expand(
         [

@@ -110,11 +110,9 @@ class BudgetAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
     @parameterized.expand(
         [
             ({"active": "not a boolean"}, 422, "active"),
-            # ⚠️ `user` is declared a `str` in `BudgetFilterSchema`, so a malformed
-            # id passes the schema and fails in the ORM, against the UUID column:
-            # a 400 where every other malformed filter is a 422. Pinned, not
-            # endorsed: typing the filter `UUID` would make it a 422.
-            ({"user": "frodon"}, 400, None),
+            # The ids are refused by the schema, not left to fail in the database.
+            ({"user": "frodon"}, 422, "user"),
+            ({"account": "not-a-ulid"}, 422, "account"),
         ]
     )
     def test_list_invalid_filters(self, filters, status_code, error_field):
