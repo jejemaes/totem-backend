@@ -254,9 +254,10 @@ class TestUserService(TestCase):
             # collects nothing up front.
             # And one more again for `authentication_refreshtoken`, which cascades
             # on the user. A single DELETE with no SELECT before it, because the
-            # table has no dependents of its own -- django fast-deletes it. The
-            # count drops by five once the oauth tables go with the toolkit.
-            ({"username": "Tintin"}, 18, 1),  # simple row, no relations deleted
+            # table has no dependents of its own -- django fast-deletes it.
+            # Five fewer than with the OAuth toolkit installed, which cascaded
+            # over its own five tables, two of them needing a SELECT first.
+            ({"username": "Tintin"}, 13, 1),  # simple row, no relations deleted
             ({"id": USER_ID2, "username": "Tintin"}, 5, 0),  #  no matching row
             (
                 {"username": "notfound"},
@@ -265,7 +266,7 @@ class TestUserService(TestCase):
             ),  # user nonexistent --> no row deleted
             (
                 {"id": USER_ID2},
-                18,
+                13,
                 1,
             ),  # delete with m2m relations, relations should be deleted too
         ]
