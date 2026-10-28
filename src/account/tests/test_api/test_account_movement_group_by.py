@@ -124,6 +124,11 @@ class AccountMovementGroupByAPITest(CommonTestMixin, APITestCaseMixin, TestCase)
             ("unknown direction", {"direction": "sideways"}, 422),
             ("not a date", {"date_from": "not a date"}, 422),
             ("a time of day is no date", {"date_to": "2026-10-14T09:30:00Z"}, 422),
+            ("null", None, 200),
+            # Not an object: refused, rather than read as "no filter".
+            ("a string", "pipe", 422),
+            ("a number", 42, 422),
+            ("a list", [{"direction": "debit"}], 422),
         ]
     )
     def test_group_by_request_filters(self, dummy, filters, status_code):

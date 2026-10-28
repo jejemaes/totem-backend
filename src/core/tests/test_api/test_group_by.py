@@ -75,6 +75,35 @@ class GroupByRouteAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual([group["order"]["id"] for group in response.json()["results"]], [str(self.second.pk)])
 
+    @parameterized.expand(
+        [
+            ("omitted", ..., 200, 2),
+            ("null", None, 200, 2),
+            ("empty", {}, 200, 2),
+            # `ninja.Schema` reads any input by attribute, so each of these used to
+            # validate as "no filter" and group every line.
+            ("a string", "done", 422, None),
+            ("a number", 42, 422, None),
+            ("a boolean", True, 422, None),
+            ("a list", [{"status": "done"}], 422, None),
+        ]
+    )
+    def test_filters_must_be_an_object(self, dummy, filters, status_code, count):
+        body = {"group_by_fields": ["order"], "measures": ["count"]}
+        if filters is not ...:
+            body["filters"] = filters
+
+        response = self.request(body)
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 200:
+            self.assertEqual(response.json()["count"], count)
+        else:
+            self.assertEqual(
+                [error["loc"][:3] for error in response.json()["detail"]],
+                [["body", "request_body", "filters"]],
+            )
+
     def test_pagination(self):
         response = self.request({"group_by_fields": ["quantity"], "measures": ["count"], "limit": 1, "offset": 1})
 
