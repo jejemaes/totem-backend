@@ -3,41 +3,53 @@ from freezegun import freeze_time
 from parameterized import parameterized
 
 from account.models import AccountCategory, AccountMovement
-from account.tests.common import (
+from authentication.testing import mint_access_token
+from core.testing import APITestCaseMixin
+from user.access_rights import get_user_scopes
+
+from .common import (
     ACCOUNT_ID1,
     ACCOUNT_ID2,
     ACCOUNT_ID3,
-    CATEGORY_BANK_ID,
+    CATEGORY_BREE_ID,
     CATEGORY_GENERAL_ID,
-    CATEGORY_SHOP_ID,
+    CATEGORY_SCOPES,
+    CATEGORY_SHIRE_ID,
     MOVEMENT_ID3,
-    AccountTestMixin,
+    PERMISSION_DENIED,
+    CommonTestMixin,
 )
-from core.testing import APITestCaseMixin
-from user.tests.test_api.common import CommonTestMixin
 
-CATEGORY_ID4 = "01JC0000000000000000000099"
+CATEGORY_ID4 = "01JC0000000000000000000099"  # matches no category
+
+ALL_CATEGORY_IDS = [CATEGORY_GENERAL_ID, CATEGORY_SHIRE_ID, CATEGORY_BREE_ID]
 
 CATEGORY_FIELDS = ["id", "name", "color", "account"]
 
 
 @freeze_time("2026-10-15 11:12:13")
-class AccountCategoryAPITest(AccountTestMixin, CommonTestMixin, APITestCaseMixin, TestCase):
+class AccountCategoryAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
+    """ No `*_access_rules` tests: no `BaseRule` is registered for `AccountCategory`,
+    so whoever holds a scope reaches every category. """
 
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
 
+        cls.role.permissions = CATEGORY_SCOPES
+        cls.role.rules = []
+        cls.role.save()
+
         cls.url = "/api/v1/accounting/categories/"
-        cls.url_detail = f"/api/v1/accounting/categories/{CATEGORY_SHOP_ID}/"
+        cls.url_detail = f"/api/v1/accounting/categories/{CATEGORY_SHIRE_ID}/"
         cls.url_detail_general = f"/api/v1/accounting/categories/{CATEGORY_GENERAL_ID}/"
         cls.payload_create = {
-            "name": "Supplies",
+            "name": "Lembas",
             "color": 4,
             "account": ACCOUNT_ID1,
         }
         cls.payload_update = {
-            "name": "Goods",
+            "name": "Old Toby",
             "color": 7,
         }
 
@@ -46,50 +58,44 @@ class AccountCategoryAPITest(AccountTestMixin, CommonTestMixin, APITestCaseMixin
     # ------------------------------------------
 
     def test_list_response(self):
-        response = self.do_api_request(
-            self.url, "GET", self.user_access_token_frodon.token
-        )
+        response = self.do_request("GET", self.url)
         data = response.json()
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("count", data)
-        self.assertIn("results", data)
-        self.assertIn("next", data)
-        self.assertIn("previous", data)
-        self.assertEqual(len(data["results"]), 3)
-        self.assertEqual(data["count"], 3)
+        self.assertEqual(set(data), {"count", "results", "next", "previous"})
+        self.assertEqual(data["count"], len(ALL_CATEGORY_IDS))
+        self.assertEqual({item["id"] for item in data["results"]}, set(ALL_CATEGORY_IDS))
 
         for item in data["results"]:
-            obj = AccountCategory.objects.get(id=item["id"])
-            self._assert_api_format(item, obj, CATEGORY_FIELDS)
+            self.assert_api_format(item, AccountCategory.objects.get(id=item["id"]))
 
     @parameterized.expand(
         [
-            ({"account": ACCOUNT_ID1}, [CATEGORY_SHOP_ID]),
+            ({"account": ACCOUNT_ID1}, [CATEGORY_SHIRE_ID]),
             ({"account": ACCOUNT_ID3}, []),
             # What a movement of the account may use: the general ones and its own.
-            ({"applicable_to": ACCOUNT_ID1}, [CATEGORY_GENERAL_ID, CATEGORY_SHOP_ID]),
-            ({"applicable_to": ACCOUNT_ID2}, [CATEGORY_GENERAL_ID, CATEGORY_BANK_ID]),
+            ({"applicable_to": ACCOUNT_ID1}, [CATEGORY_GENERAL_ID, CATEGORY_SHIRE_ID]),
+            ({"applicable_to": ACCOUNT_ID2}, [CATEGORY_GENERAL_ID, CATEGORY_BREE_ID]),
             ({"applicable_to": ACCOUNT_ID3}, [CATEGORY_GENERAL_ID]),
-            ({"search": "re"}, [CATEGORY_GENERAL_ID]),
-            ({"search": "no-match"}, []),
+            # A malformed id is not refused: it matches no account.
+            ({"account": "not-a-ulid"}, []),
+            ({"applicable_to": "not-a-ulid"}, [CATEGORY_GENERAL_ID]),
         ]
     )
-    def test_list_filters(self, filters, ids):
-        qs = AccountCategory.objects.filter(pk__in=ids)
-
-        response = self.do_api_request(
-            self.url, "GET", self.user_access_token_frodon.token, params=filters
-        )
+    def test_list_filters(self, filters, expected_pks):
+        response = self.do_request("GET", self.url, params=filters)
         data = response.json()
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(len(data["results"]), len(qs))
-        self.assertEqual(data["count"], len(qs))
+        self.assertEqual(data["count"], len(expected_pks))
+        self.assertEqual({item["id"] for item in data["results"]}, set(expected_pks))
 
         for item in data["results"]:
-            obj = qs.get(id=item["id"])
-            self._assert_api_format(item, obj, CATEGORY_FIELDS)
+            self.assert_api_format(item, AccountCategory.objects.get(id=item["id"]))
+
+    # No `test_list_invalid_filters`: every filter of `AccountCategoryFilterSchema`
+    # is a string, so no value can fail to parse. An id that is not a ULID simply
+    # matches nothing.
 
     @parameterized.expand(
         [
@@ -97,113 +103,167 @@ class AccountCategoryAPITest(AccountTestMixin, CommonTestMixin, APITestCaseMixin
             (["name"], ["name", "id"]),
             (["-name"], ["-name", "id"]),
             (["color"], ["color", "id"]),
+            (["-color"], ["-color", "id"]),
         ]
     )
     def test_list_ordering(self, ordering_fields, order_by):
         params = {"ordering": ",".join(ordering_fields)} if ordering_fields else {}
-        response = self.do_api_request(
-            self.url, "GET", self.user_access_token_frodon.token, params=params
-        )
-        data = response.json()
+
+        response = self.do_request("GET", self.url, params=params)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
-            [item["id"] for item in data["results"]],
+            [item["id"] for item in response.json()["results"]],
             [str(pk) for pk in AccountCategory.objects.order_by(*order_by).values_list("pk", flat=True)],
         )
 
+    # The query counts include the one minting the token reads the roles with.
     @parameterized.expand(
         [
-            ([], CATEGORY_FIELDS, 5),  # default means all fields
-            (["name"], ["id", "name"], 4),
-            (["account"], ["id", "account"], 5),
+            ([], CATEGORY_FIELDS, 6),  # default means all fields
+            (["name"], ["id", "name"], 5),  # `id` is always returned
+            (["account"], ["id", "account"], 6),  # the relation costs its prefetch
         ]
     )
     def test_list_query_fields(self, query_fields, received_fields, query_count):
         params = {"fields": ",".join(query_fields)} if query_fields else {}
 
-        # One more query when the account is asked for: its prefetch.
         with self.assertNumQueries(query_count):
-            response = self.do_api_request(
-                self.url, "GET", self.user_access_token_frodon.token, params=params
-            )
-            data = response.json()
+            response = self.do_request("GET", self.url, params=params)
+        data = response.json()
 
         self.assertEqual(response.status_code, 200)
+        self.assertEqual(data["count"], len(ALL_CATEGORY_IDS))
         for item in data["results"]:
-            obj = AccountCategory.objects.get(pk=item["id"])
-            self._assert_api_format(item, obj, received_fields)
+            self.assert_api_format(item, AccountCategory.objects.get(pk=item["id"]), received_fields)
 
     @parameterized.expand(
         [
-            ("totem.accountcategory.create", 403),
-            ("totem.accountcategory.read", 200),
-            ("totem.accountcategory.update", 403),
-            ("totem.accountcategory.delete", 403),
-            ("totem.account.read", 403),
+            (["not_existing_field"],),
+            (["not_existing_field", "account"],),  # with a relation
+            (["not_existing_field", "name"],),
+            (["movements"],),  # a reverse relation the schema does not publish
         ]
     )
-    def test_list_access_rights(self, scope, status_code):
-        self.user_access_token_frodon.scope = scope
-        self.user_access_token_frodon.save(update_fields=["scope"])
+    def test_list_invalid_query_fields(self, query_fields):
+        response = self.do_request("GET", self.url, params={"fields": ",".join(query_fields)})
 
-        response = self.do_api_request(
-            self.url, "GET", self.user_access_token_frodon.token
-        )
+        self.assertEqual(response.status_code, 422)
+
+    @parameterized.expand(
+        [
+            ("BREAKFAST", [CATEGORY_GENERAL_ID]),  # case insensitive
+            ("ale", [CATEGORY_BREE_ID]),
+            ("e", ALL_CATEGORY_IDS),
+            ("mordor", []),
+        ]
+    )
+    def test_list_searching(self, search_term, expected_pks):
+        response = self.do_request("GET", self.url, params={"search": search_term})
         data = response.json()
 
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data["count"], len(expected_pks))
+        self.assertEqual({item["id"] for item in data["results"]}, set(expected_pks))
+
+        for item in data["results"]:
+            self.assert_api_format(item, AccountCategory.objects.get(id=item["id"]))
+
+    @parameterized.expand(
+        [
+            ([], 403),
+            (["totem.accountcategory.read"], 200),
+            (["totem.accountcategory.create", "totem.accountcategory.update", "totem.accountcategory.delete"], 403),
+            (["totem.account.read"], 403),
+        ]
+    )
+    def test_list_user_access_rights(self, permissions, status_code):
+        self.role.permissions = permissions
+        self.role.save()
+
+        response = self.do_request("GET", self.url)
+
         self.assertEqual(response.status_code, status_code)
-        if status_code != 200:
-            self.assertEqual(
-                data, {"detail": ["You do not have permission to perform this action."]}
-            )
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([], 403),
+            (["totem.accountcategory.read"], 200),
+            (["totem.accountcategory.create", "totem.accountcategory.update", "totem.accountcategory.delete"], 403),
+            (["totem.account.read"], 403),
+        ]
+    )
+    def test_list_apikey_access_rights(self, permissions, status_code):
+        self.api_key.scope = permissions
+        self.api_key.save()
+
+        response = self.do_request("GET", self.url, auth="apikey")
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
 
     # ------------------------------------------
     # Retrieve Operation
     # ------------------------------------------
 
     def test_retrieve_response(self):
-        response = self.do_api_request(
-            self.url_detail, "GET", self.user_access_token_frodon.token
-        )
-        data = response.json()
+        response = self.do_request("GET", self.url_detail)
 
         self.assertEqual(response.status_code, 200)
-        self._assert_api_format(data, self.category_shop, None)
+        self.assert_api_format(response.json(), self.category_shire)
 
     def test_retrieve_response_general(self):
         # The relation unset: `account` is null, and still in the response.
-        response = self.do_api_request(
-            self.url_detail_general, "GET", self.user_access_token_frodon.token
-        )
+        response = self.do_request("GET", self.url_detail_general)
         data = response.json()
 
         self.assertEqual(response.status_code, 200)
-        self._assert_api_format(data, self.category_general, None)
+        self.assert_api_format(data, self.category_general)
         self.assertIsNone(data["account"])
 
     def test_retrieve_not_found(self):
-        response = self.do_api_request(
-            f"{self.url}{CATEGORY_ID4}/", "GET", self.user_access_token_frodon.token
-        )
+        response = self.do_request("GET", f"{self.url}{CATEGORY_ID4}/")
 
         self.assertEqual(response.status_code, 404)
 
     @parameterized.expand(
         [
-            ("totem.accountcategory.read", 200),
-            ("totem.accountcategory.create", 403),
+            ([], 403),
+            (["totem.accountcategory.read"], 200),
+            (["totem.accountcategory.create", "totem.accountcategory.update", "totem.accountcategory.delete"], 403),
+            (["totem.account.read"], 403),
         ]
     )
-    def test_retrieve_access_rights(self, scope, status_code):
-        self.user_access_token_frodon.scope = scope
-        self.user_access_token_frodon.save(update_fields=["scope"])
+    def test_retrieve_user_access_rights(self, permissions, status_code):
+        self.role.permissions = permissions
+        self.role.save()
 
-        response = self.do_api_request(
-            self.url_detail, "GET", self.user_access_token_frodon.token
-        )
+        response = self.do_request("GET", self.url_detail)
 
         self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([], 403),
+            (["totem.accountcategory.read"], 200),
+            (["totem.accountcategory.create", "totem.accountcategory.update", "totem.accountcategory.delete"], 403),
+            (["totem.account.read"], 403),
+        ]
+    )
+    def test_retrieve_apikey_access_rights(self, permissions, status_code):
+        self.api_key.scope = permissions
+        self.api_key.save()
+
+        response = self.do_request("GET", self.url_detail, auth="apikey")
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
 
     # ------------------------------------------
     # Create Operation
@@ -212,9 +272,9 @@ class AccountCategoryAPITest(AccountTestMixin, CommonTestMixin, APITestCaseMixin
     @parameterized.expand(
         [
             ({"name": None}, 422, "name"),
-            ({"name": "Stock"}, 422, None),  # taken on that account: unkeyed
-            ({"name": "Rent"}, 201, None),  # a general name, reused on an account
-            ({"name": "Rent", "account": None}, 422, None),  # taken among the general ones
+            ({"name": "Pipe-weed"}, 422, None),  # taken on that account: unkeyed
+            ({"name": "Second Breakfast"}, 201, None),  # a general name, reused on an account
+            ({"name": "Second Breakfast", "account": None}, 422, None),  # taken among the general ones
             ({"color": -1}, 422, "color"),
             ({"color": 16}, 422, "color"),
             ({"color": None}, 422, "color"),
@@ -223,57 +283,54 @@ class AccountCategoryAPITest(AccountTestMixin, CommonTestMixin, APITestCaseMixin
         ]
     )
     def test_create_request_field_validation(self, extra_body, status_code, error_field):
-        data = {**self.payload_create, **extra_body}
-
-        response = self.do_api_request(
-            self.url, "POST", self.user_access_token_frodon.token, data=data
-        )
+        response = self.do_request("POST", self.url, data={**self.payload_create, **extra_body})
 
         self.assertEqual(response.status_code, status_code)
         if error_field:
-            self.assertEqual(
-                [detail["loc"][-1] for detail in response.json()["detail"]], [error_field]
-            )
+            self.assertEqual([detail["loc"][-1] for detail in response.json()["detail"]], [error_field])
 
     def test_create_response(self):
-        response = self.do_api_request(
-            self.url,
-            "POST",
-            self.user_access_token_frodon.token,
-            data=self.payload_create,
-        )
+        response = self.do_request("POST", self.url, data=self.payload_create)
         data = response.json()
 
         self.assertEqual(response.status_code, 201)
-
-        obj = AccountCategory.objects.get(id=data["id"])
-        self._assert_api_format(data, obj, CATEGORY_FIELDS)
+        self.assert_api_format(data, AccountCategory.objects.get(id=data["id"]))
 
     @parameterized.expand(
         [
-            ("totem.accountcategory.create", 201),
-            ("totem.accountcategory.read", 403),
-            ("totem.accountcategory.update", 403),
-            ("totem.accountcategory.delete", 403),
+            ([], 403),
+            (["totem.accountcategory.create"], 201),
+            (["totem.accountcategory.read", "totem.accountcategory.update", "totem.accountcategory.delete"], 403),
+            (["totem.account.create"], 403),
         ]
     )
-    def test_create_access_rights(self, scope, status_code):
-        self.user_access_token_frodon.scope = scope
-        self.user_access_token_frodon.save(update_fields=["scope"])
+    def test_create_user_access_rights(self, permissions, status_code):
+        self.role.permissions = permissions
+        self.role.save()
 
-        response = self.do_api_request(
-            self.url,
-            "POST",
-            self.user_access_token_frodon.token,
-            data=self.payload_create,
-        )
-        data = response.json()
+        response = self.do_request("POST", self.url, data=self.payload_create)
 
         self.assertEqual(response.status_code, status_code)
-        if status_code != 201:
-            self.assertEqual(
-                data, {"detail": ["You do not have permission to perform this action."]}
-            )
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([], 403),
+            (["totem.accountcategory.create"], 201),
+            (["totem.accountcategory.read", "totem.accountcategory.update", "totem.accountcategory.delete"], 403),
+            (["totem.account.create"], 403),
+        ]
+    )
+    def test_create_apikey_access_rights(self, permissions, status_code):
+        self.api_key.scope = permissions
+        self.api_key.save()
+
+        response = self.do_request("POST", self.url, auth="apikey", data=self.payload_create)
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
 
     # ------------------------------------------
     # Update Operation
@@ -284,122 +341,145 @@ class AccountCategoryAPITest(AccountTestMixin, CommonTestMixin, APITestCaseMixin
             ({"name": None}, 422),
             ({"color": 16}, 422),
             ({"color": None}, 422),
-            ({"name": "Rent"}, 200),  # only taken among the general ones
+            ({"name": "Second Breakfast"}, 200),  # only taken among the general ones
+            ({"name": "Ale"}, 200),  # taken on another account only
         ]
     )
     def test_update_request_field_validation(self, extra_body, status_code):
-        data = {**self.payload_update, **extra_body}
-
-        response = self.do_api_request(
-            self.url_detail, "PATCH", self.user_access_token_frodon.token, data=data
-        )
+        response = self.do_request("PATCH", self.url_detail, data={**self.payload_update, **extra_body})
 
         self.assertEqual(response.status_code, status_code)
+        if status_code == 422:
+            self.assertIn(next(iter(extra_body)), str(response.json()))
 
     def test_update_response(self):
-        response = self.do_api_request(
-            self.url_detail,
-            "PATCH",
-            self.user_access_token_frodon.token,
-            data=self.payload_update,
-        )
+        response = self.do_request("PATCH", self.url_detail, data=self.payload_update)
         data = response.json()
 
         self.assertEqual(response.status_code, 200)
-
-        obj = AccountCategory.objects.get(id=CATEGORY_SHOP_ID)
-        self._assert_api_format(data, obj, CATEGORY_FIELDS)
-        self.assertEqual((data["name"], data["color"]), ("Goods", 7))
+        self.assert_api_format(data, AccountCategory.objects.get(id=CATEGORY_SHIRE_ID))
+        self.assertEqual((data["name"], data["color"]), ("Old Toby", 7))
 
     def test_update_ignores_the_account(self):
         # Not in the update schema: the scope of a category is fixed at creation.
-        response = self.do_api_request(
-            self.url_detail,
-            "PATCH",
-            self.user_access_token_frodon.token,
-            data={"account": ACCOUNT_ID2},
-        )
+        response = self.do_request("PATCH", self.url_detail, data={"account": ACCOUNT_ID2})
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(AccountCategory.objects.get(pk=CATEGORY_SHOP_ID).account_id, ACCOUNT_ID1)
+        self.assertEqual(AccountCategory.objects.get(pk=CATEGORY_SHIRE_ID).account_id, ACCOUNT_ID1)
+
+    def test_update_not_found(self):
+        response = self.do_request("PATCH", f"{self.url}{CATEGORY_ID4}/", data=self.payload_update)
+
+        self.assertEqual(response.status_code, 404)
 
     @parameterized.expand(
         [
-            ("totem.accountcategory.create", 403),
-            ("totem.accountcategory.read", 403),
-            ("totem.accountcategory.update", 200),
-            ("totem.accountcategory.delete", 403),
+            ([], 403),
+            (["totem.accountcategory.update"], 200),
+            (["totem.accountcategory.create", "totem.accountcategory.read", "totem.accountcategory.delete"], 403),
+            (["totem.account.update"], 403),
         ]
     )
-    def test_update_access_rights(self, scope, status_code):
-        self.user_access_token_frodon.scope = scope
-        self.user_access_token_frodon.save(update_fields=["scope"])
+    def test_update_user_access_rights(self, permissions, status_code):
+        self.role.permissions = permissions
+        self.role.save()
 
-        response = self.do_api_request(
-            self.url_detail,
-            "PATCH",
-            self.user_access_token_frodon.token,
-            data=self.payload_update,
-        )
-        data = response.json()
+        response = self.do_request("PATCH", self.url_detail, data=self.payload_update)
 
         self.assertEqual(response.status_code, status_code)
-        if status_code != 200:
-            self.assertEqual(
-                data, {"detail": ["You do not have permission to perform this action."]}
-            )
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([], 403),
+            (["totem.accountcategory.update"], 200),
+            (["totem.accountcategory.create", "totem.accountcategory.read", "totem.accountcategory.delete"], 403),
+            (["totem.account.update"], 403),
+        ]
+    )
+    def test_update_apikey_access_rights(self, permissions, status_code):
+        self.api_key.scope = permissions
+        self.api_key.save()
+
+        response = self.do_request("PATCH", self.url_detail, auth="apikey", data=self.payload_update)
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
 
     # ------------------------------------------
     # Delete Operation
     # ------------------------------------------
 
     def test_delete_response(self):
-        response = self.do_api_request(
-            self.url_detail, "DELETE", self.user_access_token_frodon.token
-        )
+        response = self.do_request("DELETE", self.url_detail)
 
         self.assertEqual(response.status_code, 204)
         self.assertEqual(response.content, b"")
+        self.assertFalse(AccountCategory.objects.filter(pk=CATEGORY_SHIRE_ID).exists())
         # Its movements stay, uncategorized.
         self.assertIsNone(AccountMovement.objects.get(pk=MOVEMENT_ID3).category_id)
 
     def test_delete_not_found(self):
-        response = self.do_api_request(
-            f"{self.url}{CATEGORY_ID4}/", "DELETE", self.user_access_token_frodon.token
-        )
+        response = self.do_request("DELETE", f"{self.url}{CATEGORY_ID4}/")
 
         self.assertEqual(response.status_code, 404)
 
     @parameterized.expand(
         [
-            ("totem.accountcategory.create", 403),
-            ("totem.accountcategory.read", 403),
-            ("totem.accountcategory.update", 403),
-            ("totem.accountcategory.delete", 204),
+            ([], 403),
+            (["totem.accountcategory.delete"], 204),
+            (["totem.accountcategory.create", "totem.accountcategory.read", "totem.accountcategory.update"], 403),
+            (["totem.account.delete"], 403),
         ]
     )
-    def test_delete_access_rights(self, scope, status_code):
-        self.user_access_token_frodon.scope = scope
-        self.user_access_token_frodon.save(update_fields=["scope"])
+    def test_delete_user_access_rights(self, permissions, status_code):
+        self.role.permissions = permissions
+        self.role.save()
 
-        response = self.do_api_request(
-            self.url_detail, "DELETE", self.user_access_token_frodon.token
-        )
+        response = self.do_request("DELETE", self.url_detail)
 
         self.assertEqual(response.status_code, status_code)
-        if status_code != 204:
-            data = response.json()
-            self.assertEqual(
-                data, {"detail": ["You do not have permission to perform this action."]}
-            )
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([], 403),
+            (["totem.accountcategory.delete"], 204),
+            (["totem.accountcategory.create", "totem.accountcategory.read", "totem.accountcategory.update"], 403),
+            (["totem.account.delete"], 403),
+        ]
+    )
+    def test_delete_apikey_access_rights(self, permissions, status_code):
+        self.api_key.scope = permissions
+        self.api_key.save()
+
+        response = self.do_request("DELETE", self.url_detail, auth="apikey")
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
 
     # ------------------------------------------
     # Utils
     # ------------------------------------------
 
-    def _assert_api_format(self, api_data, obj, fields):
-        if not fields:
-            fields = CATEGORY_FIELDS
+    def do_request(self, method, url, auth="user", data=None, params=None):
+        """ Call the API as Frodon (`auth="user"`) or as the API key (`"apikey"`).
+
+        Frodon's token is minted on each call from the permissions his roles hold
+        at that moment, as the login would.
+        """
+        if auth == "apikey":
+            return self.do_api_key_request(url, method, self.api_key_secret, data=data, params=params or {})
+        token = mint_access_token(self.user_frodon, get_user_scopes(self.user_frodon))
+        return self.do_api_request(url, method, token, data=data, params=params or {})
+
+    def assert_api_format(self, api_data, obj, fields=None):
+        fields = fields or CATEGORY_FIELDS
+
         if "id" in fields:
             self.assertEqual(api_data["id"], str(obj.id))
         if "name" in fields:
@@ -415,7 +495,4 @@ class AccountCategoryAPITest(AccountTestMixin, CommonTestMixin, APITestCaseMixin
                     {"id": obj.account.pk, "code": obj.account.code, "name": obj.account.name},
                 )
 
-        self.assertEqual(
-            set(fields),
-            set(api_data.keys()),
-        )
+        self.assertEqual(set(fields), set(api_data))
