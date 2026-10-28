@@ -31,6 +31,31 @@ Each tenant database has its own media root, `MEDIA_ROOT/<db_name>/{_filestore,p
 
 The symlinks of the media stores are rewritten as relative ones. Nothing is changed in the database.
 
+### Authentication
+
+The API is reached with one of two credentials, and both are obtained outside of a fixture.
+
+A **user** exchanges a login and a password for a pair of tokens:
+
+    curl -s -X POST localhost:8000/api/v1/auth/token/ -H 'Content-Type: application/json' -d '{"username":"admin","password":"totem"}'
+
+`totem` is the password `populate --env local` sets on every user of the local dataset; the hash shipped in the fixture has no known clear text, so it is that command, not the fixture, that makes logging in possible. The response carries an `access_token` valid 15 minutes, used as `Authorization: Bearer <token>`, and a `refresh_token` valid 14 days, exchanged on `/api/v1/auth/token/refresh/` for a fresh pair. Rotation is single-use: the old refresh token dies with the exchange, and replaying it revokes the whole session. `/api/v1/auth/token/revoke/` ends a session early.
+
+To skip the exchange, or to get a token that outlives a debugging session:
+
+    docker-compose exec django ./manage.py mint_token admin --ttl-days 30
+
+The token is printed on stdout and its details on stderr, so `$(... 2>/dev/null)` captures just the token. Scopes default to everything the user's roles grant; `--scopes a,b` narrows them, which is how a 403 is reproduced. A `--ttl-days` above 1 requires `DEBUG`, because an access token is never looked up and therefore cannot be revoked. The token carries the name of the database it was minted on and is rejected by every other tenant.
+
+A **machine** uses an API key, sent as `X-Api-Key`:
+
+    docker-compose exec django ./manage.py create_api_key "Nightly Export" --scopes totem.contact.read,totem.website.read
+
+The secret is printed once and only its hash is kept — there is no fixture for a key, since that would be a credential in the repository. `populate --env local` does create one named `Local Development`, secret `dev-api-key-secret`, **with no scopes**: it makes the header path reachable, not useful. Keys hold public permissions only, so no key can create keys.
+
+Note what a key does *not* get: row-level access rules are built from the roles of a user, and a key has no user, so a key holding `totem.user.read` reads every user of the tenant. That is intended for a machine caller, and it is why keys are granted narrowly.
+
+
 ### Populate
 
 This command imports data for the specified environment. This command is idempotent
@@ -59,7 +84,6 @@ To save data from a django app, the `dumpdata` should be used. Be careful, we di
 System Data are created with:
  - For User Roles: `docker-compose exec django ./manage.py dumpdata user.UserRole -o user/fixtures/system/user_role.json --format json --indent 4`
  - For Website: `docker-compose exec django ./manage.py dumpdata website.Website -o website/fixtures/system/website.json --format json --indent 4`
- - For OAuth App: `docker-compose exec django ./manage.py dumpdata oauth.OAuthApp -o oauth/fixtures/system/oauth_app.json --format json --indent 4`
 
 #### Local Data
 

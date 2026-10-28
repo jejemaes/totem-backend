@@ -38,11 +38,9 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    "oauth2_provider",
     "django_celery_beat",
     "base",
     "authentication",
-    "oauth",
     "user",
     "website",
     "contact",
@@ -235,14 +233,6 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = "user.User"
 
 
-# OAuth Toolkit
-
-OAUTH2_PROVIDER_APPLICATION_MODEL = 'oauth.OAuthApp'
-OAUTH2_PROVIDER_ACCESS_TOKEN_MODEL = 'oauth.AccessToken'
-OAUTH2_PROVIDER_REFRESH_TOKEN_MODEL = 'oauth.RefreshToken'
-OAUTH2_PROVIDER_ID_TOKEN_MODEL = 'oauth.IDToken'
-OAUTH2_PROVIDER_GRANT_MODEL = 'oauth.Grant'
-
 # Authentication (JWT access tokens + API keys)
 # A signing key of its own in production: rotating `SECRET_KEY` also invalidates
 # the sessions and the password reset links, so the two should not be one lever.
@@ -254,14 +244,6 @@ JWT_REFRESH_TOKEN_LIFETIME = timedelta(
     seconds=int(env("TOTEM_JWT_REFRESH_TTL", default=14 * 24 * 3600))
 )
 
-OAUTH2_PROVIDER = {
-    'SCOPES_BACKEND_CLASS': 'oauth.scopes.TotemScopes',
-    'OAUTH2_VALIDATOR_CLASS': 'oauth.validators.OAuth2Validator',
-    "OIDC_ENABLED": False, # for now ...
-    "DEFAULT_SCOPES": [],
-    'ACCESS_TOKEN_EXPIRE_SECONDS': 60 * 60 * 10,
-    'REFRESH_TOKEN_EXPIRE_SECONDS': 60 * 60 * 5,  # 5 hours
-}
 
 # CORS Headers Settings
 
