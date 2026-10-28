@@ -6,7 +6,7 @@
 - [Running](#running)
 - [Service tests](#service-tests)
 - [API tests](#api-tests)
-- [The `_assert_api_format` contract helper](#the-_assert_api_format-contract-helper)
+- [The `assert_api_format` contract helper](#the-assert_api_format-contract-helper)
 - [SSR view tests](#ssr-view-tests)
 - [What deserves a test here](#what-deserves-a-test-here)
 
@@ -67,42 +67,161 @@ confusing `KeyError` rather than a failed assertion.
 
 ## API tests
 
-Follow `src/user/tests/test_api/test_user.py` — it is the reference:
+`src/user/tests/test_api/` is the reference. The other apps still use an older
+style (an `AccessTokenStub` holding every scope, `request` and payload helpers);
+do not copy it, and migrate a module to this convention when you rewrite its
+tests.
+
+### Files, one set per resource
+
+| File | When | Covers |
+|---|---|---|
+| `test_<resource>.py` | always | the CRUD mixins the controller composes |
+| `test_<resource>_actions.py` | the controller declares extra `@route`s | one section per route |
+| `test_<resource>_display_name.py` | `DisplayNameModelControllerMixin` | `/display-name/` |
+| `test_<resource>_resequence.py` | `ResequenceModelControllerMixin` | `/resequence/` |
+| `test_<resource>_group_by.py` | `GroupByModelControllerMixin` | `/group-by/` |
+
+Each file has one `TestCase` class, with one `# ---` banner section per
+operation and a `# Utils` section at the bottom.
+
+### The test class
 
 ```python
 class ThingAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
+        Thing.objects.bulk_create([...])
+        cls.role.permissions = THING_SCOPES   # the whole resource, no rule
+        cls.role.rules = []
+        cls.role.save()
         cls.url = "/api/v1/things/"
-        cls.url_detail = f"/api/v1/things/{THING_ID}/"
-        cls.payload_update = {...}
+        cls.url_detail = f"/api/v1/things/{THING_ID1}/"
 ```
 
-- Module-level id constants; `url` / `url_detail` and shared payloads in
-  `setUpTestData`.
-- `CommonTestMixin` (from `user.tests.test_api.common`) provides users, an OAuth
-  app and access tokens. Set the scope under test with
-  `cls.user_access_token_frodon.scope = ...; save(update_fields=["scope"])`.
-- `self.do_api_request(url, method, token, data=...)` — `data` may be a dict.
-- One section per operation, with a `# ---` banner. Permission tests named
-  `test_<op>_access_rights`, parameterized over `(scope, status_code)`.
-- No token at all needs Django's bare `Client()`: `do_api_request` always builds
-  an auth header.
+- `CommonTestMixin` holds shared data only: there is one per module (for now,
+  `user.tests.test_api.common`, which provides Frodon and Gollum, `cls.role` and
+  the API key). `core.testing.APITestCaseMixin` is not modified.
+- Put id constants at module level. Build records with `bulk_create` whenever
+  the model allows it.
+- Test data uses Lord of the Rings names: Frodon, Gollum, Pipin, Galadriel, Sam;
+  "Fellowship of the Ring", "Mordor Orcs"…
+- A payload is data, either a class attribute or an inline dict. Vary it with
+  `{**self.payload_create, **extra}` and never `.update()`, which mutates the
+  shared dict for the tests that follow.
+- **The only two methods a test class defines are `do_request` and
+  `assert_api_format`.** Do not add a `request` helper, a payload builder or a
+  grant helper. Each class copies them on purpose: a file must read on its own.
 
-## The `_assert_api_format` contract helper
+```python
+def do_request(self, method, url, auth="user", data=None, params=None):
+    if auth == "apikey":
+        return self.do_api_key_request(url, method, self.api_key_secret, data=data, params=params or {})
+    token = mint_access_token(self.user_frodon, get_user_scopes(self.user_frodon))
+    return self.do_api_request(url, method, token, data=data, params=params or {})
+```
 
-Each API test module defines its own, in a `# Utils` section at the bottom. It
+The token is minted **on each call from the role's real permissions**, as the
+login would. Granting a scope therefore means editing the role, never forging a
+token. Minting reads the roles, which is one query: `assertNumQueries` counts it.
+
+### Access rights and access rules
+
+Never use a role from the fixtures (`USERTYPE_ADMIN`…) or a role created for the
+occasion. Change the role the user **currently holds**:
+
+```python
+# access rights, user: parameterized over (permissions, status_code)
+self.role.permissions = permissions
+self.role.save()
+# access rights, API key
+self.api_key.scope = permissions
+self.api_key.save()
+# access rules, user: parameterized over (rules, expected_pks); permissions stay complete
+self.role.rules = rules
+self.role.save()
+```
+
+- Access-rights rows: `[]`, the required scope, the other scopes of the
+  resource, and a scope of another resource. On a 403, also assert the body
+  `{"detail": ["You do not have permission to perform this action."]}`.
+- Access-rules tests assert **the pks that are reached**, not only the status:
+  - list and display name: `{item["id"] for item in results} == set(expected_pks)`;
+  - retrieve, update and delete: the status (out of reach is a 404), plus the
+    database state (the row was written or deleted, or it was not);
+  - create: the status, plus the created pk.
+  Put one row per rule, plus `[]`, plus a combination: the rules of a role
+  combine with AND, and roles combine with OR.
+- `*_apikey_access_rules` tests **pin the bypass**. A key has no user, so it has
+  no role and no rule applies to it (see `ApiKeyAuth`). Same rows as the user
+  test, but the key always reaches everything.
+- A rule whose `operations` do not include the operation under test **holds
+  nothing back**. For example, `user_manage_own_profile` covers neither
+  `create` nor `delete`. Pin it with a comment on the row.
+- No `BaseRule` registered for the model → no `*_access_rules` tests. Explain
+  the absence in the class docstring.
+
+### Which tests, per mixin
+
+`(P)` means `@parameterized.expand`. `user` = token, `apikey` = API key.
+
+- **list**: `test_list_response`, `_filters` (P), `_invalid_filters` (P),
+  `_ordering` (P), `_query_fields` (P), `_invalid_query_fields` (P),
+  `_searching` (P), `_user_access_rights` (P), `_apikey_access_rights` (P),
+  `_user_access_rules` (P), `_apikey_access_rules` (P).
+- **retrieve**: `test_retrieve_response`, `_not_found`,
+  `_user/_apikey_access_rights` (P), `_user/_apikey_access_rules` (P).
+- **create**: `test_create_request_field_validation` (P), `_response`,
+  `_user/_apikey_access_rights` (P), `_user/_apikey_access_rules` (P).
+- **update**: `test_update_request_field_validation` (P), `_response`,
+  `_user/_apikey_access_rights` (P), `_user/_apikey_access_rules` (P).
+- **delete**: `test_delete_response`, `_user/_apikey_access_rights` (P),
+  `_user/_apikey_access_rules` (P).
+- **default_value**: `test_default_value_request`, `_response`,
+  `_query_fields` (P), `_user/_apikey_access_rights` (P).
+- **extra `@route`** (`_actions.py`), for each route `<name>`:
+  `test_<name>_response`, `test_<name>_request` (P, if it has a body), and
+  `_user/_apikey_access_rights` (P).
+- **display_name** (`_display_name.py`): `test_display_name_request` (P, valid
+  and invalid ids), `_response`, `_user/_apikey_access_rights` (P),
+  `_user/_apikey_access_rules` (P).
+- **resequence** (`_resequence.py`): `test_resequence_request` (P, valid and
+  invalid), `_response`, `_user/_apikey_access_rights` (P),
+  `_user/_apikey_access_rules` (P).
+- **group_by** (`_group_by.py`): `test_group_by_request_group_by_fields` (P),
+  `_request_measures` (P), `_request_filters` (P) — each with valid and invalid
+  params; `test_group_by_response_group_by_fields`, `_response_measures`,
+  `_response_filters` — each asserting format and values, with part of the
+  expected response given by the parameters; `_response_ordering` (P),
+  `_response_pagination` (P, assert the values returned),
+  `_user/_apikey_access_rights` (P), `_user/_apikey_access_rules` (P).
+
+When a test from this list cannot exist, leave it out and say why in a comment
+in its section. For example, a filter schema made only of strings has no
+invalid filter, and a route guarded only by `IsAuthenticated` always answers
+200 to a user and 403 to a key.
+
+**A controller mixin with no entry in this list** (a new mixin in
+`core/api/controller.py`, or one applied for the first time to a resource): do
+not invent its tests. Propose the list of tests, named on the pattern above
+(`test_<op>_request`, `_response`, `_user/_apikey_access_rights`,
+`_user/_apikey_access_rules`), and **ask the user which ones to write** before
+writing them. Then add the entry here.
+
+## The `assert_api_format` contract helper
+
+Each API test class defines its own, in the `# Utils` section. It
 checks each value against the ORM record **and** ends with:
 
 ```python
-self.assertEqual(set(fields), set(api_data.keys()))
+self.assertEqual(set(fields), set(api_data))
 ```
 
 That last line is the point. Field-by-field assertions only see what they name,
 so a field appearing in or vanishing from the response schema passes unnoticed;
 this makes the response shape itself the contract. Duplicating the helper per
-module is deliberate — each one encodes its own resource's shape, including how
+class is deliberate — each one encodes its own resource's shape, including how
 its relations serialize.
 
 Cover the relations-unset case too, not just the populated one: it is what a

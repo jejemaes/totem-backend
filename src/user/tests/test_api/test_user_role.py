@@ -2,76 +2,57 @@ from django.test import TestCase
 from freezegun import freeze_time
 from parameterized import parameterized
 
+from authentication.testing import mint_access_token
 from core.testing import APITestCaseMixin
-from user.access_policy import access_policy
-from user.access_rights import get_all_permission
-from user.choices import UserType
-from user.models import User, UserRole
+from user.access_rights import get_user_scopes
+from user.models import UserRole
 
-from .common import USER_ID3, CommonTestMixin
+from .common import CommonTestMixin
 
-USER_ID4 = "49c7b4f5-b436-4c47-bea1-d3e60b9ab492"
-USER_ID5 = "5263de93-e694-11ef-b873-34610551afcd"
+ROLE_ID_BASE = "TEST_BASEUSER"  # the role of `CommonTestMixin`, held by Frodon
+ROLE_ID1 = "FELLOWSHIP"
+ROLE_ID2 = "ELROND_COUNCIL"
+ROLE_ID3 = "SHIRE_HOBBITS"
+ROLE_ID4 = "MORDOR_ORCS"
 
-ROLE_ID1 = "USERTYPE_NOOB"
-ROLE_ID2 = "USERTYPE_ADVANCED"
-ROLE_ID3 = "SCOUT_LEADER"
-ROLE_ID4 = "SCOUT_KID"
-ROLE_ADMIN = "ADMIN"
+ALL_ROLE_IDS = [ROLE_ID_BASE, ROLE_ID1, ROLE_ID2, ROLE_ID3, ROLE_ID4]
+
+ROLE_FIELDS = ["id", "name", "permissions", "rules"]
+
+PERMISSION_DENIED = {"detail": ["You do not have permission to perform this action."]}
 
 
 @freeze_time("2024-11-18 11:12:13")
-class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
+class UserRoleAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
+    """ The user role API publishes a list only.
+
+    No `*_access_rules` tests: no `BaseRule` is registered for `UserRole`, so there
+    is no rule a role could hold to narrow them. Add them with the first one.
+    """
 
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
 
-        cls.user_pipin = User.objects.create(
-            id=USER_ID3,
-            username="pipin@lacomte.com",
-            email="pipin@lacomte.com",
-            user_type=UserType.INTERNAL,
-        )
-        cls.user_galadriel = User.objects.create(
-            id=USER_ID4,
-            username="galadriel@elfe.com",
-            email="galadriel@elfe.com",
-            user_type=UserType.INTERNAL,
-            is_active=False,
-        )
-
-        cls.roles = UserRole.objects.bulk_create(
+        UserRole.objects.bulk_create(
             [
                 UserRole(
                     id=ROLE_ID1,
-                    name="Noobie",
-                    permissions=[],
-                    rules=[],
+                    name="Fellowship of the Ring",
+                    permissions=["totem.user.read"],
+                    rules=["user_manage_all_user"],
                 ),
-                UserRole(
-                    id=ROLE_ID2,
-                    name="Advanced User",
-                    permissions=[],
-                    rules=[],
-                ),
-                UserRole(
-                    id=ROLE_ID3,
-                    name="Scout Leader",
-                    permissions=[],
-                    rules=[],
-                ),
-                UserRole(
-                    id=ROLE_ID4,
-                    name="Scout Kid",
-                    permissions=[],
-                    rules=[],
-                ),
+                UserRole(id=ROLE_ID2, name="Council of Elrond"),
+                UserRole(id=ROLE_ID3, name="Shire Hobbits", rules=["user_manage_own_profile"]),
+                UserRole(id=ROLE_ID4, name="Mordor Orcs"),
             ]
         )
-        cls.user_frodon.roles.add(cls.roles[0])
-        cls.user_access_token_frodon.scope = "totem.userrole.read"
-        cls.user_access_token_frodon.save()
+
+        # Frodon holds the base role only: a second one would add its permissions
+        # and its rules to the ones the access tests set.
+        cls.role.permissions = ["totem.userrole.read"]
+        cls.role.rules = []
+        cls.role.save()
 
         cls.url = "/api/v1/user-roles/"
 
@@ -80,290 +61,167 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
     # ------------------------------------------
 
     def test_list_response(self):
-        response = self.do_api_request(
-            self.url, "GET", self.user_access_token_frodon.token
-        )
+        response = self.do_request("GET", self.url)
         data = response.json()
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("count", data)
-        self.assertIn("results", data)
-        self.assertIn("next", data)
-        self.assertIn("previous", data)
-        self.assertEqual(len(data["results"]), 5)
-        self.assertEqual(data["count"], 5)
+        self.assertEqual(set(data), {"count", "results", "next", "previous"})
+        self.assertEqual(data["count"], len(ALL_ROLE_IDS))
+        self.assertEqual({item["id"] for item in data["results"]}, set(ALL_ROLE_IDS))
 
         for item in data["results"]:
-            obj = UserRole.objects.get(id=item["id"])
-            self._assert_api_format(
-                item,
-                obj,
-                [
-                    "id",
-                    "name",
-                    "permissions",
-                    "rules",
-                ],
-            )
+            self.assert_api_format(item, UserRole.objects.get(id=item["id"]))
 
     @parameterized.expand(
         [
-            ({"name": "elfe"}, []),
-            ({"name": "Scout Kid"}, [ROLE_ID4]),
+            # `name` is an exact match, unlike `search`.
+            ({"name": "Mordor Orcs"}, [ROLE_ID4]),
+            ({"name": "mordor"}, []),
         ]
     )
-    def test_list_filters(self, filters, ids):
-        qs = UserRole.objects.filter(pk__in=ids)
-
-        response = self.do_api_request(
-            self.url, "GET", self.user_access_token_frodon.token, params=filters
-        )
+    def test_list_filters(self, filters, expected_pks):
+        response = self.do_request("GET", self.url, params=filters)
         data = response.json()
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("count", data)
-        self.assertIn("results", data)
-        self.assertIn("next", data)
-        self.assertIn("previous", data)
-        self.assertEqual(len(data["results"]), len(qs))
-        self.assertEqual(data["count"], len(qs))
+        self.assertEqual(data["count"], len(expected_pks))
+        self.assertEqual({item["id"] for item in data["results"]}, set(expected_pks))
 
         for item in data["results"]:
-            obj = qs.get(id=item["id"])
-            self._assert_api_format(
-                item,
-                obj,
-                [
-                    "id",
-                    "name",
-                    "permissions",
-                    "rules",
-                ],
-            )
+            self.assert_api_format(item, UserRole.objects.get(id=item["id"]))
+
+    # No `test_list_invalid_filters`: every filter of `UserRoleFilterSchema` is a
+    # string, so no value can fail to parse.
 
     @parameterized.expand(
         [
             ([], ["id"]),  # default
             (["name"], ["name", "id"]),
             (["-name"], ["-name", "id"]),
+            (["id"], ["id"]),
+            (["-id"], ["-id"]),
         ]
     )
     def test_list_ordering(self, ordering_fields, order_by):
-        ordering = ",".join(ordering_fields)
-        params = {}
-        if ordering:
-            params = {"ordering": ordering}
-        response = self.do_api_request(
-            self.url, "GET", self.user_access_token_frodon.token, params=params
+        params = {"ordering": ",".join(ordering_fields)} if ordering_fields else {}
+
+        response = self.do_request("GET", self.url, params=params)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            [item["id"] for item in response.json()["results"]],
+            list(UserRole.objects.order_by(*order_by).values_list("pk", flat=True)),
         )
-        data = response.json()
 
-        queryset = UserRole.objects.all().order_by(*order_by)
-
-        for instance, item in zip(queryset, data["results"]):
-            self.assertEqual(str(instance.pk), item["id"])
-
+    # The query counts include the one minting the token reads the roles with.
     @parameterized.expand(
         [
-            (
-                [],
-                [
-                    "id",
-                    "name",
-                    "permissions",
-                    "rules",
-                ],
-                4,
-            ),  # default means all fields
-            (["name"], ["id", "name"], 4),
-            (
-                ["rules", "name"],
-                ["id", "rules", "name"],
-                4,
-            ),
+            ([], ROLE_FIELDS, 5),  # default means all fields
+            (["name"], ["id", "name"], 5),  # `id` is always returned
+            (["rules", "name"], ["id", "rules", "name"], 5),
         ]
     )
     def test_list_query_fields(self, query_fields, received_fields, query_count):
-        queryfield = ",".join(query_fields)
-        params = {}
-        if queryfield:
-            params = {"fields": queryfield}
+        params = {"fields": ",".join(query_fields)} if query_fields else {}
 
         with self.assertNumQueries(query_count):
-            response = self.do_api_request(
-                self.url, "GET", self.user_access_token_frodon.token, params=params
-            )
-            data = response.json()
+            response = self.do_request("GET", self.url, params=params)
+        data = response.json()
 
         self.assertEqual(response.status_code, 200)
-
-        record_map = {
-            str(obj.pk): obj
-            for obj in UserRole.objects.filter(
-                pk__in=[item["id"] for item in data["results"]]
-            )
-        }
+        self.assertEqual(data["count"], len(ALL_ROLE_IDS))
         for item in data["results"]:
-            obj = record_map.get(item["id"])
-            # id is always in response
-            self.assertEqual(set(item), set(received_fields))
-            self._assert_api_format(item, obj, received_fields)
+            self.assert_api_format(item, UserRole.objects.get(id=item["id"]), received_fields)
 
     @parameterized.expand(
         [
             (["not_existing_field"],),
-            (["not_existing_field", "roles"],),  # with relation
             (["not_existing_field", "name"],),
+            (["users"],),  # a relation of the model the schema does not publish
         ]
     )
     def test_list_invalid_query_fields(self, query_fields):
-        queryfield = ",".join(query_fields)
-        params = {}
-        if queryfield:
-            params = {"fields": queryfield}
-
-        response = self.do_api_request(
-            self.url, "GET", self.user_access_token_frodon.token, params=params
-        )
+        response = self.do_request("GET", self.url, params={"fields": ",".join(query_fields)})
 
         self.assertEqual(response.status_code, 422)
 
     @parameterized.expand(
         [
-            ("scout", [ROLE_ID3, ROLE_ID4]),
-            ("oobi", [ROLE_ID1]),
-            ("no-match", []),
+            ("of", [ROLE_ID1, ROLE_ID2]),
+            ("HOBBIT", [ROLE_ID3]),  # case insensitive
+            ("rohan", []),
         ]
     )
-    def test_list_searching(self, search_term, ids):
-        qs = UserRole.objects.filter(pk__in=ids)
-
-        response = self.do_api_request(
-            self.url,
-            "GET",
-            self.user_access_token_frodon.token,
-            params={"search": search_term},
-        )
+    def test_list_searching(self, search_term, expected_pks):
+        response = self.do_request("GET", self.url, params={"search": search_term})
         data = response.json()
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("count", data)
-        self.assertIn("results", data)
-        self.assertIn("next", data)
-        self.assertIn("previous", data)
-        self.assertEqual(len(data["results"]), len(qs))
-        self.assertEqual(data["count"], len(qs))
+        self.assertEqual(data["count"], len(expected_pks))
+        self.assertEqual({item["id"] for item in data["results"]}, set(expected_pks))
 
         for item in data["results"]:
-            obj = qs.get(pk=item["id"])
-            self._assert_api_format(
-                item,
-                obj,
-                [
-                    "id",
-                    "name",
-                    "permissions",
-                    "rules",
-                ],
-            )
+            self.assert_api_format(item, UserRole.objects.get(id=item["id"]))
 
     @parameterized.expand(
         [
-            ("totem.userrole.create", 403),
-            ("totem.userrole.read", 200),
-            ("totem.userrole.update", 403),
-            ("totem.userrole.delete", 403),
+            ([], 403),
+            (["totem.userrole.read"], 200),
+            (["totem.user.create", "totem.user.read", "totem.user.update", "totem.user.delete"], 403),
         ]
     )
-    def test_list_access_rights(self, scope, status_code):
-        self.user_access_token_frodon.scope = scope
-        self.user_access_token_frodon.save(update_fields=["scope"])
+    def test_list_user_access_rights(self, permissions, status_code):
+        self.role.permissions = permissions
+        self.role.save()
 
-        response = self.do_api_request(
-            self.url, "GET", self.user_access_token_frodon.token
-        )
-        data = response.json()
+        response = self.do_request("GET", self.url)
 
         self.assertEqual(response.status_code, status_code)
-        if status_code != 200:
-            self.assertEqual(
-                data, {"detail": ["You do not have permission to perform this action."]}
-            )
-
-    # ------------------------------------------
-    # Permissions and Access Rules Actions
-    # ------------------------------------------
-
-    def test_permissions_response(self):
-        response = self.do_api_request(
-            f"{self.url}permissions/", "GET", self.user_access_token_frodon.token
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            response.json(),
-            [{"id": perm, "name": name} for perm, name in get_all_permission()],
-        )
-
-    def test_access_rules_response(self):
-        response = self.do_api_request(
-            f"{self.url}access-rules/", "GET", self.user_access_token_frodon.token
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            response.json(),
-            [
-                {"id": rule.identifier, "name": rule.name, "description": rule.description}
-                for rule in access_policy.get_all_rules()
-            ],
-        )
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
 
     @parameterized.expand(
         [
-            ("permissions/", "totem.userrole.update", 403),
-            ("permissions/", "totem.userrole.read", 200),
-            ("access-rules/", "totem.userrole.update", 403),
-            ("access-rules/", "totem.userrole.read", 200),
+            ([], 403),
+            (["totem.userrole.read"], 200),
+            (["totem.user.create", "totem.user.read", "totem.user.update", "totem.user.delete"], 403),
         ]
     )
-    def test_permissions_and_access_rules_access_rights(self, path, scope, status_code):
-        self.user_access_token_frodon.scope = scope
-        self.user_access_token_frodon.save(update_fields=["scope"])
+    def test_list_apikey_access_rights(self, permissions, status_code):
+        self.api_key.scope = permissions
+        self.api_key.save()
 
-        response = self.do_api_request(
-            f"{self.url}{path}", "GET", self.user_access_token_frodon.token
-        )
+        response = self.do_request("GET", self.url, auth="apikey")
 
         self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
 
     # ------------------------------------------
     # Utils
     # ------------------------------------------
 
-    def _assert_api_format(
-        self, api_data, obj, fields, expand=True
-    ):  # pylint: disable=unused-argument
-        if not fields:
-            fields = [
-                "id",
-                "name",
-                "permissions",
-                "rules",
-            ]
+    def do_request(self, method, url, auth="user", data=None, params=None):
+        """ Call the API as Frodon (`auth="user"`) or as the API key (`"apikey"`).
+
+        Frodon's token is minted on each call from the permissions his roles hold
+        at that moment, as the login would.
+        """
+        if auth == "apikey":
+            return self.do_api_key_request(url, method, self.api_key_secret, data=data, params=params or {})
+        token = mint_access_token(self.user_frodon, get_user_scopes(self.user_frodon))
+        return self.do_api_request(url, method, token, data=data, params=params or {})
+
+    def assert_api_format(self, api_data, obj, fields=None):
+        fields = fields or ROLE_FIELDS
 
         if "id" in fields:
-            self.assertEqual(api_data["id"], str(obj.id))
+            self.assertEqual(api_data["id"], obj.id)
         if "name" in fields:
             self.assertEqual(api_data["name"], obj.name)
         if "permissions" in fields:
-            self.assertEqual(
-                set(api_data["permissions"]), set(obj.permissions)
-            )
+            self.assertEqual(api_data["permissions"], obj.permissions)
         if "rules" in fields:
-            self.assertEqual(set(api_data["rules"]), set(obj.rules))
+            self.assertEqual(api_data["rules"], obj.rules)
 
-        self.assertEqual(
-            set(fields),
-            set(api_data.keys()),
-        )
+        self.assertEqual(set(fields), set(api_data))

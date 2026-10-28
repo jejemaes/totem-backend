@@ -62,7 +62,12 @@ management command) rather than one test.
 7. **Admin / fixtures** — `admin.py`, and `<app>/fixtures/{system,local}/`. The
    admin writes through `Model.save()`, so a rule enforced only in a service is
    bypassed there; if both writers matter, both need it.
-8. **Tests** — see `references/testing.md`.
+8. **Tests** — see `references/testing.md`. API tests follow a fixed list of
+   tests per controller mixin, one file per mixin family, with grants made on
+   the user's current role and on the API key. **When a controller mixin has no
+   entry in that list** (new in `core/api/controller.py`, or applied to a
+   resource for the first time), propose the tests to add and ask the user
+   which ones to write before writing any.
 
 ## Validation belongs in exactly one of three places
 
@@ -111,6 +116,7 @@ service registry and controller set still validate at import.
   import-time route collisions, `choices` evaluated too early,
   `ForeignKey.validate()` bypassing access rules, converters that silently
   cover nothing, and async-safety in the SSR views.
-- `references/testing.md` — test layout, the `_assert_api_format` contract
-  helper, permission tests, and the jinja trap that makes `assertTemplateUsed`
+- `references/testing.md` — test layout, the API test list per mixin, the
+  `do_request` / `assert_api_format` helpers, access rights and rules for users
+  and API keys, and the jinja trap that makes `assertTemplateUsed`
   silently useless.
