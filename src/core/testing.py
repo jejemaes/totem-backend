@@ -23,6 +23,16 @@ class APITestCaseMixin:
         auth = {"HTTP_AUTHORIZATION": "Bearer " + token}
         return self._do_request(url, method, auth, data=data, params=params, **headers)
 
+    def do_api_key_request(self, url, method, api_key, data=None, params={}, **headers):
+        """ The same request, authenticated as a machine caller.
+
+        Its own helper rather than a flag on `do_api_request`: the two credentials
+        go in different headers and give `request.auth` different shapes, and a
+        test should say at the call site which of the two it exercises.
+        """
+        auth = {"HTTP_X_API_KEY": api_key}
+        return self._do_request(url, method, auth, data=data, params=params, **headers)
+
     def _do_request(self, url, method, auth=None, data=None, params={}, content_type="application/json", **headers):
         # add GET params
         url_parts = list(urlparse.urlparse(url))

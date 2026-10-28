@@ -4,6 +4,7 @@ from typing import List
 from ninja import FilterSchema, Path, Schema
 from ninja.files import UploadedFile
 
+from authentication.authenticators import ApiKeyAuth, JWTAuth
 from core.api import (
     BaseModelController,
     CreateModelControllerMixin,
@@ -13,7 +14,6 @@ from core.api import (
     RetrieveModelControllerMixin,
 )
 from core.services import ServiceValidationMultiError
-from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
 from website.schemas import (
@@ -68,7 +68,7 @@ class MediaController(
     service = MediaService
 
     path_prefix = "/website/medias/"
-    auth = [OAuthTokenAuthentication()]
+    auth = [JWTAuth(), ApiKeyAuth()]
     permission_map = {
         "read": ["totem.websitemedia.read"],
         "create": ["totem.websitemedia.create"],

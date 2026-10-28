@@ -83,12 +83,16 @@ class TestUserService(TestCase):
     # Tests Create
     # ------------------------------------------
 
+    # One query fewer than when the OAuth toolkit was installed on every case that
+    # touches `roles`: `user_change_rights` used to have a receiver deleting the
+    # user's access tokens. Nothing listens to it now -- a token carries its scopes
+    # in a claim and a rotation recomputes them, so there is nothing to invalidate.
     @parameterized.expand(
         [
             ({"login": "haddock", "email": "haddock@lune.com", "roles": []}, 5),
             (
                 {"login": "haddock", "email": "haddock@lune.com", "roles": ["CAT1_TEST1"]},
-                9,
+                8,
             ),
             (
                 {
@@ -96,7 +100,7 @@ class TestUserService(TestCase):
                     "email": "haddock@lune.com",
                     "roles": ["CAT1_TEST2", "CAT2_TEST1"],
                 },
-                9,
+                8,
             ),
             (
                 {
@@ -104,7 +108,7 @@ class TestUserService(TestCase):
                     "email": "haddock@moulinsart.com",
                     "roles": ["CAT1_TEST2"],
                 },
-                9,
+                8,
             ),
         ]
     )
@@ -181,18 +185,18 @@ class TestUserService(TestCase):
     @parameterized.expand(
         [
             ({"username": "Tintin"}, {"email": "tintin2@moulinsart.com"}, 5, 1),
-            ({"id": USER_ID1}, {"roles": ["CAT1_TEST1"]}, 8, 1),
+            ({"id": USER_ID1}, {"roles": ["CAT1_TEST1"]}, 7, 1),
             (
                 {"username": "notfound"},
                 {"email": "nouser@moulinsart.com"},
                 4,
                 0,
             ),  # user nonexistent --> no row updated
-            ({"id": USER_ID1}, {"roles": ["CAT1_TEST2", "CAT2_TEST1"]}, 8, 1),
+            ({"id": USER_ID1}, {"roles": ["CAT1_TEST2", "CAT2_TEST1"]}, 7, 1),
             (
                 {"username": "Tintin"},  # filters speak ORM, only payloads use `login`
                 {"login": "tintin_updated", "roles": ["CAT1_TEST2"]},
-                9,
+                8,
                 1,
             ),
         ]
@@ -207,8 +211,9 @@ class TestUserService(TestCase):
         """`exclude_unset` is what keeps a partial update partial.
 
         It matters beyond query counts: `UserQuerySet.update` emits
-        `user_change_rights` when `user_type` is in the payload, which invalidates the
-        user's tokens.
+        `user_change_rights` when `user_type` is in the payload. Nothing listens to
+        that signal any more, but emitting it on a partial update that did not touch
+        `user_type` would still be wrong.
         """
         data = UserUpdateSchema(email="tintin2@moulinsart.com")
 

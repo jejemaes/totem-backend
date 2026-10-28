@@ -2,8 +2,8 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
+from authentication.authenticators import ApiKeyAuth, JWTAuth
 from core.api import ModelController
-from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
 from contact.schemas import (
@@ -20,7 +20,7 @@ class ContactController(TokenHasScopePermissionModelControllerMixin, ModelContro
     service = ContactService
 
     path_prefix = "/contacts/"
-    auth = [OAuthTokenAuthentication()]
+    auth = [JWTAuth(), ApiKeyAuth()]
     permission_map = {
         "read": ["totem.contact.read"],
         "create": ["totem.contact.create"],

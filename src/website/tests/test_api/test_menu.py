@@ -1,14 +1,12 @@
 import json
-from datetime import timedelta
 from pathlib import Path
 
 from django.core import serializers
 from django.test import TestCase
-from django.utils import timezone
 from parameterized import parameterized
 
+from authentication.testing import mint_access_token
 from core.testing import APITestCaseMixin
-from oauth.models import AccessToken
 from user.tests.test_api.common import CommonTestMixin
 from website.models import Menu, Page
 
@@ -464,11 +462,10 @@ class MenuAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
     )
     def test_resequence_access_rules(self, role, status_code):
         self.user_frodon.roles.set([load_website_role(role)])
-        # After the roles: changing them invalidates the user's tokens.
-        token = AccessToken.objects.create(
-            user=self.user_frodon, token=f"frodon_{role.lower()}", scope=ALL_SCOPES,
-            expires=timezone.now() + timedelta(days=1),
-        ).token
+        # Minted after the roles are set, though it no longer has to be: the
+        # scopes come from the claim and the row-level reach from the live roles,
+        # so changing the roles no longer invalidates anything.
+        token = mint_access_token(self.user_frodon, ALL_SCOPES.split())
 
         response = self.resequence({"ids": [self.camp.pk, self.hike.pk]}, token=token)
 

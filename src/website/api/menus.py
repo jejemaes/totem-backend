@@ -2,8 +2,8 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
+from authentication.authenticators import ApiKeyAuth, JWTAuth
 from core.api import DisplayNameModelControllerMixin, ModelController, ResequenceModelControllerMixin
-from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
 from website.schemas import (
@@ -26,7 +26,7 @@ class MenuController(
     service = MenuService
 
     path_prefix = "/website/menus/"
-    auth = [OAuthTokenAuthentication()]
+    auth = [JWTAuth(), ApiKeyAuth()]
     permission_map = {
         "read": ["totem.websitemenu.read"],
         "create": ["totem.websitemenu.create"],

@@ -2,8 +2,8 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
+from authentication.authenticators import ApiKeyAuth, JWTAuth
 from core.api import DisplayNameModelControllerMixin, ModelController
-from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
 from account.schemas import (
@@ -23,7 +23,7 @@ class AccountController(
     service = AccountService
 
     path_prefix = "/accounting/accounts/"
-    auth = [OAuthTokenAuthentication()]
+    auth = [JWTAuth(), ApiKeyAuth()]
     permission_map = {
         "read": ["totem.account.read"],
         "create": ["totem.account.create"],

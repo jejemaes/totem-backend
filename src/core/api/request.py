@@ -40,13 +40,23 @@ class Request:
         return self._env
 
     def _get_request_user(self):
-        user = None
-        if hasattr(self._request, 'auth'):
-            if hasattr(self._request.auth, 'user'):
-                user = self._request.auth.user
-        if user is None and hasattr(self._request, 'user'):
-            user = self._request.user
-        return user
+        """ The user the request acts as, or `None`.
+
+        No fallback to `request.user` once something authenticated: a machine
+        caller (an API key) authenticates with no user, and falling back would
+        put the `AnonymousUser` of `AuthenticationMiddleware` into
+        `Environment.user` -- where `AccessContext.user` is an `Optional[User]`
+        pydantic would reject, and `get_access_roles()` would look for `.roles`
+        on it. The fallback was unreachable while every credential carried a
+        user; `ApiKeyAuth` is what makes it reachable.
+
+        The fallback is kept for a request that authenticated nothing, so that a
+        caller outside the API still gets whatever the middleware put there.
+        """
+        auth = getattr(self._request, "auth", None)
+        if auth is not None:
+            return getattr(auth, "user", None)
+        return getattr(self._request, "user", None)
 
     # @property
     # def user(self):

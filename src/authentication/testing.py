@@ -5,9 +5,9 @@ anything matching `test*`, and would try to run this module as a test case.
 """
 
 from authentication.tokens import encode_access_token
-from user.access_rights import get_all_permission
+from user.access_rights import get_all_permission, get_public_permission
 
-__all__ = ["AccessTokenStub", "all_scopes", "mint_access_token"]
+__all__ = ["AccessTokenStub", "all_scopes", "mint_access_token", "public_scopes"]
 
 
 def all_scopes():
@@ -18,6 +18,18 @@ def all_scopes():
     covered without touching any fixture.
     """
     return [permission for permission, dummy in get_all_permission()]
+
+
+def public_scopes():
+    """ Every permission an API key may actually be granted.
+
+    Distinct from `all_scopes()`, and the difference is the point: `totem.apikey.*`
+    is registered `is_public=False`, so it is absent from the choices of
+    `ApiKey.scope` and a key can never hold it. A test fixture built from
+    `all_scopes()` would hand a key rights the design says it cannot have --
+    `Model.objects.create()` runs no `full_clean()`, so nothing would stop it.
+    """
+    return [permission for permission, dummy in get_public_permission()]
 
 
 def mint_access_token(user, scopes=None, *, ttl=None, now=None) -> str:

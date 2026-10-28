@@ -2,6 +2,7 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
+from authentication.authenticators import ApiKeyAuth, JWTAuth
 from core.api import (
     BaseModelController,
     DisplayNameModelControllerMixin,
@@ -9,7 +10,6 @@ from core.api import (
     Route,
     route,
 )
-from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.access_policy import access_policy
 from user.access_rights import get_all_permission
@@ -37,7 +37,7 @@ class UserRoleController(
     service = UserRoleService
 
     path_prefix = "/user-roles/"
-    auth = [OAuthTokenAuthentication()]
+    auth = [JWTAuth(), ApiKeyAuth()]
     permission_map = {
         "read": ["totem.userrole.read"],
         "display_name": ["totem.userrole.read"],

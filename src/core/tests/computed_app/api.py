@@ -2,13 +2,13 @@ from typing import List
 
 from ninja import Schema
 
+from authentication.authenticators import ApiKeyAuth, JWTAuth
 from core.api import (
     DisplayNameModelControllerMixin,
     GroupByModelControllerMixin,
     ModelController,
     ResequenceModelControllerMixin,
 )
-from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 
 from .schemas import (
@@ -35,7 +35,7 @@ class OrderController(DisplayNameModelControllerMixin, ModelController):
     api = api_v1
     service = OrderService
     path_prefix = "/computed-app/orders/"
-    auth = [OAuthTokenAuthentication()]
+    auth = [JWTAuth(), ApiKeyAuth()]
 
     list_response_schema: Schema = List[OrderSchema]
     # A stored computed field is a column: it can be ordered by.
@@ -56,7 +56,7 @@ class LineController(GroupByModelControllerMixin, ModelController):
     api = api_v1
     service = LineService
     path_prefix = "/computed-app/lines/"
-    auth = [OAuthTokenAuthentication()]
+    auth = [JWTAuth(), ApiKeyAuth()]
 
     list_response_schema: Schema = List[LineSchema]
     list_filter_schema = LineFilterSchema
@@ -80,7 +80,7 @@ class CategoryProductController(
     api = api_v1
     service = ProductService
     path_prefix = "/computed-app/categories/{category_id}/products/"
-    auth = [OAuthTokenAuthentication()]
+    auth = [JWTAuth(), ApiKeyAuth()]
 
     list_response_schema: Schema = List[ProductSchema]
     list_filter_schema = ProductFilterSchema

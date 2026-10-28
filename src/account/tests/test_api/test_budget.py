@@ -41,7 +41,7 @@ class BudgetAPITest(BudgetTestMixin, CommonTestMixin, APITestCaseMixin, TestCase
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        cls.user_access_token_tintin = cls.create_token(cls.user, "tintin_secure_token")
+        cls.user_access_token_tintin = cls.create_token(cls.user)
 
         cls.url = "/api/v1/accounting/budget/"
         cls.url_detail = f"/api/v1/accounting/budget/{BUDGET_ID1}/"
