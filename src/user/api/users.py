@@ -2,8 +2,8 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
+from authentication.authenticators import ApiKeyAuth, JWTAuth
 from core.api import DisplayNameModelControllerMixin, ModelController, Route, route
-from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.schemas import (
     ProfilePathParam,
@@ -26,7 +26,7 @@ class UserController(
     service = UserService
 
     path_prefix = "/users/"
-    auth = [OAuthTokenAuthentication()]
+    auth = [JWTAuth(), ApiKeyAuth()]
     permission_map = {
         "read": ["totem.user.read"],
         "create": ["totem.user.create"],

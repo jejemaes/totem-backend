@@ -50,6 +50,6 @@ class EnsurePeriodicTaskTestCase(TestCase):
 
     def test_crontab_is_shared(self):
         ensure_periodic_task("Task A", "base.tasks.clear_sessions", crontab={"minute": "0", "hour": "2"})
-        ensure_periodic_task("Task B", "oauth.tasks.clear_tokens", crontab={"minute": "0", "hour": "2"})
+        ensure_periodic_task("Task B", "authentication.tasks.clear_tokens", crontab={"minute": "0", "hour": "2"})
 
         self.assertEqual(CrontabSchedule.objects.filter(minute="0", hour="2").count(), 1)

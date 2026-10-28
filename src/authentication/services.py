@@ -209,3 +209,29 @@ class ApiKeyService(
     place it can be: `validate_data` runs before the instance exists, and the
     service write path never calls `Model.save()`.
     """
+
+    def __init__(self, env):
+        super().__init__(env)
+        # The clear secrets minted in this unit of work, by pk.
+        #
+        # They have to be remembered somewhere, because the creation route
+        # refetches the record from the database before serializing it -- so that a
+        # response reads what the database derived -- and the clear secret is the
+        # one value the database deliberately does not hold. `ApiKeyController`
+        # carries it across that refetch from here.
+        #
+        # Request-scoped, not global: `Environment.get` builds one service instance
+        # per environment, and no environment is ever shared between requests. The
+        # same lifetime as `Environment._cache`.
+        self._minted_secrets = {}
+
+    async def create(self, data):
+        instances = await super().create(data)
+        self._minted_secrets.update(
+            {instance.pk: instance.secret for instance in instances if instance.secret}
+        )
+        return instances
+
+    def minted_secret(self, pk):
+        """ The clear secret minted for `pk` in this unit of work, or `None`. """
+        return self._minted_secrets.get(pk)

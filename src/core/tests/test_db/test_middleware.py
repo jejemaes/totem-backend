@@ -1,39 +1,31 @@
-from datetime import timedelta
-
 from asgiref.sync import async_to_sync
 from django.db import close_old_connections, connections
 from django.test import AsyncClient, TransactionTestCase
-from django.utils import timezone
 
+from authentication.testing import mint_access_token
 from base.models import Country
 from core.db.tenancy import current_database, default_database, use_database
 from core.testing import APITestCaseMixin, TenantDatabaseTestMixin
-from oauth.models import AccessToken, OAuthApp
 from user.choices import UserType
 from user.models import User
 
 COUNTRIES_URL = "/api/v1/countries/"
 
 
-def create_token(token):
-    """ A user token reading countries, in the current database. """
-    application = OAuthApp.objects.create(
-        name="Application for Test",
-        client_type=OAuthApp.CLIENT_CONFIDENTIAL,
-        authorization_grant_type=OAuthApp.GRANT_CLIENT_CREDENTIALS,
-    )
+def create_token(name):
+    """ A user token reading countries, minted for the current database.
+
+    What makes a token local to one tenant is no longer where its row lives --
+    there is no row. `encode_access_token` stamps `current_database()` into the
+    `db` claim and the decoder refuses a claim that does not match, which is why
+    this has to be called inside the `use_database` block of its tenant.
+    """
     user = User.objects.create(
-        username=f"{token}@totem.test",
-        email=f"{token}@totem.test",
+        username=f"{name}@totem.test",
+        email=f"{name}@totem.test",
         user_type=UserType.INTERNAL,
     )
-    return AccessToken.objects.create(
-        user=user,
-        application=application,
-        token=token,
-        scope="totem.country.read",
-        expires=timezone.now() + timedelta(days=1),
-    )
+    return mint_access_token(user, ["totem.country.read"])
 
 
 class TenantMiddlewareTestCase(TenantDatabaseTestMixin, APITestCaseMixin, TransactionTestCase):
@@ -43,10 +35,10 @@ class TenantMiddlewareTestCase(TenantDatabaseTestMixin, APITestCaseMixin, Transa
     def setUp(self):
         super().setUp()
         Country.objects.create(code="BE", name="Belgium")
-        create_token("default_token")
+        self.default_token = create_token("default")
         with use_database(self.tenant_db):
             Country.objects.create(code="FR", name="France")
-            create_token("tenant_token")
+            self.tenant_token = create_token("tenant")
 
     def list_countries(self, token, **headers):
         """ The status code, and the codes of the countries listed. """
@@ -56,26 +48,32 @@ class TenantMiddlewareTestCase(TenantDatabaseTestMixin, APITestCaseMixin, Transa
         return response.status_code, [item["id"] for item in response.json()["results"]]
 
     def test_header_selects_the_database(self):
-        status, codes = self.list_countries("tenant_token", HTTP_X_TENANT_DB=self.tenant_db)
+        status, codes = self.list_countries(self.tenant_token, HTTP_X_TENANT_DB=self.tenant_db)
         self.assertEqual(status, 200)
         self.assertEqual(codes, ["FR"])
 
     def test_without_header_default_database(self):
-        status, codes = self.list_countries("default_token")
+        status, codes = self.list_countries(self.default_token)
         self.assertEqual(status, 200)
         self.assertEqual(codes, ["BE"])
 
     def test_token_only_valid_in_its_database(self):
-        status, dummy = self.list_countries("default_token", HTTP_X_TENANT_DB=self.tenant_db)
+        """ The property the `db` claim exists for.
+
+        The signing key is shared by every tenant, so each of these tokens is
+        cryptographically valid against the other database. Only the claim
+        separates them.
+        """
+        status, dummy = self.list_countries(self.default_token, HTTP_X_TENANT_DB=self.tenant_db)
         self.assertEqual(status, 401)
-        status, dummy = self.list_countries("tenant_token")
+        status, dummy = self.list_countries(self.tenant_token)
         self.assertEqual(status, 401)
 
     def test_invalid_header_is_not_found(self):
         for value in ["Tenant", "../media", "default", "a" * 64]:
             with self.subTest(value=value):
                 response = self.do_api_request(
-                    COUNTRIES_URL, "GET", "default_token", HTTP_X_TENANT_DB=value
+                    COUNTRIES_URL, "GET", self.default_token, HTTP_X_TENANT_DB=value
                 )
                 self.assertEqual(response.status_code, 404)
 
@@ -83,13 +81,16 @@ class TenantMiddlewareTestCase(TenantDatabaseTestMixin, APITestCaseMixin, Transa
         """ Under ASGI, the middleware chain is async. """
         response = async_to_sync(AsyncClient().get)(
             COUNTRIES_URL,
-            headers={"Authorization": "Bearer tenant_token", "X-Tenant-Db": self.tenant_db},
+            headers={
+                "Authorization": f"Bearer {self.tenant_token}",
+                "X-Tenant-Db": self.tenant_db,
+            },
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual([item["id"] for item in response.json()["results"]], ["FR"])
 
     def test_database_restored_after_request(self):
-        self.list_countries("tenant_token", HTTP_X_TENANT_DB=self.tenant_db)
+        self.list_countries(self.tenant_token, HTTP_X_TENANT_DB=self.tenant_db)
         self.assertEqual(current_database(), default_database())
 
     def test_end_of_request_releases_tenant_connection(self):

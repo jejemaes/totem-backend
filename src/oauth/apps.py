@@ -13,20 +13,8 @@ class OAuthConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "oauth"
 
-    def ready(self):
-        from oauth import signals # noqa
-
     populate_dependencies = ["user"]
     populate_fixtures = ["oauth_app"]
-
-    def populate_system(self, size, **kwargs):
-        from core.utils.celery import ensure_periodic_task
-
-        ensure_periodic_task(
-            "Clear expired OAuth tokens",
-            "oauth.tasks.clear_tokens",
-            crontab={"minute": "0", "hour": "3"},
-        )
 
     def populate_local(self, size, **kwargs):
         User = apps.get_model("user", "User")

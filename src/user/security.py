@@ -23,9 +23,18 @@ register_permission("totem.userrole.read", "Read User Roles", is_public=True)
 
 
 class IsAuthenticated(BasePermission):
+    """ A *user* is acting, not merely a credential.
+
+    Guards `request.auth` itself now that a machine caller exists: an `ApiKey`
+    lands in `request.auth` with `user` at `None`, so this returns False and the
+    route answers 403. That is the intended answer -- `/users/me/` has no profile
+    to return to a key -- and the guard is what keeps it a 403 instead of an
+    `AttributeError`.
+    """
 
     def has_permission(self, request):
-        return bool(request.auth.user and request.auth.user.is_authenticated)
+        auth = request.auth
+        return bool(auth and auth.user and auth.user.is_authenticated)
 
 
 class TokenHasScopePermission(BasePermission):
@@ -38,7 +47,12 @@ class TokenHasScopePermission(BasePermission):
 
     def has_permission(self, request) -> bool:
         if request.auth:
-            return request.auth.is_valid(self.scopes)
+            # `has_scopes`, from `ScopedPrincipalMixin`, is what both
+            # authenticators share. Same semantics as the `is_valid` it replaces,
+            # minus its expiry half: expiry is already proven by the signature
+            # check (JWT) or by the `usable()` filter (API key) before
+            # `request.auth` exists at all.
+            return request.auth.has_scopes(self.scopes)
         return False
 
 

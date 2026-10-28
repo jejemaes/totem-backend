@@ -1,13 +1,13 @@
 from ninja import Schema
 from ninja.errors import HttpError
 
+from authentication.authenticators import ApiKeyAuth, JWTAuth
 from core.api import (
     BaseModelController,
     RetrieveModelControllerMixin,
     UpdateModelControllerMixin,
     route,
 )
-from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import (
     TokenHasScopePermission,
@@ -54,7 +54,7 @@ class WebsiteController(
     service = WebsiteService
 
     path_prefix = "/website/websites/"
-    auth = [OAuthTokenAuthentication()]
+    auth = [JWTAuth(), ApiKeyAuth()]
     permission_map = {
         "read": ["totem.website.read"],
         "update": ["totem.website.update"],

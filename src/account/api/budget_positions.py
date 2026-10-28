@@ -2,13 +2,13 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
+from authentication.authenticators import ApiKeyAuth, JWTAuth
 from core.api import (
     DisplayNameModelControllerMixin,
     GroupByModelControllerMixin,
     ModelController,
     ResequenceModelControllerMixin,
 )
-from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
 from account.schemas import (
@@ -38,7 +38,7 @@ class BudgetPositionController(
     service = BudgetPositionService
 
     path_prefix = "/accounting/budget/{budget_id}/positions/"
-    auth = [OAuthTokenAuthentication()]
+    auth = [JWTAuth(), ApiKeyAuth()]
     # The scopes of the budget: a position is part of it.
     permission_map = BUDGET_PERMISSION_MAP
 

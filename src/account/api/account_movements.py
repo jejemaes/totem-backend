@@ -2,8 +2,8 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
+from authentication.authenticators import ApiKeyAuth, JWTAuth
 from core.api import GroupByModelControllerMixin, ModelController
-from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
 from account.schemas import (
@@ -22,7 +22,7 @@ class AccountMovementController(
     service = AccountMovementService
 
     path_prefix = "/accounting/movements/"
-    auth = [OAuthTokenAuthentication()]
+    auth = [JWTAuth(), ApiKeyAuth()]
     permission_map = {
         "read": ["totem.accountmovement.read"],
         "create": ["totem.accountmovement.create"],

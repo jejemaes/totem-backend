@@ -2,8 +2,8 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
+from authentication.authenticators import ApiKeyAuth, JWTAuth
 from core.api import DisplayNameModelControllerMixin, ModelController
-from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
 from account.schemas import (
@@ -34,7 +34,7 @@ class BudgetController(
     service = BudgetService
 
     path_prefix = "/accounting/budget/"
-    auth = [OAuthTokenAuthentication()]
+    auth = [JWTAuth(), ApiKeyAuth()]
     permission_map = BUDGET_PERMISSION_MAP
 
     list_response_schema: Schema = List[BudgetSchema]

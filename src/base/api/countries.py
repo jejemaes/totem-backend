@@ -2,13 +2,13 @@ from typing import List
 
 from ninja import FilterSchema, Schema
 
+from authentication.authenticators import ApiKeyAuth, JWTAuth
 from core.api import (
     BaseModelController,
     DisplayNameModelControllerMixin,
     ListModelControllerMixin,
     RetrieveModelControllerMixin,
 )
-from oauth.authentication import OAuthTokenAuthentication
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
 from base.schemas import CountryDisplayNameSchema, CountryFilterSchema, CountryPathParam, CountrySchema
@@ -27,7 +27,7 @@ class CountryController(
 
     path_prefix = "/countries/"
     path_model = CountryPathParam
-    auth = [OAuthTokenAuthentication()]
+    auth = [JWTAuth(), ApiKeyAuth()]
     permission_map = {
         "read": ["totem.country.read"],
         "display_name": ["totem.country.read"],

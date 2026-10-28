@@ -5,6 +5,8 @@ from pathlib import Path
 from django.core import serializers
 from django.utils import timezone
 
+from authentication.testing import AccessTokenStub
+
 from account.models import (
     Account,
     AccountCategory,
@@ -200,27 +202,25 @@ class BudgetTestMixin(AccountTestMixin):
         user.roles.set([self.roles[role_pk]])
 
     def token_as(self, role_pk):
-        """A token of `user` (Tintin) after granting them `role_pk`. In that order:
-        changing the roles of a user invalidates their tokens."""
+        """A token of `user` (Tintin) after granting them `role_pk`.
+
+        Granting first is no longer load-bearing -- it used to be, when changing
+        the roles of a user deleted their tokens. A token now carries its scopes
+        in a claim and its row-level reach comes from the live roles, so the two
+        orders would agree. Kept because it reads in the order it happens.
+        """
         self.grant(self.user, role_pk)
-        return self.create_token(self.user, f"tintin_{role_pk.lower()}_token").token
+        return self.create_token(self.user).token
 
     @classmethod
-    def create_token(cls, user, token):
+    def create_token(cls, user):
         """A token of `user` holding every scope: what it reaches is then decided by
-        the access rules of the roles granted to the user alone."""
-        from datetime import timedelta
+        the access rules of the roles granted to the user alone.
 
-        from oauth2_provider.scopes import get_scopes_backend
-
-        from oauth.models import AccessToken
-
-        return AccessToken.objects.create(
-            user=user,
-            token=token,
-            scope=" ".join(get_scopes_backend().get_all_scopes()),
-            expires=timezone.now() + timedelta(days=365),
-        )
+        Returns the stub rather than the string, so that a caller can still read
+        `.token` -- and mint a fresh one -- after changing those roles.
+        """
+        return AccessTokenStub(user=user)
 
     def assertPositionTotals(self, position_id, planned, practical):
         position = BudgetPosition.objects.get(pk=position_id)
