@@ -844,6 +844,22 @@ class DisplayNameModelControllerMixin:
         )
 
 
+def _require_object(value):
+    """ Refuse a `filters` body value that is not a JSON object.
+
+    `ninja.Schema` wraps any input in a `DjangoGetter` and reads its fields by
+    attribute -- it is built to serialize ORM instances. So a string, a number or
+    a list validates as a filter schema with every filter unset, and the group by
+    runs on the whole collection with a 200: a wrong answer that looks right.
+    Checked here, before ninja's validator, rather than on a project-wide
+    `FilterSchema` base: the group-by body is the only one that embeds a filter
+    schema, and the list reads its filters from the query string, always a dict.
+    """
+    if value is not None and not isinstance(value, dict):
+        raise ValueError("Input should be an object")
+    return value
+
+
 class GroupByModelControllerMixin:
     """`POST /group-by/`: the groups of the records, by dimensions, with measures,
     through the service's `group_by` (`GroupByMixin`). Answers
@@ -1000,7 +1016,12 @@ class GroupByModelControllerMixin:
         }
         filter_schema = getattr(cls, "list_filter_schema", None)
         if filter_schema is not None:
-            fields["filters"] = (t.Optional[filter_schema], None)
+            # The tuple's `None` is the default, which is what keeps `filters` optional:
+            # in pydantic 2, `Optional` alone only allows `null`.
+            fields["filters"] = (
+                t.Annotated[t.Optional[filter_schema], pydantic.BeforeValidator(_require_object)],
+                None,
+            )
         return pydantic.create_model(
             f"{cls.model.__name__}GroupBySchema", __base__=Schema, **fields
         )

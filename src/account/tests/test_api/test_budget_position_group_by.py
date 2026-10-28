@@ -91,10 +91,12 @@ class BudgetPositionGroupByAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             # An unknown key is ignored, as by the list: it cannot widen the budget
             # of the path.
             ("unknown key", {"budget": BUDGET_ID2}, 200, 2),
-            # ⚠️ Accepted and ignored rather than refused: a bare string validates
-            # as the filter schema with every filter unset. Pinned as it is, not
-            # as it should be (a 422 on `filters`).
-            ("not an object", "pipe", 200, 2),
+            # Not an object: refused, rather than read as "no filter" (see
+            # `_require_object` in `core.api.controller`).
+            ("a string", "pipe", 422, None),
+            ("a number", 42, 422, None),
+            ("a boolean", True, 422, None),
+            ("a list", [{"name": "pipe"}], 422, None),
         ]
     )
     def test_group_by_request_filters(self, dummy, filters, status_code, count):
