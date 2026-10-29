@@ -103,9 +103,15 @@ def _get_pydantic_fieldinfo_from_field(
         "default_factory": None,
     }
 
+    # Omitted and null are two different things: a field may be left out of a
+    # body (`optional`, `blank`, a default) without `null` being a value its
+    # column accepts. Pydantic keeps them apart -- a `None` default is never
+    # validated -- so only a nullable column gets `Optional[...]`. Conflating
+    # them let `{"position": null}` through every update schema, down to the
+    # database constraint.
     if field.primary_key or blank or null or optional:
         field_infos["default"] = None
-        nullable = True
+    nullable = field.primary_key or null
 
     if field.has_default():
         if callable(field.default):

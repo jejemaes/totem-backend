@@ -70,7 +70,7 @@ class TestSchemaFieldConverter(TestCase):
             ),
             (
                 models.SlugField(max_length=123, blank=True),
-                t.Optional[str],
+                str,  # blank or defaulted, but not null: may be omitted, not set to null
                 FieldInfo(max_length=123, default=None, pattern=slug_re),
             ),
         ]
@@ -165,7 +165,7 @@ class TestSchemaFieldConverter(TestCase):
             ),
             (
                 models.IntegerField(null=False, blank=True, default=42),
-                t.Optional[int],
+                int,  # blank or defaulted, but not null: may be omitted, not set to null
                 FieldInfo(
                     le=2147483647,
                     ge=-2147483648,
@@ -213,7 +213,7 @@ class TestSchemaFieldConverter(TestCase):
             ),
             (
                 models.PositiveIntegerField(null=False, blank=True, default=42),
-                t.Optional[int],
+                int,  # blank or defaulted, but not null: may be omitted, not set to null
                 FieldInfo(le=2147483647, ge=0, default=42),
             ),
             (
@@ -730,3 +730,42 @@ class TestRelationFieldConverter(TestCase):
         _, field_info = convert_db_field(UserRoleRelation._meta.get_field("user"))
 
         self.assertTrue(field_info.is_required())
+
+
+class TestOmittableIsNotNullable(TestCase):
+    """`optional` -- what `optional_fields` asks for -- makes a field omittable,
+    never nullable: only the column's own `null` does.
+
+    The two were one branch, so every field of an update schema accepted `null`,
+    a NOT NULL relation included, and the database constraint was what refused it,
+    keyed on `__all__` with its SQL message.
+    """
+
+    @parameterized.expand(
+        [
+            ("char", models.CharField(max_length=42), "frodon"),
+            ("char_blank", models.CharField(max_length=42, blank=True), ""),
+            ("integer_default", models.IntegerField(default=42), 7),
+            ("foreign_key", UserRoleRelation._meta.get_field("user"), "c99199ba-8fa5-461e-802e-c303e390f61b"),
+        ]
+    )
+    def test_an_optional_not_null_field_may_be_omitted_not_nulled(self, dummy, django_field, value):
+        schema = pydantic.create_model("S", field=convert_db_field(django_field, optional=True))
+
+        self.assertNotIn("field", schema().model_dump(exclude_unset=True))
+        self.assertIsNotNone(schema(field=value).field)
+        with self.assertRaises(pydantic.ValidationError) as ctx:
+            schema(field=None)
+        self.assertEqual(ctx.exception.errors()[0]["loc"], ("field",))
+
+    @parameterized.expand(
+        [
+            ("char", models.CharField(max_length=42, null=True)),
+            ("foreign_key", Page._meta.get_field("user")),
+        ]
+    )
+    def test_an_optional_null_field_accepts_null(self, dummy, django_field):
+        schema = pydantic.create_model("S", field=convert_db_field(django_field, optional=True))
+
+        self.assertIsNone(schema(field=None).field)
+        self.assertIn("field", schema(field=None).model_dump(exclude_unset=True))

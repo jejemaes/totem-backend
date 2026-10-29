@@ -13,6 +13,7 @@ from django.test import TestCase
 
 from core.services import Environment
 from core.services.exceptions import ServiceValidationMultiError
+from account.services import BudgetLineService
 from user.models import User
 from user.schemas import UserUpdateSchema
 from user.services import UserService
@@ -51,16 +52,18 @@ class TestFieldValidationOnWrite(TestCase):
     # -----------------------------------------------------------------
 
     def test_null_into_a_not_null_column_is_a_field_error(self):
-        """The live gap, and the reason this is not merely defensive.
+        """The guard for every caller the schema does not stand in front of.
 
-        `optional_fields = "__all__"` types every update field `Optional`, so
-        `null` passes the schema and reaches the service. Without this check it
-        only fails as an integrity error from the database -- unkeyed, and
-        unattributable to a field by any client.
+        Through the API, the update schema refuses `null` on a NOT NULL column
+        itself: `optional_fields = "__all__"` makes a field omittable, not
+        nullable. A schema built without validation -- as here -- or any other
+        caller of the service still reaches this check, and without it the
+        `null` would only fail as an integrity error from the database: unkeyed,
+        and unattributable to a field.
         """
         with self.assertRaises(ServiceValidationMultiError) as ctx:
             async_to_sync(self.service.update)(
-                {"id": self.actor.pk}, UserUpdateSchema(language=None)
+                {"id": self.actor.pk}, UserUpdateSchema.model_construct(language=None)
             )
 
         # Keyed by the payload's index and not by the record's pk: this runs in
@@ -87,3 +90,20 @@ class TestFieldValidationOnWrite(TestCase):
             self.internal_values({"roles": ["01M209K5BNS12QRPHXFWVJNVD1"]})
 
         self.assertIn("roles", ctx.exception.dict()[0])
+
+    def test_null_into_a_not_null_relation_is_a_field_error(self):
+        """The null check of `Field.validate()` is kept for relations, without
+        its lookup: unkeyed, a `null` position reached the database as an
+        integrity error naming no field."""
+        service = Environment(user=self.actor).get(BudgetLineService)
+
+        with self.assertRaises(ServiceValidationMultiError) as ctx:
+            async_to_sync(service.to_internal_values)([{"position": None}])
+
+        self.assertIn("position", ctx.exception.dict()[0])
+
+    def test_none_on_a_many_to_many_is_not_a_null_error(self):
+        # A many-to-many has no column: a creation hands it `None` for "not
+        # given", and that must not read as a null into a NOT NULL field. It
+        # resolves to no record.
+        self.assertEqual(self.internal_values({"roles": None}), [{"roles": []}])

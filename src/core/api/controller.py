@@ -962,7 +962,11 @@ class GroupByModelControllerMixin:
         relations = cls._group_by_relations()
         fields = {}
         for name, declaration in {**service._group_by_dimensions, **service._group_by_measures}.items():
-            python_type, _ = convert_db_field(declaration.output_field, optional=True)
+            # Nullable whatever the column: the sum of a group with no credit is
+            # `null`, and so is a dimension the rows left empty. `optional` would
+            # not say so -- it means "may be omitted", not "may be null".
+            python_type, _ = convert_db_field(declaration.output_field)
+            python_type = t.Optional[python_type]
             if name in relations:
                 python_type = t.Optional[t.Union[relations[name][0], python_type]]
             fields[name] = (python_type, pydantic.Field(None, title=declaration.label))

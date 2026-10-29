@@ -107,9 +107,13 @@ Points that bite:
   `apply_query_fields` resolves every requested lookup through
   `model._meta.get_field()`, so a property there breaks any client passing
   `?fields=`. `Page.url` is excluded for exactly this reason.
-- `optional_fields = "__all__"` types every field `Optional`, so a client can
-  send `null` into a NOT NULL column. `to_internal_values` turns that into a
-  field error; without it you would get an unkeyed integrity error.
+- `optional_fields = "__all__"` makes every field *omittable* (`default=None`),
+  not *nullable*: only a column's own `null=True` gives `Optional[...]`, so the
+  schema refuses `null` into a NOT NULL column, relations included. Need a
+  nullable type that is not a nullable column — a group-by aggregate, say — wrap
+  it in `Optional` yourself rather than passing `optional=True`.
+  `to_internal_values` keeps its own null check, on relations too, for callers
+  that skip the schema; without it you would get an unkeyed integrity error.
 - A field named `schema` shadows a pydantic attribute — name it something else
   (`attribute_schema`, `option_schema`).
 - Document the schemas you deliberately did **not** write, and why. Every

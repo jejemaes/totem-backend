@@ -166,7 +166,8 @@ class TestWebsiteService(TestCase):
         self.assertIn(DEFAULT_THEME_ID, messages[0])
 
     def test_a_null_theme_is_a_field_error(self):
-        """`optional_fields = "__all__"` lets `null` through the schema.
+        """Through the API, the update schema refuses `null` itself; built
+        unvalidated here, to reach the service's own guard.
 
         Refused by `ServiceBase.to_internal_values`, which runs
         `Field.validate()` on every supplied value -- so it is keyed by the
@@ -177,7 +178,7 @@ class TestWebsiteService(TestCase):
         self.build_website()
 
         with self.assertRaises(ServiceValidationMultiError) as ctx:
-            self.update(theme=None)
+            async_to_sync(self.service.update)({}, WebsiteUpdateSchema.model_construct(theme=None))
 
         self.assertIn("theme", ctx.exception.dict()[0])
 
