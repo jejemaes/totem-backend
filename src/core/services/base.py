@@ -271,7 +271,17 @@ class ServiceBase(Service, t.Generic[ModelT]):
                         # `model_instance=None` is safe: `Field.validate()` never
                         # touches it, and the subclasses that do are exactly the
                         # relational ones excluded here.
-                        if not field.is_relation:
+                        #
+                        # A relation still gets the null check of
+                        # `Field.validate()`, which needs no lookup: without it a
+                        # `null` on a NOT NULL relation reaches the database and
+                        # comes back as an integrity error naming no field. Only
+                        # for a column: a many-to-many has none, and a creation
+                        # hands it `None` for "not given".
+                        if field.is_relation:
+                            if val is None and field.concrete and not field.many_to_many and not field.null:
+                                raise exceptions.ValidationError(field.error_messages["null"], code="null")
+                        else:
                             field.validate(val, None)
                     except exceptions.ValidationError as exc:
                         suberror.add_message(

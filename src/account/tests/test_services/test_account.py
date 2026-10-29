@@ -132,7 +132,9 @@ class TestAccountService(AccountTestMixin, TestCase):
         ]
     )
     def test_update_invalid(self, filters, payload):
-        data = AccountUpdateSchema(**payload)
+        # Built unvalidated: the schema refuses a `null` name itself now, and what
+        # is tested here is the service, which other callers than the API reach.
+        data = AccountUpdateSchema.model_construct(**payload)
         with self.assertRaises(ServiceValidationMultiError):
             async_to_sync(self.service.update)(filters, data)
 

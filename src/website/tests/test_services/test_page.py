@@ -290,7 +290,9 @@ class TestPageService(TestCase):
 
         with self.assertRaises(ServiceValidationMultiError) as ctx:
             async_to_sync(self.service.update)(
-                {"id": page.pk}, PageUpdateSchema(layout=None)
+                # Unvalidated: the schema refuses the `null` itself; this is the
+                # service's own guard, for callers that skip it.
+                {"id": page.pk}, PageUpdateSchema.model_construct(layout=None)
             )
 
         self.assertIn("layout", ctx.exception.dict()[0])

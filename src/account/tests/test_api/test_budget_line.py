@@ -466,10 +466,10 @@ class BudgetLineAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
     @parameterized.expand(
         [
             ({"name": None}, 422, "name"),
-            # Not refused by a validation: the derived `budget` comes out null and
-            # the database constraint answers, its SQL message in the response.
-            # Pinned as found; it reads like a missing null check on `position`.
-            ({"position": None}, 422, "__all__"),
+            # Refused by the schema: `optional_fields` makes `position` omittable,
+            # not nullable. It used to reach the database constraint, which
+            # answered on `__all__` with its SQL message.
+            ({"position": None}, 422, "position"),
             ({"position": POSITION_ALE_ID}, 422, "position"),  # another budget's
             ({"planned_amount": None}, 422, "planned_amount"),
             ({"planned_amount": "1.001"}, 422, "planned_amount"),
