@@ -80,6 +80,7 @@ tests.
 |---|---|---|
 | `test_<resource>.py` | always | the CRUD mixins the controller composes |
 | `test_<resource>_actions.py` | the controller declares extra `@route`s | one section per route |
+| `test_<name>_actions.py` | a controller with no model, only `@route`s (`ThemeController`, `HtmlWidgetController`) | one section per route, no rules tests |
 | `test_<resource>_display_name.py` | `DisplayNameModelControllerMixin` | `/display-name/` |
 | `test_<resource>_resequence.py` | `ResequenceModelControllerMixin` | `/resequence/` |
 | `test_<resource>_group_by.py` | `GroupByModelControllerMixin` | `/group-by/` |
