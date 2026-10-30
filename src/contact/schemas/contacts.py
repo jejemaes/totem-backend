@@ -2,6 +2,7 @@ from typing import List, Optional
 
 from ninja import FilterSchema
 from pydantic import Field
+from ulid import ULID
 
 from base.schemas import CountryDisplayNameSchema
 from core.schemas import ModelSchema
@@ -95,7 +96,9 @@ class ContactFilterSchema(FilterSchema):
         title="Country",
         description="ISO 3166-1 alpha-2 code of the country.",
     )
-    tag: Optional[str] = Field(
+    # `ULID` rather than `str`: a malformed id is refused (422) instead of
+    # silently matching nothing.
+    tag: Optional[ULID] = Field(
         None,
         q="tags__id",
         title="Tag",
