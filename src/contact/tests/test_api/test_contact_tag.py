@@ -257,7 +257,7 @@ class ContactTagAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         [
             ({"name": None}, 422, "name"),
             ({"name": "Hobbit"}, 422, "__all__"),  # the name is unique
-            ({"name": "hobbit"}, 201, None),  # ... with the case
+            ({"name": "hobbit"}, 422, "__all__"),  # ... whatever the case
             ({"color": None}, 422, "color"),
             ({"color": -1}, 422, "color"),
             ({"color": 16}, 422, "color"),
@@ -329,7 +329,9 @@ class ContactTagAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         [
             ({"name": None}, 422, "name"),
             ({"name": "Fellowship"}, 422, "__all__"),  # taken by another tag
+            ({"name": "FELLOWSHIP"}, 422, "__all__"),  # ... whatever the case
             ({"name": "Hobbit"}, 200, None),  # its own name
+            ({"name": "HOBBIT"}, 200, None),  # its own name, recased
             ({"color": None}, 422, "color"),
             ({"color": -1}, 422, "color"),
             ({"color": 16}, 422, "color"),
