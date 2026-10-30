@@ -1,5 +1,6 @@
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.db.models.functions import Lower
 
 from core.orm.fields import ULIDField
 
@@ -23,8 +24,12 @@ class ContactTag(models.Model):
         verbose_name = "Contact Tag"
         verbose_name_plural = "Contact Tags"
         constraints = [
+            # On `Lower(name)` rather than the column: "hobbit" next to "Hobbit"
+            # is the same tag twice. A `citext` column or a non-deterministic
+            # collation would also make the searches and orderings case
+            # insensitive, which is not what is wanted here.
             models.UniqueConstraint(
-                fields=["name"],
+                Lower("name"),
                 name="unique_contact_tag_name",
                 violation_error_message="A tag with that name already exists.",
             ),
