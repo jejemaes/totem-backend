@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.test import TestCase
 from django.utils.dateparse import parse_datetime
 from parameterized import parameterized
@@ -5,8 +7,10 @@ from parameterized import parameterized
 from authentication.testing import mint_access_token
 from core.testing import APITestCaseMixin
 from user.access_rights import get_user_scopes
+from user.models import User
 from user.tests.test_api.common import USER_ID1, USER_ID2
 from website.models import Menu, Page, Website
+from website.services import PageService
 
 from .common import (
     MENU_ID4,
@@ -556,13 +560,17 @@ class PageAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
 
     @parameterized.expand(
         [
-            ("user", 200, USER_ID1),
+            # Minting the token, authenticating, the roles, and one query to
+            # render the user: a relation costs one query, whatever it holds.
+            ("user", 200, USER_ID1, 4),
             # A key has no user: the page is written by nobody.
-            ("apikey", 200, None),
+            # Authenticating only: no user to render.
+            ("apikey", 200, None, 1),
         ]
     )
-    def test_default_value_response(self, auth, status_code, user_id):
-        response = self.do_request("GET", self.url_default_values, auth=auth)
+    def test_default_value_response(self, auth, status_code, user_id, query_count):
+        with self.assertNumQueries(query_count):
+            response = self.do_request("GET", self.url_default_values, auth=auth)
 
         self.assertEqual(response.status_code, status_code)
         self.assert_default_values_format(
@@ -614,21 +622,37 @@ class PageAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
 
     @parameterized.expand(
         [
-            ([],),
-            (["website_manage_own_page"],),
+            ([], None, USER_ID1),
+            (["website_manage_own_page"], None, USER_ID1),
+            ([], USER_ID2, USER_ID2),
+            # Gollum is out of Frodon's reach: proposing him is dropped.
+            (["user_manage_own_profile"], USER_ID2, None),
+            (["user_manage_own_profile"], USER_ID1, USER_ID1),
         ]
     )
-    def test_default_value_access_rules(self, rules):
-        # The defaults read no record, so no rule narrows them: whatever the
-        # rules, the page is the acting user's -- the one author that
-        # `website_manage_own_page` lets them create.
+    def test_default_value_access_rules(self, rules, proposed_user_id, expected_user_id):
+        """ The defaults read no record of the model, so its rules do not narrow
+        them; the user is the acting one -- the one author that `website_manage_own_page` lets them create. Rendered through the user
+        service, though: a user the rules hide is dropped, not rendered null --
+        `proposed_user_id` stands for a service proposing one. """
         self.role.rules = rules
         self.role.save()
+        default_values = PageService._default_values
 
-        response = self.do_request("GET", self.url_default_values)
+        async def propose(service, fields=None):
+            values = await default_values(service, fields)
+            if proposed_user_id is not None:
+                values["user"] = proposed_user_id
+            return values
+
+        with patch.object(PageService, "_default_values", propose):
+            response = self.do_request("GET", self.url_default_values)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json()["user"], USER_ID1)
+        if expected_user_id is None:
+            self.assertNotIn("user", response.json())
+        else:
+            self.assertEqual(response.json()["user"], self.user_display_name(expected_user_id))
 
     # ------------------------------------------
     # Update Operation
@@ -918,6 +942,13 @@ class PageAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         fields = PAGE_DEFAULT_FIELDS if fields is None else fields
 
         for name in fields:
-            self.assertEqual(api_data[name], values[name])
+            if name == "user" and values[name] is not None:
+                self.assertEqual(api_data[name], self.user_display_name(values[name]))
+            else:
+                self.assertEqual(api_data[name], values[name])
 
         self.assertEqual(set(fields), set(api_data))
+
+    def user_display_name(self, user_id):
+        user = User.objects.get(pk=user_id)
+        return {"id": str(user.pk), "login": user.username}

@@ -125,7 +125,7 @@ class BudgetService(
     ServiceBase[Budget],
 ):
 
-    async def default_values(self, fields=None):
+    async def _default_values(self, fields=None):
         """A budget whose user is not given is the acting user's.
 
         Here rather than on the model, which knows no acting user; and `create`
@@ -135,7 +135,7 @@ class BudgetService(
         rule only reaches their own budgets could not create one without naming
         themselves.
         """
-        values = await super().default_values(fields)
+        values = await super()._default_values(fields)
         if self.user is not None and (fields is None or "user" in fields):
             values["user"] = self.user.pk
         return values

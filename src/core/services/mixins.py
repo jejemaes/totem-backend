@@ -21,6 +21,7 @@ from django.core import exceptions
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db import models, transaction
 from django.db.models import Case, IntegerField, ManyToManyField, Value, When
+from django.db.models.constants import LOOKUP_SEP
 from django.db.utils import DatabaseError
 from ninja import FilterSchema
 from pydantic import BaseModel
@@ -60,6 +61,7 @@ class CreateMixin(t.Generic[CreateT]):
         ]
         # A field left out takes the service's default, not only the schema's: the
         # creation must agree with what `default_values` announced to the client.
+        # In pks, the form of the body: `_default_values`, not `default_values`.
         # One call for the whole batch, on every field some input leaves out; a
         # field given, even as null, is never overwritten.
         declared = self.create_schema.model_fields.keys()
@@ -68,7 +70,7 @@ class CreateMixin(t.Generic[CreateT]):
             for item in data
         ]
         if any(unset):
-            defaults = await self.default_values(sorted(set().union(*unset)))
+            defaults = await self._default_values(sorted(set().union(*unset)))
             for item_values, item_unset in zip(values, unset):
                 item_values.update(
                     {name: value for name, value in defaults.items() if name in item_unset}
@@ -82,6 +84,62 @@ class CreateMixin(t.Generic[CreateT]):
         )
 
     async def default_values(self, fields: t.Optional[t.List[str]] = None) -> t.Dict:
+        """`_default_values`, the relations asked with lookups replaced by their
+        records, read through the related service.
+
+        `fields` are ORM lookups on the model, as for `read`: a bare name (`user`)
+        gives the value of the body, a pk, at no query; `user__id`, `user__username`
+        give the record loaded with those fields only (`display_name`). None gives
+        every field of the body, relations as pks.
+
+        A default the acting user may not read is dropped rather than rendered: the
+        creation would refuse it. For a many-to-many, the readable records stay, in
+        the order of the pks. A sub-lookup on a field that is no relation is
+        ignored, as an unknown name is.
+
+        Override `_default_values`, not this one: `create` reads the former, and a
+        default given only here would be announced and never applied.
+        """
+        lookups = {}
+        names = None
+        if fields is not None:
+            names = []
+            for field in fields:
+                name, _, lookup = field.partition(LOOKUP_SEP)
+                if name not in names:
+                    names.append(name)
+                if lookup:
+                    lookups.setdefault(name, []).append(lookup)
+        values = await self._default_values(names)
+
+        for name, related_lookups in lookups.items():
+            if values.get(name) is None:
+                continue
+            try:
+                field = self.model._meta.get_field(name)
+            except FieldDoesNotExist:
+                continue
+            if not field.is_relation:
+                continue
+            # Typed as the records are keyed: a default may come as a string, the
+            # record's pk as a ULID or a UUID.
+            pks = []
+            for value in values[name] if field.many_to_many else [values[name]]:
+                try:
+                    pks.append(field.related_model._meta.pk.to_python(value))
+                except exceptions.ValidationError:
+                    continue
+            by_pk = await self.resolve_relation_records(field.related_model, pks, related_lookups)
+            records = [by_pk[pk] for pk in pks if pk in by_pk]
+            if field.many_to_many:
+                values[name] = records
+            elif records:
+                values[name] = records[0]
+            else:
+                del values[name]
+        return values
+
+    async def _default_values(self, fields: t.Optional[t.List[str]] = None) -> t.Dict:
         """The values a creation starts with, keyed by ORM field name, for the
         given `fields` of `create_schema` (all of them when None).
 
@@ -93,7 +151,10 @@ class CreateMixin(t.Generic[CreateT]):
 
         Override it to give a default the model cannot know, such as the acting
         user: `create` fills every field an input leaves out from here, so the
-        values a client is shown are the values a creation without them gets.
+        values a client is shown are the values a creation without them gets. Give
+        only a value the acting user can reach: `default_values` renders a relation
+        through the related service, and drops one it cannot read -- which the
+        creation would refuse anyway.
         """
         schema_fields = self.create_schema.model_fields
         names = list(schema_fields) if fields is None else [name for name in fields if name in schema_fields]

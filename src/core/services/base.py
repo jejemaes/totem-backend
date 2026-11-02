@@ -156,6 +156,29 @@ class ServiceBase(Service, t.Generic[ModelT]):
         by_pk = {instance.pk: instance async for instance in queryset}
         return [by_pk[pk] for pk in coerced if pk in by_pk]
 
+    async def resolve_relation_records(
+        self, related_model: t.Type[models.Model], pks: t.Iterable, fields: t.Optional[t.List[str]] = None
+    ) -> t.Dict:
+        """`{pk: record}` of the records of `related_model` among `pks` that the
+        acting user may read, through the service of that model: loaded with
+        `fields` only (`display_name`) when given, whole (`browse`) otherwise.
+
+        What a service rendering the relations of values it did not read from a
+        queryset needs -- the groups of `group_by`, the defaults of
+        `default_values`. A pk unreadable or unknown is absent, and the caller
+        decides what it means: each of those decides differently. `None` pks are
+        ignored; one query, none for no pk at all.
+        """
+        wanted = list(dict.fromkeys(pk for pk in pks if pk is not None))
+        if not wanted:
+            return {}
+        service = self.env[related_model]
+        if fields is not None:
+            records = await service.display_name(wanted, fields)
+        else:
+            records = [record async for record in await service.browse(wanted)]
+        return {record.pk: record for record in records}
+
     # -----------------------------------------------------------------
     # Utils
     # -----------------------------------------------------------------
