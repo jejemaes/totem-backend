@@ -36,10 +36,14 @@ ACCOUNT_FIELDS = [
     "update_date",
 ]
 
+# The fields of the creation having a default; `code` and `name` have none.
+ACCOUNT_DEFAULT_FIELDS = ["description", "active"]
+
 
 @freeze_time("2026-10-15 11:12:13")
 class AccountAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
-    """ No `*_access_rules` tests: no `BaseRule` is registered for `Account`, so
+    """ No `*_access_rules` tests but the default values one, which pins that rules of
+    other models change nothing: no `BaseRule` is registered for `Account`, so
     whoever holds a scope reaches every account. Add them with the first rule. """
 
     @classmethod
@@ -54,6 +58,7 @@ class AccountAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         cls.url_detail = f"{cls.url}{ACCOUNT_ID1}/"  # SHIRE, with movements
         # MORIA: no movement, no category, no budget, so nothing protects it.
         cls.url_detail_empty = f"{cls.url}{ACCOUNT_ID3}/"
+        cls.url_default_values = f"{cls.url}default-values/"
         cls.payload_create = {
             "code": "RIVENDELL",
             "name": "The Last Homely House",
@@ -375,6 +380,97 @@ class AccountAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             self.assertEqual(response.json(), PERMISSION_DENIED)
 
     # ------------------------------------------
+    # Default Values Operation
+    # ------------------------------------------
+
+    @parameterized.expand(
+        [
+            ({}, 200, None),
+            ({"fields": "code,active"}, 200, None),
+            ({"fields": "id"}, 422, "fields"),  # not a field of the creation
+            ({"fields": "balance"}, 422, "fields"),
+            ({"fields": "total_debit"}, 422, "fields"),
+        ]
+    )
+    def test_default_value_request(self, params, status_code, error_field):
+        response = self.do_request("GET", self.url_default_values, params=params)
+
+        self.assertEqual(response.status_code, status_code)
+        if error_field:
+            self.assertEqual([detail["loc"][-1] for detail in response.json()["detail"]], [error_field])
+
+    @parameterized.expand(
+        [
+            ("user", 200),
+            ("apikey", 200),
+        ]
+    )
+    def test_default_value_response(self, auth, status_code):
+        response = self.do_request("GET", self.url_default_values, auth=auth)
+
+        self.assertEqual(response.status_code, status_code)
+        # A null description is a value the record holds: the column is nullable.
+        self.assert_default_values_format(response.json(), {"description": None, "active": True})
+
+    @parameterized.expand(
+        [
+            (["active"], ["active"]),
+            (["description"], ["description"]),
+            # No default: absent, not null.
+            (["code", "name"], []),
+            (["code", "name", "description", "active"], ACCOUNT_DEFAULT_FIELDS),
+        ]
+    )
+    def test_default_value_query_fields(self, query_fields, received_fields):
+        response = self.do_request("GET", self.url_default_values, params={"fields": ",".join(query_fields)})
+
+        self.assertEqual(response.status_code, 200)
+        self.assert_default_values_format(response.json(), {"description": None, "active": True}, received_fields)
+
+    @parameterized.expand(
+        [
+            ("user", [], 403),
+            ("user", ["totem.account.create"], 200),
+            ("user", ["totem.account.read", "totem.account.update", "totem.account.delete"], 403),
+            ("user", ["totem.accountmovement.create"], 403),
+            ("apikey", [], 403),
+            ("apikey", ["totem.account.create"], 200),
+            ("apikey", ["totem.account.read", "totem.account.update", "totem.account.delete"], 403),
+        ]
+    )
+    def test_default_value_access_rights(self, auth, permissions, status_code):
+        if auth == "apikey":
+            self.api_key.scope = permissions
+            self.api_key.save()
+        else:
+            self.role.permissions = permissions
+            self.role.save()
+
+        response = self.do_request("GET", self.url_default_values, auth=auth)
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([],),
+            (["budget_manage_own"],),
+            (["budget_manage_all"],),
+        ]
+    )
+    def test_default_value_access_rules(self, rules):
+        # No rule is registered for `Account`, and the defaults read no record:
+        # the rules of other models change nothing.
+        self.role.rules = rules
+        self.role.save()
+
+        response = self.do_request("GET", self.url_default_values)
+
+        self.assertEqual(response.status_code, 200)
+        self.assert_default_values_format(response.json(), {"description": None, "active": True})
+
+    # ------------------------------------------
     # Update Operation
     # ------------------------------------------
 
@@ -544,5 +640,13 @@ class AccountAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         for date in ("create_date", "update_date"):
             if date in fields:
                 self.assertEqual(parse_datetime(api_data[date]), getattr(obj, date))
+
+        self.assertEqual(set(fields), set(api_data))
+
+    def assert_default_values_format(self, api_data, values, fields=None):
+        fields = ACCOUNT_DEFAULT_FIELDS if fields is None else fields
+
+        for name in fields:
+            self.assertEqual(api_data[name], values[name])
 
         self.assertEqual(set(fields), set(api_data))

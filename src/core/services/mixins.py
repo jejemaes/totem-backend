@@ -58,6 +58,21 @@ class CreateMixin(t.Generic[CreateT]):
             self._input_values(item, self.create_schema, exclude_unset=False)
             for item in data
         ]
+        # A field left out takes the service's default, not only the schema's: the
+        # creation must agree with what `default_values` announced to the client.
+        # One call for the whole batch, on every field some input leaves out; a
+        # field given, even as null, is never overwritten.
+        declared = self.create_schema.model_fields.keys()
+        unset = [
+            {name for name in declared if name not in item.model_fields_set}
+            for item in data
+        ]
+        if any(unset):
+            defaults = await self.default_values(sorted(set().union(*unset)))
+            for item_values, item_unset in zip(values, unset):
+                item_values.update(
+                    {name: value for name, value in defaults.items() if name in item_unset}
+                )
         # Relations are resolved here, in the async phase, because they go through the
         # related services. Reads before the transaction, writes inside it.
         internal_data = await self.to_internal_values(values)
@@ -65,6 +80,38 @@ class CreateMixin(t.Generic[CreateT]):
         return await sync_to_async(self._create, thread_sensitive=True)(
             internal_data, scoped_queryset
         )
+
+    async def default_values(self, fields: t.Optional[t.List[str]] = None) -> t.Dict:
+        """The values a creation starts with, keyed by ORM field name, for the
+        given `fields` of `create_schema` (all of them when None).
+
+        In the form `create_schema` accepts them: a pk for a relation. A field with
+        no default -- a required one -- is absent, and so is a name the schema does
+        not declare. The base values are the defaults of the schema, which come
+        from the model; a `None` one is kept only on a nullable column, since on any
+        other it only means "may be left out", not a value the record could hold.
+
+        Override it to give a default the model cannot know, such as the acting
+        user: `create` fills every field an input leaves out from here, so the
+        values a client is shown are the values a creation without them gets.
+        """
+        schema_fields = self.create_schema.model_fields
+        names = list(schema_fields) if fields is None else [name for name in fields if name in schema_fields]
+        values = {}
+        for name in names:
+            field_info = schema_fields[name]
+            if field_info.is_required():
+                continue
+            value = field_info.get_default(call_default_factory=True)
+            if value is None:
+                try:
+                    model_field = self.model._meta.get_field(name)
+                except FieldDoesNotExist:
+                    model_field = None
+                if model_field is not None and (model_field.many_to_many or not model_field.null):
+                    continue
+            values[name] = value
+        return values
 
     def _create(
         self, internal_data: t.List[dict], scoped_queryset: models.QuerySet

@@ -26,8 +26,8 @@ __all__ = ["ApiKeyController"]
 class ApiKeyController(
     TokenHasScopePermissionModelControllerMixin,
     ListModelControllerMixin,
-    RetrieveModelControllerMixin,
     CreateModelControllerMixin,
+    RetrieveModelControllerMixin,
     DeleteModelControllerMixin,
     BaseModelController,
 ):

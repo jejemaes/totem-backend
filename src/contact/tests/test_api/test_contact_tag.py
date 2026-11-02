@@ -23,6 +23,9 @@ ALL_TAG_IDS = [TAG_ID1, TAG_ID2, TAG_ID3]
 
 TAG_FIELDS = ["id", "name", "color"]
 
+# The fields of the creation having a default; `name` has none.
+TAG_DEFAULT_FIELDS = ["color"]
+
 
 class ContactTagAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
     """ No `*_access_rules` tests: no `BaseRule` is registered for `ContactTag`, so
@@ -38,6 +41,7 @@ class ContactTagAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
 
         cls.url = "/api/v1/contact-tags/"
         cls.url_detail = f"/api/v1/contact-tags/{TAG_ID2}/"
+        cls.url_default_values = "/api/v1/contact-tags/default-values/"
         cls.payload_create = {"name": "Ranger", "color": 7}
         cls.payload_update = {"name": "Halfling", "color": 6}
 
@@ -322,6 +326,96 @@ class ContactTagAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             self.assertEqual(response.json(), PERMISSION_DENIED)
 
     # ------------------------------------------
+    # Default Values Operation
+    # ------------------------------------------
+
+    @parameterized.expand(
+        [
+            ({}, 200, None),
+            ({"fields": "name,color"}, 200, None),
+            ({"fields": "id"}, 422, "fields"),  # not a field of the creation
+            ({"fields": "contacts"}, 422, "fields"),  # the reverse relation
+        ]
+    )
+    def test_default_value_request(self, params, status_code, error_field):
+        response = self.do_request("GET", self.url_default_values, params=params)
+
+        self.assertEqual(response.status_code, status_code)
+        if error_field:
+            self.assertEqual([detail["loc"][-1] for detail in response.json()["detail"]], [error_field])
+
+    @parameterized.expand(
+        [
+            ("user", 200),
+            ("apikey", 200),
+        ]
+    )
+    def test_default_value_response(self, auth, status_code):
+        response = self.do_request("GET", self.url_default_values, auth=auth)
+
+        self.assertEqual(response.status_code, status_code)
+        # The default of the model, as `test_create_defaults_the_color` creates it.
+        self.assert_default_values_format(response.json(), {"color": 0})
+
+    @parameterized.expand(
+        [
+            (["color"], ["color"]),
+            # No default: absent, not null.
+            (["name"], []),
+            (["name", "color"], TAG_DEFAULT_FIELDS),
+        ]
+    )
+    def test_default_value_query_fields(self, query_fields, received_fields):
+        response = self.do_request("GET", self.url_default_values, params={"fields": ",".join(query_fields)})
+
+        self.assertEqual(response.status_code, 200)
+        self.assert_default_values_format(response.json(), {"color": 0}, received_fields)
+
+    @parameterized.expand(
+        [
+            ("user", [], 403),
+            ("user", ["totem.contacttag.create"], 200),
+            ("user", ["totem.contacttag.read", "totem.contacttag.update", "totem.contacttag.delete"], 403),
+            ("user", ["totem.contact.create"], 403),
+            ("apikey", [], 403),
+            ("apikey", ["totem.contacttag.create"], 200),
+            ("apikey", ["totem.contacttag.read", "totem.contacttag.update", "totem.contacttag.delete"], 403),
+            ("apikey", ["totem.contact.create"], 403),
+        ]
+    )
+    def test_default_value_access_rights(self, auth, permissions, status_code):
+        if auth == "apikey":
+            self.api_key.scope = permissions
+            self.api_key.save()
+        else:
+            self.role.permissions = permissions
+            self.role.save()
+
+        response = self.do_request("GET", self.url_default_values, auth=auth)
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([],),
+            # No rule is registered for `ContactTag`: one of another model is the
+            # closest a role comes to narrowing it.
+            (["user_manage_own_profile"],),
+        ]
+    )
+    def test_default_value_access_rules(self, rules):
+        # The defaults read no record, so no rule narrows them.
+        self.role.rules = rules
+        self.role.save()
+
+        response = self.do_request("GET", self.url_default_values)
+
+        self.assertEqual(response.status_code, 200)
+        self.assert_default_values_format(response.json(), {"color": 0})
+
+    # ------------------------------------------
     # Update Operation
     # ------------------------------------------
 
@@ -494,5 +588,13 @@ class ContactTagAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             self.assertEqual(api_data["name"], obj.name)
         if "color" in fields:
             self.assertEqual(api_data["color"], obj.color)
+
+        self.assertEqual(set(fields), set(api_data))
+
+    def assert_default_values_format(self, api_data, values, fields=None):
+        fields = TAG_DEFAULT_FIELDS if fields is None else fields
+
+        for name in fields:
+            self.assertEqual(api_data[name], values[name])
 
         self.assertEqual(set(fields), set(api_data))

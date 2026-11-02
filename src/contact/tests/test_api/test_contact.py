@@ -43,6 +43,20 @@ CONTACT_FIELDS = [
     "update_date",
 ]
 
+# The fields of the creation having a default; `last_name` has none, and neither
+# has `tags`, a many-to-many whose `None` only means "may be left out".
+CONTACT_DEFAULT_FIELDS = [
+    "first_name",
+    "email",
+    "mobile",
+    "birth_date",
+    "number",
+    "street",
+    "zip",
+    "city",
+    "country",
+]
+
 
 class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
     """ The contacts, through the whole CRUD.
@@ -61,6 +75,7 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
 
         cls.url = "/api/v1/contacts/"
         cls.url_detail = f"/api/v1/contacts/{CONTACT_ID1}/"
+        cls.url_default_values = "/api/v1/contacts/default-values/"
         cls.payload_create = {
             "first_name": "Gandalf",
             "last_name": "Mithrandir",
@@ -460,6 +475,103 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             self.assertEqual(response.json(), PERMISSION_DENIED)
 
     # ------------------------------------------
+    # Default Values Operation
+    # ------------------------------------------
+
+    @parameterized.expand(
+        [
+            ({}, 200, None),
+            ({"fields": "last_name,country,tags"}, 200, None),
+            ({"fields": "id"}, 422, "fields"),  # not a field of the creation
+            ({"fields": "create_date"}, 422, "fields"),
+            ({"fields": "country_id"}, 422, "fields"),  # the ORM column, not the field
+        ]
+    )
+    def test_default_value_request(self, params, status_code, error_field):
+        response = self.do_request("GET", self.url_default_values, params=params)
+
+        self.assertEqual(response.status_code, status_code)
+        if error_field:
+            self.assertEqual([detail["loc"][-1] for detail in response.json()["detail"]], [error_field])
+
+    @parameterized.expand(
+        [
+            ("user", 200),
+            ("apikey", 200),
+        ]
+    )
+    def test_default_value_response(self, auth, status_code):
+        response = self.do_request("GET", self.url_default_values, auth=auth)
+
+        self.assertEqual(response.status_code, status_code)
+        # Every default is the `None` of a nullable column: a contact may be a bare name.
+        self.assert_default_values_format(response.json(), dict.fromkeys(CONTACT_DEFAULT_FIELDS))
+
+    @parameterized.expand(
+        [
+            (["first_name"], ["first_name"]),
+            (["country", "city"], ["country", "city"]),
+            # No default: absent, not null.
+            (["last_name", "tags"], []),
+            (["last_name", "first_name", "tags"], ["first_name"]),
+            (
+                ["first_name", "last_name", "email", "mobile", "birth_date", "number", "street", "zip", "city",
+                 "country", "tags"],
+                CONTACT_DEFAULT_FIELDS,
+            ),
+        ]
+    )
+    def test_default_value_query_fields(self, query_fields, received_fields):
+        response = self.do_request("GET", self.url_default_values, params={"fields": ",".join(query_fields)})
+
+        self.assertEqual(response.status_code, 200)
+        self.assert_default_values_format(response.json(), dict.fromkeys(CONTACT_DEFAULT_FIELDS), received_fields)
+
+    @parameterized.expand(
+        [
+            ("user", [], 403),
+            ("user", ["totem.contact.create"], 200),
+            ("user", ["totem.contact.read", "totem.contact.update", "totem.contact.delete"], 403),
+            ("user", ["totem.contacttag.create"], 403),
+            ("apikey", [], 403),
+            ("apikey", ["totem.contact.create"], 200),
+            ("apikey", ["totem.contact.read", "totem.contact.update", "totem.contact.delete"], 403),
+            ("apikey", ["totem.contacttag.create"], 403),
+        ]
+    )
+    def test_default_value_access_rights(self, auth, permissions, status_code):
+        if auth == "apikey":
+            self.api_key.scope = permissions
+            self.api_key.save()
+        else:
+            self.role.permissions = permissions
+            self.role.save()
+
+        response = self.do_request("GET", self.url_default_values, auth=auth)
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([],),
+            # No rule is registered for `Contact`: one of another model is the
+            # closest a role comes to narrowing it.
+            (["user_manage_own_profile"],),
+        ]
+    )
+    def test_default_value_access_rules(self, rules):
+        # The defaults read no record, so no rule narrows them.
+        self.role.rules = rules
+        self.role.save()
+
+        response = self.do_request("GET", self.url_default_values)
+
+        self.assertEqual(response.status_code, 200)
+        self.assert_default_values_format(response.json(), dict.fromkeys(CONTACT_DEFAULT_FIELDS))
+
+    # ------------------------------------------
     # Update Operation
     # ------------------------------------------
 
@@ -650,5 +762,13 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                     parse_datetime(api_data[name]),
                     value.replace(microsecond=value.microsecond // 1000 * 1000),
                 )
+
+        self.assertEqual(set(fields), set(api_data))
+
+    def assert_default_values_format(self, api_data, values, fields=None):
+        fields = CONTACT_DEFAULT_FIELDS if fields is None else fields
+
+        for name in fields:
+            self.assertEqual(api_data[name], values[name])
 
         self.assertEqual(set(fields), set(api_data))

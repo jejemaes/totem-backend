@@ -36,6 +36,10 @@ PAGE_FIELDS = [
     "layout",
 ]
 
+# The fields of the creation having a default; `title`, `slug` and `content`
+# have none.
+PAGE_DEFAULT_FIELDS = ["is_published", "user", "layout"]
+
 
 class PageAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
 
@@ -54,6 +58,7 @@ class PageAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         # Rivendell: the one page neither a menu item nor the site points to, so
         # the one a plain delete can remove (both relations are `PROTECT`).
         cls.url_delete = f"/api/v1/website/pages/{PAGE_ID3}/"
+        cls.url_default_values = "/api/v1/website/pages/default-values/"
         cls.payload_create = {
             "title": "Lothlorien",
             "slug": "lothlorien",
@@ -530,6 +535,102 @@ class PageAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertTrue(Page.objects.filter(pk=response.json()["id"], user_id=author).exists())
 
     # ------------------------------------------
+    # Default Values Operation
+    # ------------------------------------------
+
+    @parameterized.expand(
+        [
+            ({}, 200, None),
+            ({"fields": "title,user"}, 200, None),
+            ({"fields": "id"}, 422, "fields"),  # not a field of the creation
+            ({"fields": "date_published"}, 422, "fields"),  # derived, never given
+            ({"fields": "user_id"}, 422, "fields"),  # the ORM column, not the field
+        ]
+    )
+    def test_default_value_request(self, params, status_code, error_field):
+        response = self.do_request("GET", self.url_default_values, params=params)
+
+        self.assertEqual(response.status_code, status_code)
+        if error_field:
+            self.assertEqual([detail["loc"][-1] for detail in response.json()["detail"]], [error_field])
+
+    @parameterized.expand(
+        [
+            ("user", 200, USER_ID1),
+            # A key has no user: the page is written by nobody.
+            ("apikey", 200, None),
+        ]
+    )
+    def test_default_value_response(self, auth, status_code, user_id):
+        response = self.do_request("GET", self.url_default_values, auth=auth)
+
+        self.assertEqual(response.status_code, status_code)
+        self.assert_default_values_format(
+            response.json(), {"is_published": False, "user": user_id, "layout": "full-width"}
+        )
+
+    @parameterized.expand(
+        [
+            (["user"], ["user"]),
+            (["is_published", "layout"], ["is_published", "layout"]),
+            # No default: absent, not null.
+            (["title", "slug", "content"], []),
+            (["title", "slug", "content", "is_published", "user", "layout"], PAGE_DEFAULT_FIELDS),
+        ]
+    )
+    def test_default_value_query_fields(self, query_fields, received_fields):
+        response = self.do_request("GET", self.url_default_values, params={"fields": ",".join(query_fields)})
+
+        self.assertEqual(response.status_code, 200)
+        self.assert_default_values_format(
+            response.json(), {"is_published": False, "user": USER_ID1, "layout": "full-width"}, received_fields
+        )
+
+    @parameterized.expand(
+        [
+            ("user", [], 403),
+            ("user", ["totem.websitepage.create"], 200),
+            ("user", ["totem.websitepage.read", "totem.websitepage.update", "totem.websitepage.delete"], 403),
+            ("user", ["totem.websitemenu.create"], 403),
+            ("apikey", [], 403),
+            ("apikey", ["totem.websitepage.create"], 200),
+            ("apikey", ["totem.websitepage.read", "totem.websitepage.update", "totem.websitepage.delete"], 403),
+            ("apikey", ["totem.websitemenu.create"], 403),
+        ]
+    )
+    def test_default_value_access_rights(self, auth, permissions, status_code):
+        if auth == "apikey":
+            self.api_key.scope = permissions
+            self.api_key.save()
+        else:
+            self.role.permissions = permissions
+            self.role.save()
+
+        response = self.do_request("GET", self.url_default_values, auth=auth)
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([],),
+            (["website_manage_own_page"],),
+        ]
+    )
+    def test_default_value_access_rules(self, rules):
+        # The defaults read no record, so no rule narrows them: whatever the
+        # rules, the page is the acting user's -- the one author that
+        # `website_manage_own_page` lets them create.
+        self.role.rules = rules
+        self.role.save()
+
+        response = self.do_request("GET", self.url_default_values)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["user"], USER_ID1)
+
+    # ------------------------------------------
     # Update Operation
     # ------------------------------------------
 
@@ -810,5 +911,13 @@ class PageAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                 self.assertEqual(api_data["user"], {"id": str(obj.user.pk), "login": obj.user.username})
         if "layout" in fields:
             self.assertEqual(api_data["layout"], obj.layout)
+
+        self.assertEqual(set(fields), set(api_data))
+
+    def assert_default_values_format(self, api_data, values, fields=None):
+        fields = PAGE_DEFAULT_FIELDS if fields is None else fields
+
+        for name in fields:
+            self.assertEqual(api_data[name], values[name])
 
         self.assertEqual(set(fields), set(api_data))

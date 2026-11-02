@@ -31,6 +31,18 @@ USER_FIELDS = [
     "roles",
 ]
 
+# The fields of the creation having a default, by their public name; `login`,
+# `email` and `roles` have none.
+USER_DEFAULT_FIELDS = ["first_name", "last_name", "language", "user_type", "avatar"]
+
+USER_DEFAULT_VALUES = {
+    "first_name": None,
+    "last_name": None,
+    "language": "fr",
+    "user_type": UserType.PORTAL,
+    "avatar": None,
+}
+
 PERMISSION_DENIED = {"detail": ["You do not have permission to perform this action."]}
 
 
@@ -68,6 +80,7 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
 
         cls.url = "/api/v1/users/"
         cls.url_detail = f"/api/v1/users/{USER_ID2}/"
+        cls.url_default_values = "/api/v1/users/default-values/"
         cls.payload_create = {
             "login": "sam@lacomte.com",
             "email": "sam@lacomte.com",
@@ -475,6 +488,100 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertTrue(User.objects.filter(pk=response.json()["id"], username="sam@lacomte.com").exists())
 
     # ------------------------------------------
+    # Default Values Operation
+    # ------------------------------------------
+
+    @parameterized.expand(
+        [
+            ({}, 200, None),
+            ({"fields": "login,language"}, 200, None),
+            ({"fields": "id"}, 422, "fields"),  # not a field of the creation
+            ({"fields": "is_active"}, 422, "fields"),
+            ({"fields": "password"}, 422, "fields"),
+            ({"fields": "username"}, 422, "fields"),  # the ORM name, not the public one
+        ]
+    )
+    def test_default_value_request(self, params, status_code, error_field):
+        response = self.do_request("GET", self.url_default_values, params=params)
+
+        self.assertEqual(response.status_code, status_code)
+        if error_field:
+            self.assertEqual([detail["loc"][-1] for detail in response.json()["detail"]], [error_field])
+
+    @parameterized.expand(
+        [
+            ("user", 200),
+            ("apikey", 200),
+        ]
+    )
+    def test_default_value_response(self, auth, status_code):
+        response = self.do_request("GET", self.url_default_values, auth=auth)
+
+        self.assertEqual(response.status_code, status_code)
+        self.assert_default_values_format(response.json(), USER_DEFAULT_VALUES)
+
+    @parameterized.expand(
+        [
+            (["language"], ["language"]),
+            (["user_type", "avatar"], ["user_type", "avatar"]),
+            # No default: absent, not null.
+            (["login", "email", "roles"], []),
+            (
+                ["login", "email", "first_name", "last_name", "language", "user_type", "avatar", "roles"],
+                USER_DEFAULT_FIELDS,
+            ),
+        ]
+    )
+    def test_default_value_query_fields(self, query_fields, received_fields):
+        response = self.do_request("GET", self.url_default_values, params={"fields": ",".join(query_fields)})
+
+        self.assertEqual(response.status_code, 200)
+        self.assert_default_values_format(response.json(), USER_DEFAULT_VALUES, received_fields)
+
+    @parameterized.expand(
+        [
+            ("user", [], 403),
+            ("user", ["totem.user.create"], 200),
+            ("user", ["totem.user.read", "totem.user.update", "totem.user.delete"], 403),
+            ("user", ["totem.userrole.read"], 403),
+            ("apikey", [], 403),
+            ("apikey", ["totem.user.create"], 200),
+            ("apikey", ["totem.user.read", "totem.user.update", "totem.user.delete"], 403),
+            ("apikey", ["totem.userrole.read"], 403),
+        ]
+    )
+    def test_default_value_access_rights(self, auth, permissions, status_code):
+        if auth == "apikey":
+            self.api_key.scope = permissions
+            self.api_key.save()
+        else:
+            self.role.permissions = permissions
+            self.role.save()
+
+        response = self.do_request("GET", self.url_default_values, auth=auth)
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([],),
+            (["user_manage_own_profile"],),
+            (["user_manage_all_user"],),
+        ]
+    )
+    def test_default_value_access_rules(self, rules):
+        # The defaults read no record, so no rule narrows them.
+        self.role.rules = rules
+        self.role.save()
+
+        response = self.do_request("GET", self.url_default_values)
+
+        self.assertEqual(response.status_code, 200)
+        self.assert_default_values_format(response.json(), USER_DEFAULT_VALUES)
+
+    # ------------------------------------------
     # Update Operation
     # ------------------------------------------
 
@@ -708,5 +815,13 @@ class UserAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                 api_data["roles"],
                 [{"id": role.pk, "name": role.name} for role in obj.roles.all()],
             )
+
+        self.assertEqual(set(fields), set(api_data))
+
+    def assert_default_values_format(self, api_data, values, fields=None):
+        fields = USER_DEFAULT_FIELDS if fields is None else fields
+
+        for name in fields:
+            self.assertEqual(api_data[name], values[name])
 
         self.assertEqual(set(fields), set(api_data))
