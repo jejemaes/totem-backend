@@ -137,3 +137,39 @@ class TestControllerValidation(SimpleTestCase):
         else:
             self.assertEqual(len(errors), 1)
             self.assertIn(message, errors[0])
+
+
+class TestRelationSchemas(SimpleTestCase):
+    """`_relation_schemas`, what `/default-values/` and `/group-by/` render a
+    relation with: the sub-schema of the response, and the lookups loading what it
+    reads of the related record. On real controllers: their schemas are the
+    contract a client sees."""
+
+    @parameterized.expand(
+        [
+            (
+                "foreign keys",
+                "account.api.BudgetController", "create_response_schema", ["user", "account"],
+                {"user": ("UserDisplayNameSchema", ["id", "username"]),
+                 "account": ("AccountDisplayNameSchema", ["id", "code", "name"])},
+            ),
+            (
+                "a many-to-many, as its item schema",
+                "contact.api.ContactController", "create_response_schema", ["tags"],
+                {"tags": ("ContactTagDisplayNameSchema", ["id", "name", "color"])},
+            ),
+            # A bare pk -- the creation body -- has no sub-schema to render with.
+            ("bare pks", "account.api.BudgetController", "create_request_schema", ["user", "account"], {}),
+            # Not a relation, or not in the schema.
+            ("no relation", "account.api.BudgetController", "create_response_schema", ["name", "positions"], {}),
+        ]
+    )
+    def test_relation_schemas(self, dummy, controller_path, schema_attribute, field_names, expected):
+        from django.utils.module_loading import import_string
+
+        controller = import_string(controller_path)
+        relations = controller._relation_schemas(getattr(controller, schema_attribute), field_names)
+
+        self.assertEqual(
+            {name: (schema.__name__, lookups) for name, (schema, lookups) in relations.items()}, expected
+        )

@@ -5,8 +5,9 @@ from contextlib import contextmanager
 from types import FunctionType
 
 import pydantic
-from django.core.exceptions import ImproperlyConfigured, PermissionDenied
+from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured, PermissionDenied
 from django.db.models import IntegerField, Model, Q, QuerySet, UUIDField
+from django.db.models.constants import LOOKUP_SEP
 from django.http import HttpRequest
 from django.conf import settings
 from ninja import Body, FilterSchema, NinjaAPI, Path, Query, Router, Schema
@@ -238,6 +239,34 @@ class BaseModelController(BaseController):
         if field_names is None:
             field_names = list(orm_field_map.keys())
         return extract_orm_fields_from_specs(orm_field_map, field_names)
+
+    @classmethod
+    def _relation_schemas(
+        cls, response_schema: Schema, field_names: t.Iterable[str]
+    ) -> t.Dict[str, t.Tuple[t.Type[Schema], t.List[str]]]:
+        """`{ORM field name: (sub-schema, ORM lookups on the related model)}` of the
+        relations among `field_names` that `response_schema` renders with a
+        sub-schema. One it renders as a bare pk, or does not declare, is absent.
+
+        What a route rendering a relation it did not read from a queryset needs: the
+        schema to render it with, and the fields to load of the related record so
+        that serializing it queries nothing.
+        """
+        response_schema = _unwrap_list_schema(response_schema)
+        relations = {}
+        for field_name in field_names:
+            field_info = response_schema.model_fields.get(field_name)
+            schemas = extract_schemas_from_annotation(field_info.annotation) if field_info else []
+            if not schemas:
+                continue
+            prefix = f"{field_name}__"
+            lookups = [
+                lookup[len(prefix):]
+                for lookup in cls._response_orm_fields(response_schema, [field_name])
+                if lookup.startswith(prefix)
+            ]
+            relations[field_name] = (schemas[0], lookups)
+        return relations
 
     # Error Handling
 
@@ -540,18 +569,61 @@ class CreateModelControllerMixin:
 
         Built field by field rather than inherited, because a request schema
         renames with a strict `validation_alias`: the response is a dict keyed by
-        public names, which are therefore the field names here.
+        public names, which are therefore the field names here. A relation the
+        creation renders with a sub-schema is rendered with it, not as the pk the
+        body takes: what a form shows is a label.
         """
         public_names = cls._default_values_public_names()
+        relations = cls._default_values_relations()
         fields = {}
         for name, field_info in cls.create_request_schema.model_fields.items():
+            annotation = field_info.annotation
+            if name in relations:
+                annotation = relations[name][0]
+                if cls.model._meta.get_field(name).many_to_many:
+                    annotation = t.List[annotation]
             fields[public_names[name]] = (
-                t.Optional[field_info.annotation],
+                t.Optional[annotation],
                 pydantic.Field(None, title=field_info.title, description=field_info.description),
             )
         return pydantic.create_model(
             f"{cls.model.__name__}DefaultValuesSchema", __base__=Schema, **fields
         )
+
+    @classmethod
+    def _default_values_relations(cls) -> t.Dict[str, t.Tuple[t.Type[Schema], t.List[str]]]:
+        """The relations of the creation body that `create_response_schema` renders
+        with a sub-schema, see `_relation_schemas`.
+
+        The creation's response and not the retrieve's: this mixin may be composed
+        without `RetrieveModelControllerMixin`, and the defaults are rendered as
+        what they will be once created.
+        """
+        if cls.create_response_schema is None:
+            return {}
+        relational = []
+        for name in cls.create_request_schema.model_fields:
+            try:
+                if cls.model._meta.get_field(name).is_relation:
+                    relational.append(name)
+            except FieldDoesNotExist:
+                continue
+        return cls._relation_schemas(cls.create_response_schema, relational)
+
+    @classmethod
+    def _default_values_lookups(cls, names: t.List[str]) -> t.List[str]:
+        """The ORM lookups to ask the service's `default_values` for the given
+        fields of the body: a relation the creation renders with a sub-schema is
+        expanded to what it reads (`user__id`, `user__username`), so that the
+        service loads its record; the others stay bare, at no query."""
+        relations = cls._default_values_relations()
+        lookups = []
+        for name in names:
+            if name in relations:
+                lookups.extend(f"{name}{LOOKUP_SEP}{lookup}" for lookup in relations[name][1])
+            else:
+                lookups.append(name)
+        return lookups
 
     @classmethod
     def _annotate_default_values_view_function(
@@ -618,11 +690,12 @@ class CreateModelControllerMixin:
         # The path parameters only make a nested route match: the field they set is
         # never part of the creation body (see `validate_controllers`), so it has no
         # default to announce.
-        fields = None
         query_fields_parameters = kwargs.pop("query_fields", None)
-        if query_fields_parameters:
-            fields = query_fields_parameters.fields
-        values = await request.env.get(self.service).default_values(fields)
+        names = (
+            query_fields_parameters.fields if query_fields_parameters
+            else list(self.create_request_schema.model_fields)
+        )
+        values = await request.env.get(self.service).default_values(self._default_values_lookups(names))
         # Only the fields of the body: the service schema may declare more -- the
         # field a nested path sets -- which the response does not.
         public_names = self._default_values_public_names()
@@ -1019,24 +1092,17 @@ class GroupByModelControllerMixin:
         list_schema = getattr(cls, "list_response_schema", None)
         if list_schema is None:
             return {}
-        list_schema = _unwrap_list_schema(list_schema)
-        relations = {}
-        for name, dimension in cls.service._group_by_dimensions.items():
-            if dimension.related_model is None:
-                continue
-            field_name = dimension.output_field.name
-            field_info = list_schema.model_fields.get(field_name)
-            schemas = extract_schemas_from_annotation(field_info.annotation) if field_info else []
-            if not schemas:
-                continue
-            prefix = f"{field_name}__"
-            lookups = [
-                lookup[len(prefix):]
-                for lookup in cls._response_orm_fields(list_schema, [field_name])
-                if lookup.startswith(prefix)
-            ]
-            relations[name] = (schemas[0], lookups)
-        return relations
+        field_names = {
+            name: dimension.output_field.name
+            for name, dimension in cls.service._group_by_dimensions.items()
+            if dimension.related_model is not None
+        }
+        relations = cls._relation_schemas(list_schema, field_names.values())
+        return {
+            name: relations[field_name]
+            for name, field_name in field_names.items()
+            if field_name in relations
+        }
 
     @classmethod
     def _group_by_relation_fields(cls) -> t.Dict[str, t.List[str]]:

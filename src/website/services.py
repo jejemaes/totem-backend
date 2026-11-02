@@ -53,10 +53,10 @@ class PageService(
     stored value unserializable), and its rule is cross-field anyway.
     """
 
-    async def default_values(self, fields=None):
+    async def _default_values(self, fields=None):
         """A page whose author is not given is written by the acting user, as for
         `BudgetService`: an author explicitly set to null stays null."""
-        values = await super().default_values(fields)
+        values = await super()._default_values(fields)
         if self.user is not None and (fields is None or "user" in fields):
             values["user"] = self.user.pk
         return values

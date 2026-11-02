@@ -302,15 +302,11 @@ class GroupByMixin:
             related_model = self._group_by_dimensions[name].related_model
             if related_model is None or relation_fields.get(name, True) == []:
                 continue
-            pks = list({row[name] for row in rows if row[name] is not None})
-            if not pks:
-                continue
-            service = self.env[related_model]
-            if name in relation_fields:
-                records = await service.display_name(pks, relation_fields[name])
-            else:
-                records = [record async for record in await service.browse(pks)]
-            by_pk = {record.pk: record for record in records}
+            by_pk = await self.resolve_relation_records(
+                related_model, (row[name] for row in rows), relation_fields.get(name)
+            )
+            # A record the user may not read stays its pk: the group is still told
+            # apart from the others, by the value it is grouped by.
             for row in rows:
                 if row[name] is not None:
                     row[name] = by_pk.get(row[name], row[name])

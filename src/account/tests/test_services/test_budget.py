@@ -1,3 +1,4 @@
+from unittest.mock import patch
 from uuid import UUID
 
 from asgiref.sync import async_to_sync
@@ -20,6 +21,7 @@ from account.tests.common import (
 )
 from core.services import Environment
 from core.services.exceptions import ServiceValidationMultiError
+from user.models import UserRole
 
 
 class TestBudgetService(BudgetTestMixin, TestCase):
@@ -112,6 +114,60 @@ class TestBudgetService(BudgetTestMixin, TestCase):
             async_to_sync(self.service.create)([data])
 
         self.assertEqual(list(ctx.exception.dict()[0]), [error_key])
+
+    # ------------------------------------------
+    # Tests Default Values
+    # ------------------------------------------
+
+    @parameterized.expand(
+        [
+            ("bare names: pks", ["user", "active"], {"user": USER_ID1, "active": True}),
+            ("every field: pks", None, {"user": USER_ID1, "active": True, "note": None}),
+            ("a sub-lookup on no relation is ignored", ["active__id"], {"active": True}),
+        ]
+    )
+    def test_default_values_in_pks(self, dummy, fields, expected):
+        with self.assertNumQueries(0):
+            values = async_to_sync(self.service.default_values)(fields)
+
+        # The pk of the acting user, whatever its python type.
+        self.assertEqual({name: str(value) if name == "user" else value for name, value in values.items()}, expected)
+
+    def test_default_values_load_the_records_asked(self):
+        # The roles of the acting user, then the user: through `display_name`.
+        with self.assertNumQueries(2):
+            values = async_to_sync(self.service.default_values)(["user__id", "user__username"])
+
+        user = values["user"]
+        self.assertEqual((user.pk, user.username), (UUID(USER_ID1), self.user.username))
+        self.assertIn("email", user.get_deferred_fields())
+
+    @parameterized.expand(
+        [
+            ("the acting user", USER_ID1, True),
+            ("out of reach: dropped", USER_ID2, False),
+        ]
+    )
+    def test_default_values_through_the_access_rules(self, dummy, user_id, kept):
+        role = UserRole.objects.create(id="DEFAULT_OWN", name="Own profile", rules=["user_manage_own_profile"])
+        self.user.roles.set([role])
+        service = Environment(user=self.user, language="en-us").get(BudgetService)
+
+        async def propose(service, fields=None):
+            return {"user": UUID(user_id)}
+
+        with patch.object(BudgetService, "_default_values", propose):
+            values = async_to_sync(service.default_values)(["user__id"])
+
+        self.assertEqual({name: value.pk for name, value in values.items()}, {"user": UUID(user_id)} if kept else {})
+
+    def test_create_reads_the_defaults_in_pks(self):
+        # From `_default_values`: what `default_values` adds -- records -- is no
+        # value a creation can write.
+        with patch.object(BudgetService, "default_values", side_effect=AssertionError("records, not pks")):
+            instances = async_to_sync(self.service.create)([BudgetCreateSchema(name="2027", account=ACCOUNT_ID1)])
+
+        self.assertEqual(Budget.objects.get(pk=instances[0].pk).user_id, UUID(USER_ID1))
 
     # ------------------------------------------
     # Tests Read

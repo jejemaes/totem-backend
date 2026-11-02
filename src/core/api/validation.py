@@ -6,7 +6,8 @@ end of `CoreConfig.ready()`, once every `api` module is imported.
 
 Scope: the schemas declared through the CRUD mixin attributes
 (`*_request_schema` / `*_response_schema`). Schemas used by hand-written
-`@route` methods are not inspected.
+`@route` methods are not inspected. The sub-schemas `/default-values/` renders
+its relations with are those of `create_response_schema`, checked here with it.
 """
 
 from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured

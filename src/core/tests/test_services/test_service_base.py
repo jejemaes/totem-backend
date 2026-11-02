@@ -179,3 +179,43 @@ class TestBrowse(TestCase):
         )
 
         self.assertEqual(list(result), [])
+
+
+class TestResolveRelationRecords(TestCase):
+    """`resolve_relation_records`, what `group_by` and `default_values` render a
+    relation with: `{pk: record}` of the records the acting user may read."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.own_profile_role = UserRole.objects.create(
+            id="RESOLVE_OWN", name="Own profile only", rules=["user_manage_own_profile"]
+        )
+        cls.tintin = User.objects.create(username="tintin", email="tintin@moulinsart.com")
+        cls.haddock = User.objects.create(username="haddock", email="haddock@moulinsart.com")
+
+    def resolve(self, pks, fields=None):
+        service = Environment(user=self.tintin).get(UserService)
+        return async_to_sync(service.resolve_relation_records)(User, pks, fields)
+
+    def test_loads_the_fields_asked(self):
+        records = self.resolve([self.tintin.pk, self.haddock.pk], ["id", "username"])
+
+        self.assertEqual({pk: record.username for pk, record in records.items()},
+                         {self.tintin.pk: "tintin", self.haddock.pk: "haddock"})
+        self.assertIn("email", records[self.tintin.pk].get_deferred_fields())
+
+    def test_loads_the_whole_record_without_fields(self):
+        records = self.resolve([self.tintin.pk])
+
+        self.assertEqual(records[self.tintin.pk].get_deferred_fields(), set())
+
+    def test_record_out_of_reach_or_unknown_is_absent(self):
+        self.tintin.roles.set([self.own_profile_role])
+
+        records = self.resolve([self.tintin.pk, self.haddock.pk, UNKNOWN_PK], ["id"])
+
+        self.assertEqual(set(records), {self.tintin.pk})
+
+    def test_no_pk_no_query(self):
+        with self.assertNumQueries(0):
+            self.assertEqual(self.resolve([None, None], ["id"]), {})
