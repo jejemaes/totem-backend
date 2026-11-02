@@ -39,6 +39,9 @@ BUDGET_FIELDS = [
     "update_date",
 ]
 
+# The fields of the creation having a default; `name` and `account` have none.
+BUDGET_DEFAULT_FIELDS = ["user", "active", "note"]
+
 
 @freeze_time("2026-10-15 11:12:13")
 class BudgetAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
@@ -55,6 +58,7 @@ class BudgetAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
 
         cls.url = "/api/v1/accounting/budget/"
         cls.url_detail = f"/api/v1/accounting/budget/{BUDGET_ID1}/"
+        cls.url_default_values = "/api/v1/accounting/budget/default-values/"
         cls.payload_create = {
             "name": "Bag End 2027",
             "user": USER_ID2,
@@ -488,6 +492,100 @@ class BudgetAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertTrue(Budget.objects.filter(pk=response.json()["id"], user_id=USER_ID2).exists())
 
     # ------------------------------------------
+    # Default Values Operation
+    # ------------------------------------------
+
+    @parameterized.expand(
+        [
+            ({}, 200, None),
+            ({"fields": "name,user"}, 200, None),
+            ({"fields": "id"}, 422, "fields"),  # not a field of the creation
+            ({"fields": "total_planned_amount"}, 422, "fields"),
+            ({"fields": "user_id"}, 422, "fields"),  # the ORM column, not the field
+        ]
+    )
+    def test_default_value_request(self, params, status_code, error_field):
+        response = self.do_request("GET", self.url_default_values, params=params)
+
+        self.assertEqual(response.status_code, status_code)
+        if error_field:
+            self.assertEqual([detail["loc"][-1] for detail in response.json()["detail"]], [error_field])
+
+    @parameterized.expand(
+        [
+            ("user", 200, USER_ID1),
+            # A key has no user: the budget is in charge of nobody.
+            ("apikey", 200, None),
+        ]
+    )
+    def test_default_value_response(self, auth, status_code, user_id):
+        response = self.do_request("GET", self.url_default_values, auth=auth)
+
+        self.assertEqual(response.status_code, status_code)
+        self.assert_default_values_format(response.json(), {"user": user_id, "active": True, "note": None})
+
+    @parameterized.expand(
+        [
+            (["user"], ["user"]),
+            (["active", "note"], ["active", "note"]),
+            # No default: absent, not null.
+            (["name", "account"], []),
+            (["name", "user", "account", "active", "note"], BUDGET_DEFAULT_FIELDS),
+        ]
+    )
+    def test_default_value_query_fields(self, query_fields, received_fields):
+        response = self.do_request("GET", self.url_default_values, params={"fields": ",".join(query_fields)})
+
+        self.assertEqual(response.status_code, 200)
+        self.assert_default_values_format(
+            response.json(), {"user": USER_ID1, "active": True, "note": None}, received_fields
+        )
+
+    @parameterized.expand(
+        [
+            ("user", [], 403),
+            ("user", ["totem.budget.create"], 200),
+            ("user", ["totem.budget.read", "totem.budget.update", "totem.budget.delete"], 403),
+            ("user", ["totem.account.create"], 403),
+            ("apikey", [], 403),
+            ("apikey", ["totem.budget.create"], 200),
+            ("apikey", ["totem.budget.read", "totem.budget.update", "totem.budget.delete"], 403),
+        ]
+    )
+    def test_default_value_access_rights(self, auth, permissions, status_code):
+        if auth == "apikey":
+            self.api_key.scope = permissions
+            self.api_key.save()
+        else:
+            self.role.permissions = permissions
+            self.role.save()
+
+        response = self.do_request("GET", self.url_default_values, auth=auth)
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([],),
+            (["budget_manage_own"],),
+            (["budget_manage_all"],),
+        ]
+    )
+    def test_default_value_access_rules(self, rules):
+        # The defaults read no record, so no rule narrows them: whatever the
+        # rules, the budget is the acting user's -- the one value that
+        # `budget_manage_own` lets them create.
+        self.role.rules = rules
+        self.role.save()
+
+        response = self.do_request("GET", self.url_default_values)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["user"], USER_ID1)
+
+    # ------------------------------------------
     # Update Operation
     # ------------------------------------------
 
@@ -727,5 +825,13 @@ class BudgetAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         for date_field in ("create_date", "update_date"):
             if date_field in fields:
                 self.assertEqual(parse_datetime(api_data[date_field]), getattr(obj, date_field))
+
+        self.assertEqual(set(fields), set(api_data))
+
+    def assert_default_values_format(self, api_data, values, fields=None):
+        fields = BUDGET_DEFAULT_FIELDS if fields is None else fields
+
+        for name in fields:
+            self.assertEqual(api_data[name], values[name])
 
         self.assertEqual(set(fields), set(api_data))

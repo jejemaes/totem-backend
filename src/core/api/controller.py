@@ -479,12 +479,90 @@ class CreateModelControllerMixin:
                 view_wrapper=cls._annotate_create_view_function,
                 tags=[cls.model._meta.verbose_name],
             )
+            # With the creation, and right after it: what a client building a
+            # creation form asks first. Registered before `/{id}/`, which would take
+            # `default-values` for an id, as long as this mixin comes before
+            # `RetrieveModelControllerMixin` in the bases -- `validate_controllers`
+            # refuses the other order.
+            cls.method_to_route_function(
+                view_func=cls.default_values,
+                path="/default-values/",
+                methods=["GET"],
+                response=cls._default_values_response_schema(),
+                operation_id=f"{cls.model._meta.verbose_name.lower()}DefaultValues",
+                summary=f"Default values of {cls.model._meta.verbose_name.capitalize()}",
+                decorators=cls._default_values_function_decorators(),
+                view_wrapper=cls._annotate_default_values_view_function,
+                tags=[cls.model._meta.verbose_name],
+                # Only the fields asked that have a default: the others are
+                # unset, not null.
+                exclude_unset=True,
+            )
 
         super().add_routes_to(router)
 
     @classmethod
     def _create_function_decorators(cls):
         return []
+
+    @classmethod
+    def _default_values_function_decorators(cls):
+        # `fields` names fields of the creation body, by their public name; the view
+        # receives their ORM names, as the list does.
+        return [
+            query_field(
+                ListControllerQueryField,
+                service=cls.service,
+                field_map={public: name for name, public in cls._default_values_public_names().items()},
+                pass_parameter="query_fields",
+            )
+        ]
+
+    @classmethod
+    def _default_values_public_names(cls) -> t.Dict[str, str]:
+        """`{ORM name: public name}` of the fields of the creation body.
+
+        Not `schema_orm_to_public_fields`, which reads the `serialization_alias` of
+        a response schema: a request schema renames with a strict
+        `validation_alias` (`username` is sent as `login`), and that is the name a
+        client knows the field by -- in `?fields=` as in the response.
+        """
+        names = {}
+        for name, field_info in cls.create_request_schema.model_fields.items():
+            alias = field_info.validation_alias
+            names[name] = alias if isinstance(alias, str) else field_info.serialization_alias or name
+        return names
+
+    @classmethod
+    def _default_values_response_schema(cls):
+        """The creation body, every field optional: a field with no default is
+        absent from the response, not an error.
+
+        Built field by field rather than inherited, because a request schema
+        renames with a strict `validation_alias`: the response is a dict keyed by
+        public names, which are therefore the field names here.
+        """
+        public_names = cls._default_values_public_names()
+        fields = {}
+        for name, field_info in cls.create_request_schema.model_fields.items():
+            fields[public_names[name]] = (
+                t.Optional[field_info.annotation],
+                pydantic.Field(None, title=field_info.title, description=field_info.description),
+            )
+        return pydantic.create_model(
+            f"{cls.model.__name__}DefaultValuesSchema", __base__=Schema, **fields
+        )
+
+    @classmethod
+    def _annotate_default_values_view_function(
+        cls, view_func: t.Callable[..., t.Any], path: str
+    ) -> t.Callable[..., t.Any]:
+        annotations = t.cast(FunctionType, view_func).__annotations__
+        annotations["path_parameters"] = t.Annotated[
+            cls._get_default_path_schema(path, view_func),
+            Path(default=None, include_in_schema=False),
+        ]
+        return view_func
 
     @classmethod
     def _annotate_create_view_function(
@@ -530,6 +608,27 @@ class CreateModelControllerMixin:
                 exc, self.create_response_schema, loc_path=["body", "request_body"]
             )
 
+
+    async def default_values(
+        self,
+        request: HttpRequest,
+        path_parameters: t.Optional[BaseModel],
+        **kwargs: t.Any,
+    ) -> t.Dict:
+        # The path parameters only make a nested route match: the field they set is
+        # never part of the creation body (see `validate_controllers`), so it has no
+        # default to announce.
+        fields = None
+        query_fields_parameters = kwargs.pop("query_fields", None)
+        if query_fields_parameters:
+            fields = query_fields_parameters.fields
+        values = await request.env.get(self.service).default_values(fields)
+        # Only the fields of the body: the service schema may declare more -- the
+        # field a nested path sets -- which the response does not.
+        public_names = self._default_values_public_names()
+        return {
+            public_names[name]: value for name, value in values.items() if name in public_names
+        }
 
     def _create_input_from_path(self, service, request_body, path_parameters):
         """The input of the service: the body, completed with the record a nested
@@ -1076,8 +1175,10 @@ class GroupByModelControllerMixin:
 
 class ModelController(
     ListModelControllerMixin,
-    RetrieveModelControllerMixin,
+    # Before `RetrieveModelControllerMixin`: `/default-values/` must be registered
+    # before `/{id}/`.
     CreateModelControllerMixin,
+    RetrieveModelControllerMixin,
     UpdateModelControllerMixin,
     DeleteModelControllerMixin,
     BaseModelController,

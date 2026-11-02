@@ -125,22 +125,20 @@ class BudgetService(
     ServiceBase[Budget],
 ):
 
-    async def create(self, data):
+    async def default_values(self, fields=None):
         """A budget whose user is not given is the acting user's.
 
-        Here, before the values are extracted: only the input schema still tells a
-        user left out from one explicitly set to null, which stays null. Resolved
-        afterwards through the user service like any relation, so it is checked
-        the same way. Without it, a user whose access rule only reaches their own
-        budgets could not create one without naming themselves.
+        Here rather than on the model, which knows no acting user; and `create`
+        fills from it only the fields an input leaves out, so a user explicitly set
+        to null stays null. Resolved afterwards through the user service like any
+        relation, so it is checked the same way. Without it, a user whose access
+        rule only reaches their own budgets could not create one without naming
+        themselves.
         """
-        if self.user is not None:
-            data = [
-                item if "user" in item.model_fields_set
-                else item.model_copy(update={"user": self.user.pk})
-                for item in data
-            ]
-        return await super().create(data)
+        values = await super().default_values(fields)
+        if self.user is not None and (fields is None or "user" in fields):
+            values["user"] = self.user.pk
+        return values
 
 
 class BudgetPositionService(

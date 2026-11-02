@@ -120,6 +120,16 @@ class TokenHasScopePermissionModelControllerMixin:
         return decorators
 
     @classmethod
+    def _default_values_function_decorators(cls):
+        # The scope of the creation: the defaults are only of use to whoever may
+        # create, and asking them creates nothing.
+        decorators = super()._default_values_function_decorators()
+        permissions = cls._get_action_permissions("create")
+        if permissions:
+            decorators.append(check_permissions([TokenHasScopePermission(permissions)]))
+        return decorators
+
+    @classmethod
     def _update_function_decorators(cls):
         decorators = super()._update_function_decorators()
         permissions = cls._get_action_permissions("update")

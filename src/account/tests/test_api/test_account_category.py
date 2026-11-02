@@ -26,10 +26,14 @@ ALL_CATEGORY_IDS = [CATEGORY_GENERAL_ID, CATEGORY_SHIRE_ID, CATEGORY_BREE_ID]
 
 CATEGORY_FIELDS = ["id", "name", "color", "account"]
 
+# The fields of the creation having a default; `name` has none.
+CATEGORY_DEFAULT_FIELDS = ["color", "account"]
+
 
 @freeze_time("2026-10-15 11:12:13")
 class AccountCategoryAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
-    """ No `*_access_rules` tests: no `BaseRule` is registered for `AccountCategory`,
+    """ No `*_access_rules` tests but the default values one, which pins that rules of
+    other models change nothing: no `BaseRule` is registered for `AccountCategory`,
     so whoever holds a scope reaches every category. """
 
     @classmethod
@@ -43,6 +47,7 @@ class AccountCategoryAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         cls.url = "/api/v1/accounting/categories/"
         cls.url_detail = f"/api/v1/accounting/categories/{CATEGORY_SHIRE_ID}/"
         cls.url_detail_general = f"/api/v1/accounting/categories/{CATEGORY_GENERAL_ID}/"
+        cls.url_default_values = "/api/v1/accounting/categories/default-values/"
         cls.payload_create = {
             "name": "Lembas",
             "color": 4,
@@ -338,6 +343,96 @@ class AccountCategoryAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             self.assertEqual(response.json(), PERMISSION_DENIED)
 
     # ------------------------------------------
+    # Default Values Operation
+    # ------------------------------------------
+
+    @parameterized.expand(
+        [
+            ({}, 200, None),
+            ({"fields": "name,color"}, 200, None),
+            ({"fields": "id"}, 422, "fields"),  # not a field of the creation
+            ({"fields": "account_id"}, 422, "fields"),  # the ORM column, not the field
+        ]
+    )
+    def test_default_value_request(self, params, status_code, error_field):
+        response = self.do_request("GET", self.url_default_values, params=params)
+
+        self.assertEqual(response.status_code, status_code)
+        if error_field:
+            self.assertEqual([detail["loc"][-1] for detail in response.json()["detail"]], [error_field])
+
+    @parameterized.expand(
+        [
+            ("user", 200),
+            ("apikey", 200),
+        ]
+    )
+    def test_default_value_response(self, auth, status_code):
+        response = self.do_request("GET", self.url_default_values, auth=auth)
+
+        self.assertEqual(response.status_code, status_code)
+        # A null account is a value the record holds: a general category.
+        self.assert_default_values_format(response.json(), {"color": 0, "account": None})
+
+    @parameterized.expand(
+        [
+            (["color"], ["color"]),
+            (["account"], ["account"]),
+            # No default: absent, not null.
+            (["name"], []),
+            (["name", "color", "account"], CATEGORY_DEFAULT_FIELDS),
+        ]
+    )
+    def test_default_value_query_fields(self, query_fields, received_fields):
+        response = self.do_request("GET", self.url_default_values, params={"fields": ",".join(query_fields)})
+
+        self.assertEqual(response.status_code, 200)
+        self.assert_default_values_format(response.json(), {"color": 0, "account": None}, received_fields)
+
+    @parameterized.expand(
+        [
+            ("user", [], 403),
+            ("user", ["totem.accountcategory.create"], 200),
+            ("user", ["totem.accountcategory.read", "totem.accountcategory.update", "totem.accountcategory.delete"], 403),
+            ("user", ["totem.account.create"], 403),
+            ("apikey", [], 403),
+            ("apikey", ["totem.accountcategory.create"], 200),
+            ("apikey", ["totem.accountcategory.read", "totem.accountcategory.update", "totem.accountcategory.delete"], 403),
+        ]
+    )
+    def test_default_value_access_rights(self, auth, permissions, status_code):
+        if auth == "apikey":
+            self.api_key.scope = permissions
+            self.api_key.save()
+        else:
+            self.role.permissions = permissions
+            self.role.save()
+
+        response = self.do_request("GET", self.url_default_values, auth=auth)
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([],),
+            (["budget_manage_own"],),
+            (["budget_manage_all"],),
+        ]
+    )
+    def test_default_value_access_rules(self, rules):
+        # No rule is registered for `AccountCategory`, and the defaults read no record:
+        # the rules of other models change nothing.
+        self.role.rules = rules
+        self.role.save()
+
+        response = self.do_request("GET", self.url_default_values)
+
+        self.assertEqual(response.status_code, 200)
+        self.assert_default_values_format(response.json(), {"color": 0, "account": None})
+
+    # ------------------------------------------
     # Update Operation
     # ------------------------------------------
 
@@ -499,5 +594,13 @@ class AccountCategoryAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                     api_data["account"],
                     {"id": obj.account.pk, "code": obj.account.code, "name": obj.account.name},
                 )
+
+        self.assertEqual(set(fields), set(api_data))
+
+    def assert_default_values_format(self, api_data, values, fields=None):
+        fields = CATEGORY_DEFAULT_FIELDS if fields is None else fields
+
+        for name in fields:
+            self.assertEqual(api_data[name], values[name])
 
         self.assertEqual(set(fields), set(api_data))

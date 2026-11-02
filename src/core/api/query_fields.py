@@ -51,13 +51,20 @@ class QueryField(QueryFieldBase):
         pass_parameter: t.Optional[str] = None,
         schema: t.Optional[t.Any] = None,
         service: t.Optional[t.Type["ServiceBase"]] = None,
+        field_map: t.Optional[t.Dict[str, str]] = None,
     ) -> None:
         super().__init__(pass_parameter=pass_parameter)
 
         self.service = service
         model = service.model if service is not None else None
 
-        self.field_map = schema_public_to_orm_fields(schema, model) if schema else {}
+        # `{public name: ORM name}`, deduced from a response `schema` unless given:
+        # a request schema renames through `validation_alias`, which the deduction
+        # does not read.
+        if field_map is not None:
+            self.field_map = field_map
+        else:
+            self.field_map = schema_public_to_orm_fields(schema, model) if schema else {}
         self.Input = self.create_input()
 
     def create_input(

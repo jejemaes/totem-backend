@@ -15,6 +15,9 @@ from user.tests.test_api.common import CommonTestMixin
 
 KEY_FIELDS = ["id", "name", "scope", "is_active", "expires_at", "created_at"]
 CREATED_FIELDS = KEY_FIELDS + ["secret"]
+# The fields of the creation having a default; `name` has none. The secret is no
+# field of the creation: it is minted by the service, and never announced.
+DEFAULT_FIELDS = ["scope", "expires_at"]
 
 
 @freeze_time("2024-11-18 11:12:13")
@@ -32,6 +35,7 @@ class ApiKeyAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             scope=["totem.user.read"],
         )
         cls.url_detail = f"{cls.url}{cls.reporting.pk}/"
+        cls.url_default_values = f"{cls.url}default-values/"
 
         cls.payload_create = {"name": "Nightly Export", "scope": ["totem.contact.read"]}
 
@@ -207,6 +211,100 @@ class ApiKeyAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(response.status_code, status_code)
 
     # ------------------------------------------
+    # Tests Default Values
+    # ------------------------------------------
+
+    @parameterized.expand(
+        [
+            ({}, 200, None),
+            ({"fields": "name,scope"}, 200, None),
+            ({"fields": "id"}, 422, "fields"),  # not a field of the creation
+            ({"fields": "is_active"}, 422, "fields"),
+            ({"fields": "secret"}, 422, "fields"),  # minted by the service, never a default
+            ({"fields": "secret_hash"}, 422, "fields"),
+        ]
+    )
+    def test_default_value_request(self, params, status_code, error_field):
+        response = self.do_api_request(
+            self.url_default_values, "GET", self.with_scope("totem.apikey.create"), params=params
+        )
+
+        self.assertEqual(response.status_code, status_code)
+        if error_field:
+            self.assertEqual([detail["loc"][-1] for detail in response.json()["detail"]], [error_field])
+
+    def test_default_value_response(self):
+        """ The defaults a creation without them gets: no scope -- a key never
+        starts with those of its creator, see `test_omitting_scope_creates_a_powerless_key`
+        -- and no expiry. Nothing of the secret. """
+        response = self.do_api_request(
+            self.url_default_values, "GET", self.with_scope("totem.apikey.create")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self._assert_default_values_format(response.json(), {"scope": [], "expires_at": None})
+
+    @parameterized.expand(
+        [
+            (["scope"], ["scope"]),
+            (["expires_at"], ["expires_at"]),
+            # No default: absent, not null.
+            (["name"], []),
+            (["name", "scope", "expires_at"], DEFAULT_FIELDS),
+        ]
+    )
+    def test_default_value_query_fields(self, query_fields, received_fields):
+        response = self.do_api_request(
+            self.url_default_values,
+            "GET",
+            self.with_scope("totem.apikey.create"),
+            params={"fields": ",".join(query_fields)},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self._assert_default_values_format(
+            response.json(), {"scope": [], "expires_at": None}, received_fields
+        )
+
+    @parameterized.expand(
+        [
+            ("user", "totem.apikey.create", 200),
+            ("user", "totem.apikey.read", 403),
+            ("user", "totem.apikey.delete", 403),
+            ("user", "totem.user.create", 403),
+            # A key cannot manage keys: `totem.apikey.*` is out of its reach,
+            # whatever it holds.
+            ("apikey", None, 403),
+        ]
+    )
+    def test_default_value_access_rights(self, auth, scope, status_code):
+        if auth == "apikey":
+            self.api_key.scope = public_scopes()
+            self.api_key.save()
+            response = self.do_api_key_request(self.url_default_values, "GET", self.api_key_secret)
+        else:
+            response = self.do_api_request(self.url_default_values, "GET", self.with_scope(scope))
+
+        self.assertEqual(response.status_code, status_code)
+
+    @parameterized.expand(
+        [
+            ([],),
+            (["user_manage_own_profile"],),
+        ]
+    )
+    def test_default_value_access_rules(self, rules):
+        # The defaults read no record, so no rule narrows them.
+        UserRole.objects.filter(pk=self.role.pk).update(rules=rules)
+
+        response = self.do_api_request(
+            self.url_default_values, "GET", self.with_scope("totem.apikey.create")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self._assert_default_values_format(response.json(), {"scope": [], "expires_at": None})
+
+    # ------------------------------------------
     # Tests Update
     # ------------------------------------------
 
@@ -359,6 +457,16 @@ class ApiKeyAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         # The shape of the response is the contract. In particular, `secret_hash`
         # must never appear in any of them.
         self.assertEqual(set(fields), set(api_data.keys()))
+        self.assertNotIn("secret_hash", api_data)
+
+    def _assert_default_values_format(self, api_data, values, fields=None):
+        fields = DEFAULT_FIELDS if fields is None else fields
+
+        for name in fields:
+            self.assertEqual(api_data[name], values[name])
+
+        self.assertEqual(set(fields), set(api_data))
+        self.assertNotIn("secret", api_data)
         self.assertNotIn("secret_hash", api_data)
 
 

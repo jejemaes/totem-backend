@@ -29,6 +29,9 @@ ALL_MEDIA_IDS = [MEDIA_ID1, MEDIA_ID2, MEDIA_ID3]
 MEDIA_FIELDS = ["id", "name", "content", "checksum", "mimetype", "create_date"]
 MEDIA_LIST_FIELDS = ["id", "name", "content", "mimetype"]
 
+# The fields of the creation having a default: none, the upload is required.
+MEDIA_DEFAULT_FIELDS = []
+
 # A real 1x1 PNG: `Media.precompute_values` guesses the mimetype from the FILE
 # NAME, so the bytes only have to be stable, but a genuine image keeps the test
 # honest about what the editor actually uploads.
@@ -97,6 +100,7 @@ class MediaAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
 
         cls.url = "/api/v1/website/medias/"
         cls.url_detail = f"/api/v1/website/medias/{MEDIA_ID1}/"
+        cls.url_default_values = "/api/v1/website/medias/default-values/"
 
     # ------------------------------------------
     # List Operation
@@ -524,6 +528,99 @@ class MediaAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             self.assertEqual(response.json(), PERMISSION_DENIED)
 
     # ------------------------------------------
+    # Default Values Operation
+    # ------------------------------------------
+
+    @parameterized.expand(
+        [
+            ({}, 200, None),
+            # The file field of the multipart creation is a valid name, though
+            # the route itself is a plain GET.
+            ({"fields": "content"}, 200, None),
+            ({"fields": "id"}, 422, "fields"),  # not a field of the creation
+            # Derived from the upload, never given by a client.
+            ({"fields": "name"}, 422, "fields"),
+            ({"fields": "checksum"}, 422, "fields"),
+        ]
+    )
+    def test_default_value_request(self, params, status_code, error_field):
+        response = self.do_request("GET", self.url_default_values, params=params)
+
+        self.assertEqual(response.status_code, status_code)
+        if error_field:
+            self.assertEqual([detail["loc"][-1] for detail in response.json()["detail"]], [error_field])
+
+    @parameterized.expand(
+        [
+            ("user", 200),
+            ("apikey", 200),
+        ]
+    )
+    def test_default_value_response(self, auth, status_code):
+        response = self.do_request("GET", self.url_default_values, auth=auth)
+
+        self.assertEqual(response.status_code, status_code)
+        # The upload is required: nothing to default, and no media is created.
+        self.assert_default_values_format(response.json(), {})
+        self.assertEqual(Media.objects.count(), len(ALL_MEDIA_IDS))
+
+    @parameterized.expand(
+        [
+            # No default: absent, not null.
+            (["content"], []),
+        ]
+    )
+    def test_default_value_query_fields(self, query_fields, received_fields):
+        response = self.do_request("GET", self.url_default_values, params={"fields": ",".join(query_fields)})
+
+        self.assertEqual(response.status_code, 200)
+        self.assert_default_values_format(response.json(), {}, received_fields)
+
+    @parameterized.expand(
+        [
+            ("user", [], 403),
+            ("user", ["totem.websitemedia.create"], 200),
+            ("user", ["totem.websitemedia.read", "totem.websitemedia.delete"], 403),
+            ("user", ["totem.websitepage.create"], 403),
+            ("apikey", [], 403),
+            ("apikey", ["totem.websitemedia.create"], 200),
+            ("apikey", ["totem.websitemedia.read", "totem.websitemedia.delete"], 403),
+            ("apikey", ["totem.websitepage.create"], 403),
+        ]
+    )
+    def test_default_value_access_rights(self, auth, permissions, status_code):
+        if auth == "apikey":
+            self.api_key.scope = permissions
+            self.api_key.save()
+        else:
+            self.role.permissions = permissions
+            self.role.save()
+
+        response = self.do_request("GET", self.url_default_values, auth=auth)
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([],),
+            # A rule of another model, the one the website registers.
+            (["website_manage_own_page"],),
+        ]
+    )
+    def test_default_value_access_rules(self, rules):
+        # No rule is registered for `Media` (see the class docstring), and the
+        # defaults read no record anyway: whatever the role holds, they are the same.
+        self.role.rules = rules
+        self.role.save()
+
+        response = self.do_request("GET", self.url_default_values)
+
+        self.assertEqual(response.status_code, 200)
+        self.assert_default_values_format(response.json(), {})
+
+    # ------------------------------------------
     # Update Operation
     # ------------------------------------------
 
@@ -652,5 +749,13 @@ class MediaAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                 datetime.datetime.fromisoformat(api_data["create_date"]),
                 obj.create_date.replace(microsecond=obj.create_date.microsecond // 1000 * 1000),
             )
+
+        self.assertEqual(set(fields), set(api_data))
+
+    def assert_default_values_format(self, api_data, values, fields=None):
+        fields = MEDIA_DEFAULT_FIELDS if fields is None else fields
+
+        for name in fields:
+            self.assertEqual(api_data[name], values[name])
 
         self.assertEqual(set(fields), set(api_data))

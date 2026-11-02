@@ -22,6 +22,7 @@ from core.schemas.utils import _unwrap_list_schema
 
 from .controller import (
     BaseModelController,
+    CreateModelControllerMixin,
     DisplayNameModelControllerMixin,
     GroupByModelControllerMixin,
     ResequenceModelControllerMixin,
@@ -66,6 +67,7 @@ def validate_controllers():
         errors.extend(_check_resequence_route(controller))
         errors.extend(_check_display_name_route(controller))
         errors.extend(_check_group_by_route(controller))
+        errors.extend(_check_default_values_route(controller))
 
     if errors:
         raise ImproperlyConfigured("\n".join(errors))
@@ -90,6 +92,14 @@ def _check_display_name_route(controller):
 
 def _check_group_by_route(controller):
     return _check_static_route(controller, GroupByModelControllerMixin, "group_by", "/group-by/")
+
+
+def _check_default_values_route(controller):
+    # Only where the creation is registered: the mixin inherited without a
+    # `create_request_schema` registers neither route, legitimately.
+    if not getattr(controller, "create_request_schema", None):
+        return
+    yield from _check_static_route(controller, CreateModelControllerMixin, "default_values", "/default-values/")
 
 
 def _check_static_route(controller, mixin, name, route):

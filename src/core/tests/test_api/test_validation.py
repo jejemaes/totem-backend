@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pydantic
 from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase
+from parameterized import parameterized
 from pydantic import AliasChoices
 
 from core.api.validation import validate_controllers
@@ -103,3 +104,36 @@ class TestControllerValidation(SimpleTestCase):
                 validate_controllers()
 
         self.assertIn("TestStrictListResponse", str(ctx.exception))
+
+    @parameterized.expand(
+        [
+            ("well placed", True, ["create", "default_values", "retrieve", "update", "delete"], None),
+            # The create mixin behind `BaseController` in the MRO: never registered.
+            ("never registered", True, ["retrieve", "update", "delete"], "registers no /default-values/ route"),
+            # The create mixin after the retrieve one, as `ModelController` once had it.
+            ("after /{id}/", True, ["retrieve", "create", "default_values"], "registered after the /{id}/ routes (retrieve)"),
+            # The mixin inherited without a creation body: no route is expected.
+            ("no creation", False, ["retrieve"], None),
+        ]
+    )
+    def test_default_values_route_order(self, dummy, creates, routes, message):
+        """On stand-ins, as `ResequenceDeclarationTest.test_route_order`: the routes
+        a controller registers land in its `__dict__` in registration order."""
+        from core.api import CreateModelControllerMixin
+        from core.api.validation import _check_default_values_route
+
+        controller = type(
+            "StandInController", (CreateModelControllerMixin,),
+            {
+                "model": User,
+                "create_request_schema": UserController.create_request_schema if creates else None,
+                **{name: lambda self: None for name in routes},
+            },
+        )
+        errors = list(_check_default_values_route(controller))
+
+        if message is None:
+            self.assertEqual(errors, [])
+        else:
+            self.assertEqual(len(errors), 1)
+            self.assertIn(message, errors[0])
