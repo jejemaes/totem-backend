@@ -14,6 +14,11 @@ register_permission("totem.user.create", "Create Users", is_public=True)
 register_permission("totem.user.read", "Read Users", is_public=True)
 register_permission("totem.user.update", "Update Users", is_public=True)
 register_permission("totem.user.delete", "Delete Users", is_public=True)
+# Not `.update`: every role holds that one on its own profile, so it would let
+# anybody replace their password without proving the current one. And not public:
+# a key is bounded by no access rule, so a key holding it would take over any
+# account of the tenant. Granted to the administrator role only.
+register_permission("totem.user.password", "Set the Password of Users", is_public=False)
 
 register_permission("totem.userrole.read", "Read User Roles", is_public=True)
 
