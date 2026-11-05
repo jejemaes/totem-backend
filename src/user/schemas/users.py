@@ -132,6 +132,25 @@ class UserProfileUpdateSchema(ModelSchema):
         }
 
 
+class UserPasswordChangeSchema(Schema):
+    """Body of the change of one's own password: the current one proves it is the
+    owner typing, not whoever holds an unlocked session.
+
+    Plain `Schema` rather than `ModelSchema`: `password` is a hash on the model,
+    never a value a client reads or writes as such.
+    """
+
+    old_password: str
+    new_password: str
+
+
+class UserPasswordSetSchema(Schema):
+    """Body of an administrator setting the password of another user. No current
+    password: the administrator does not know it, and the scope is the proof."""
+
+    new_password: str
+
+
 # ----------------------------------------------------
 # Filters Schemas
 # ----------------------------------------------------
