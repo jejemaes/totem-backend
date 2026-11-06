@@ -38,6 +38,8 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    # Required by `ArrayField` since Django 6.0 (check `postgres.E005`).
+    "django.contrib.postgres",
     "django_celery_beat",
     "base",
     "authentication",

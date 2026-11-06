@@ -100,8 +100,11 @@ Tests run in Docker; there is no usable local virtualenv.
 
 ```bash
 docker compose up -d db
-docker compose run --rm --no-deps --entrypoint "" django python manage.py test
+docker compose run --rm --no-deps --entrypoint "" django python manage.py test --parallel auto
 ```
+
+`--parallel` needs Django 6.0 or later: Python 3.14 starts the workers with
+`forkserver`, which the runner of Django 5.2 does not set up.
 
 Narrow it with a dotted path: `... python manage.py test website.tests.test_api.test_website`.
 `python manage.py check` is a fast smoke test that the whole app registry,
