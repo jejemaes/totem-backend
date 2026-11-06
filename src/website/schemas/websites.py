@@ -4,6 +4,7 @@ from ninja import Schema
 
 from core.schemas import ModelSchema
 from website.models import Website
+from website.schemas.medias import MediaListSchema
 from website.schemas.menus import MenuDisplayNameSchema
 from website.schemas.pages import PageDisplayNameSchema
 
@@ -32,6 +33,11 @@ class WebsiteSchema(ModelSchema):
     # `website.schemas.pages`.
     menu: Optional[MenuDisplayNameSchema] = None
     homepage: Optional[PageDisplayNameSchema] = None
+    # `MediaListSchema` and not `MediaDisplayNameSchema`, unlike the two above:
+    # the editor shows the cover as a thumbnail, which needs `content` -- and
+    # that schema's validator is what makes `content` the public URL whichever
+    # route serializes it.
+    cover_media: Optional[MediaListSchema] = None
 
     class Meta:
         model = Website
@@ -43,6 +49,7 @@ class WebsiteSchema(ModelSchema):
             "meta_description",
             "menu",
             "homepage",
+            "cover_media",
             "footer",
             "side_bar_content",
             "theme",
@@ -61,6 +68,7 @@ class WebsiteUpdateSchema(ModelSchema):
             "meta_description",
             "menu",
             "homepage",
+            "cover_media",
             "footer",
             "side_bar_content",
             "theme",

@@ -313,10 +313,11 @@ class WebsiteService(
     read the row at all. Registering a `BaseRule` for `Website` would blank the
     whole site.
 
-    `validate_data` covers the theme and its options, and nothing else: the
-    remaining fields are free text or relations, and a relation is already
-    resolved through the related service's `browse`, so it is access-checked and
-    reported as `RelationNotFound` without a hook. A consequence worth naming:
+    `validate_data` covers the theme and its options, and that the cover is an
+    image; nothing else: the remaining fields are free text or relations, and a
+    relation is already resolved through the related service's `browse`, so it
+    is access-checked and reported as `RelationNotFound` without a hook. The
+    cover is the one relation with a rule on *what* it points at. A consequence worth naming:
     an author holding only `website_manage_own_page` can set `homepage` to one
     of their own pages and to nothing else.
 
@@ -338,6 +339,12 @@ class WebsiteService(
         # `Field.validate()` on every supplied value before this hook, so a
         # `null` from an `Optional`-typed update schema is already a field error
         # -- keyed by the payload's index rather than by pk, which a test pins.
+        # A resolved `Media` by now, or None: `to_internal_values` swaps the pk
+        # for the instance its service's `browse` returned.
+        cover_error = Website.validate_cover_media(data.get("cover_media"))
+        if cover_error:
+            raise self.ValidationError(cover_error, key="cover_media")
+
         theme_id = data.get("theme") or (
             instance.theme if instance is not None else DEFAULT_THEME_ID
         )
@@ -381,7 +388,7 @@ class WebsiteService(
 
         Callers on the render path must NOT pass `fields`. It becomes an
         `only()`, and the layout reads `name`/`headline` while the context mixin
-        reads `menu_id`, `homepage_id` and `footer`; one name missing from that
+        reads `menu_id`, `homepage_id`, `cover_media_id` and `footer`; one name missing from that
         list is a `SynchronousOnlyOperation` raised inside the template render,
         which is what `test_async_safety` exists to catch. The controller is the
         one caller that may pass it, because `_response_orm_fields` derives the

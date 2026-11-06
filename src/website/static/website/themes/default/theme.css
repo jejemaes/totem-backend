@@ -88,6 +88,32 @@
   );
 }
 
+/* With a cover: the image fills the hero, under a scrim dark enough for the
+ * white title whatever the picture. Superhero's text is light, so the scrim is
+ * what keeps the contrast, not the image. */
+.t-hero--cover {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.t-hero--cover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: rgb(0 0 0 / 0.55);
+}
+
+.t-hero__cover {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 /* Authored HTML: give the prose inside a page sane rhythm without reaching for
  * a class the author would have to type. */
 .t-content > :last-child {

@@ -10,7 +10,7 @@ returned, so it also shows *which rung* of the fallback answered.
 
 from django.test import Client, TestCase
 
-from website.models import Page, Website
+from website.models import Media, Page, Website
 from website.theme import DEFAULT_THEME_ID, LAYOUTS, get_themes
 from website.views import PageView
 
@@ -232,3 +232,42 @@ class TestSwitchingTheme(WebsiteViewTestMixin, TestCase):
                         self.assertNotContains(
                             response, f"/static/website/themes/{other}/theme.css"
                         )
+
+
+class TestThemeCover(WebsiteViewTestMixin, TestCase):
+    """The website's cover in the landing hero of every shipped theme.
+
+    On `/` with no homepage, which renders the `landing` layout: the only one
+    with a hero.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.cover = Media.objects.bulk_create([
+            Media(name="fusee.png", content="website/fusee.png", mimetype="image/png", checksum="a" * 40),
+        ])[0]
+        self.website = self.build_website(cover_media=self.cover)
+
+    def shipped_theme_ids(self):
+        return [theme.id for theme in get_themes() if not theme.id.startswith("test-")]
+
+    def test_every_theme_shows_the_cover(self):
+        for theme_id in self.shipped_theme_ids():
+            Website.objects.filter(pk=self.website.pk).update(theme=theme_id)
+            with self.subTest(theme=theme_id):
+                response = Client().get("/")
+
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, f'src="{self.cover.content.url}"')
+
+    def test_every_theme_renders_its_hero_without_a_cover(self):
+        Website.objects.filter(pk=self.website.pk).update(cover_media=None)
+
+        for theme_id in self.shipped_theme_ids():
+            Website.objects.filter(pk=self.website.pk).update(theme=theme_id)
+            with self.subTest(theme=theme_id):
+                response = Client().get("/")
+
+                self.assertEqual(response.status_code, 200)
+                self.assertContains(response, "t-hero")
+                self.assertNotContains(response, "t-hero__cover")

@@ -4,7 +4,9 @@
    no title, no content, and the hero alone is still a coherent page.
 
    Entropy's hero: centred, a very large bold title over a soft coral glow, the
-   headline below it. The glow is a static gradient, not an animation. #}
+   headline below it. The glow is a static gradient, not an animation. The
+   website's cover, when set, comes under the headline in a bordered card, the
+   way the original shows its product shot. #}
 {% extends "website/themes/entropy/base.html" %}
 
 {% block title %}{{ website.name if website else "" }}{% endblock %}
@@ -17,6 +19,11 @@
     <p class="t-hero__headline">{{ website.headline }}</p>
     {% endif %}
   </div>
+  {% if cover_url %}
+  <div class="container">
+    <img class="t-hero__cover" src="{{ cover_url }}" alt="">
+  </div>
+  {% endif %}
 </section>
 
 <div class="container t-section">

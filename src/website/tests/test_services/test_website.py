@@ -4,7 +4,7 @@ from django.test import TestCase
 from core.services import Environment
 from core.services.exceptions import ServiceValidationMultiError
 from user.models import User
-from website.models import Menu, Page, Website
+from website.models import Media, Menu, Page, Website
 from website.schemas import WebsiteUpdateSchema
 from website.services import WebsiteService
 from website.theme import DEFAULT_THEME_ID
@@ -27,6 +27,11 @@ class TestWebsiteService(TestCase):
         )
         cls.draft = Page.objects.create(title="Atout Camp", slug="camp")
         cls.menu = Menu.objects.create(name="Main")
+        # Checksums given: nothing is read from or written to storage.
+        cls.image, cls.pdf = Media.objects.bulk_create([
+            Media(name="fusee.png", content="website/fusee.png", mimetype="image/png", checksum="a" * 40),
+            Media(name="journal.pdf", content="website/journal.pdf", mimetype="application/pdf", checksum="b" * 40),
+        ])
 
     def setUp(self):
         super().setUp()
@@ -120,6 +125,25 @@ class TestWebsiteService(TestCase):
         website = queryset.first()
         self.assertEqual(website.menu_id, self.menu.pk)
         self.assertEqual(website.homepage_id, self.page.pk)
+
+    def test_an_image_is_accepted_as_the_cover(self):
+        self.build_website()
+
+        count, queryset = self.update(cover_media=self.image.pk)
+
+        self.assertEqual(count, 1)
+        self.assertEqual(queryset.first().cover_media_id, self.image.pk)
+
+    def test_a_media_that_is_not_an_image_is_refused_as_the_cover(self):
+        """It would land in an `<img src>`: a broken image, not a degraded one."""
+        website = self.build_website()
+
+        with self.assertRaises(ServiceValidationMultiError) as ctx:
+            self.update(cover_media=self.pdf.pk)
+
+        self.assertIn("must be an image", ctx.exception.dict()[self.website_pk()]["cover_media"][0])
+        website.refresh_from_db()
+        self.assertIsNone(website.cover_media_id)
 
     def test_the_homepage_may_be_an_unpublished_page(self):
         """Documents the contract, rather than leaving it to be inferred.
