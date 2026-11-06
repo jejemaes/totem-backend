@@ -1,0 +1,7 @@
+{# One definition of "a menu link", called from both branches of the navbar --
+   the flat one and the dropdown one. Having two was how the `new_window`
+   condition came to be inverted in one and ignored in the other. #}
+{% macro menu_link(node, css_class="nav-link") %}
+<a class="{{ css_class }}" href="{{ node.data.url }}"
+   {%- if node.data.new_window %} target="_blank" rel="noopener"{% endif %}>{{ node.data.name }}</a>
+{%- endmacro %}

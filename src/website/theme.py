@@ -624,3 +624,61 @@ class FurniTheme(AbstractTheme):
         )
 
     option_schema = Options
+
+
+class EntropyTheme(AbstractTheme):
+    """A dark, high-contrast theme after the Entropy AI template (entropy-ai.webflow.io).
+
+    Its design language, not its stylesheet, for the same reasons as Furni: the
+    Webflow export styles Webflow's own class soup, is served from a hashed CDN
+    path that changes with every republish, and belongs to a paid template. What
+    is reproduced here -- the near-black canvas, the coral accent, Satoshi, pill
+    buttons and bordered dark cards -- is expressed in our own rules over a stock
+    Bootstrap in its dark colour mode.
+
+    Without the scroll effects. Entropy's sections start at `opacity: 0` and are
+    revealed by Webflow's interaction engine as they enter the viewport; here
+    everything is visible from the first paint and the theme ships no script.
+    Content that depends on javascript to appear is content a slow connection, a
+    crawler or a reader who asked for reduced motion never sees.
+    """
+
+    id = "entropy"
+    title = "Entropy"
+    template_dir = "website/themes/entropy"
+    layouts = frozenset(LAYOUTS)
+    default_layout = LAYOUT_DEFAULT
+    stylesheets = ("website/themes/entropy/theme.css",)
+
+    class Options(BaseModel):
+        """Same field names as the other themes wherever they mean the same."""
+
+        model_config = ConfigDict(extra="forbid")
+
+        color_primary: t.Optional[CssColor] = Field(
+            None,
+            title="Primary Colour",
+            description="The coral of buttons, tags and links. Entropy's own when unset.",
+        )
+        color_body_bg: t.Optional[CssColor] = Field(
+            None,
+            title="Background Colour",
+            description="Page background. Near black when unset.",
+        )
+        color_surface: t.Optional[CssColor] = Field(
+            None,
+            title="Surface Colour",
+            description="Background of cards, page headers and the footer. A shade above the page when unset.",
+        )
+        font_family_base: t.Optional[CssFontStack] = Field(
+            None,
+            title="Font Family",
+            description="Body font stack. Entropy ships Satoshi when unset.",
+        )
+        content_max_width: t.Optional[CssLength] = Field(
+            None,
+            title="Reading Width",
+            description="Maximum width of the text column in the narrow layout.",
+        )
+
+    option_schema = Options
