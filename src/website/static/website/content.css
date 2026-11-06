@@ -1,0 +1,63 @@
+/* Layout of the blocks the content editor emits, shared by every theme.
+ *
+ * Not a theme's job: the markup comes from the page's authored HTML, which is
+ * the same whichever theme renders it, so a theme that forgot these rules would
+ * silently break content written under another one. Every `base.html` loads
+ * this file before its own stylesheet, which can then restyle the blocks (gap,
+ * borders) without having to lay them out.
+ *
+ * The class vocabulary is owned by totem-frontend's
+ * `app/src/components/form/fields/columns.ts`; its editor mirrors these rules in
+ * HtmlField.vue. A rename has to happen in all three places. Classes and not
+ * inline styles or `data-*`, because `HTMLValidator` refuses both.
+ */
+
+/* ---------------------------------------------------------------------------
+ * Two columns: `<div class="t-row t-row--<split>"><div class="t-col">...`
+ *
+ * Splits: `1-1` (50/50), `1-2` (33/67), `2-1` (67/33). An unknown or missing
+ * modifier renders as `1-1`, the same fallback the editor reads it as.
+ * ------------------------------------------------------------------------ */
+
+.t-row {
+  --t-row-gap: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--t-row-gap);
+  margin-block: 1.5rem;
+}
+
+/* `min-width: 0` is load-bearing: a flex item defaults to `min-width: auto`,
+   which refuses to shrink below its content -- so a long word, or an image at
+   its natural size, pushes the other column out of the container. */
+.t-col {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* Side by side from Bootstrap's `md` breakpoint up; stacked below it, where two
+ * columns of a phone's width would each be too narrow to read. */
+@media (min-width: 768px) {
+  .t-row {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .t-row--1-2 > .t-col:last-child,
+  .t-row--2-1 > .t-col:first-child {
+    flex-grow: 2;
+  }
+}
+
+.t-col > :first-child {
+  margin-top: 0;
+}
+
+.t-col > :last-child {
+  margin-bottom: 0;
+}
+
+.t-col img {
+  max-width: 100%;
+  height: auto;
+}

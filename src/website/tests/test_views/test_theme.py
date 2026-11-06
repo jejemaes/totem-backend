@@ -233,6 +233,19 @@ class TestSwitchingTheme(WebsiteViewTestMixin, TestCase):
                             response, f"/static/website/themes/{other}/theme.css"
                         )
 
+    def test_every_theme_loads_the_shared_content_stylesheet(self):
+        """The authored HTML is the same under every theme, so is its layout.
+
+        A theme that forgot `content.css` would render the editor's two-column
+        blocks stacked, with nothing failing to say so.
+        """
+        for theme_id in self.shipped_theme_ids():
+            Website.objects.filter(pk=self.website.pk).update(theme=theme_id)
+            with self.subTest(theme=theme_id):
+                response = Client().get("/page/tresor/")
+
+                self.assertContains(response, "/static/website/content.css")
+
 
 class TestThemeCover(WebsiteViewTestMixin, TestCase):
     """The website's cover in the landing hero of every shipped theme.

@@ -37,6 +37,10 @@
     {# Our own layer, from collected static. It declares every `--t-*` variable
        in `:root` with a fallback, so the block below only has to carry what an
        author actually set. #}
+    {# The layout of the blocks the content editor emits, shared by every
+       theme and loaded first so this theme's stylesheet can restyle them. #}
+    <link rel="stylesheet" href="{{ static("website/content.css") }}">
+
     {% for stylesheet in theme.stylesheets %}
     <link rel="stylesheet" href="{{ static(stylesheet) }}">
     {% endfor %}
