@@ -1,8 +1,8 @@
 from typing import Optional
 
-from ninja import FilterSchema
 from pydantic import Field
 
+from core.api.filters import FilterSchema, MultiValue
 from core.schemas import ModelSchema
 from user.schemas import UserDisplayNameSchema
 from website.models import Page
@@ -83,17 +83,19 @@ class PageFilterSchema(FilterSchema):
         title="Is Published",
         description="Publication state of the page.",
     )
-    author: Optional[str] = Field(
+    author: MultiValue(str) = Field(
         None,
         q="user__id",
         title="Author",
-        description="Identifier of the author of the page.",
+        description="Comma-separated identifiers of the authors, `null` for the pages "
+        "with none.",
     )
-    layout: Optional[str] = Field(
+    # `str` items, not a `Literal`: the layouts are the theme's, read at runtime.
+    layout: MultiValue(str, allow_null=False) = Field(
         None,
         q="layout",
         title="Layout",
-        description="Exact layout identifier of the page.",
+        description="Comma-separated exact layout identifiers.",
     )
     search: Optional[str] = Field(
         None,

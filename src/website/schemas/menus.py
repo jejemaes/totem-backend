@@ -1,8 +1,8 @@
 from typing import Optional
 
-from ninja import FilterSchema
 from pydantic import Field
 
+from core.api.filters import FilterSchema, MultiValue
 from core.schemas import ModelSchema
 from website.models import Menu
 
@@ -77,11 +77,12 @@ class MenuFilterSchema(FilterSchema):
         title="Name",
         description="Search term in the name.",
     )
-    parent: Optional[str] = Field(
+    parent: MultiValue(str) = Field(
         None,
         q="parent__id",
         title="Parent",
-        description="Identifier of the direct parent item.",
+        description="Comma-separated identifiers of the direct parent items, `null` "
+        "for the top-level items.",
     )
     root: Optional[str] = Field(
         None,
@@ -93,11 +94,12 @@ class MenuFilterSchema(FilterSchema):
     # parameter into one signature, where `page` and `page_size` already belong
     # to `PageNumberPagination.Input`. A filter of that name makes ninja refuse
     # to build the operation at import time.
-    target_page: Optional[str] = Field(
+    target_page: MultiValue(str) = Field(
         None,
         q="page__id",
         title="Target Page",
-        description="Identifier of the page the item targets.",
+        description="Comma-separated identifiers of the pages the item targets, `null` "
+        "for the items targeting none.",
     )
     search: Optional[str] = Field(
         None,

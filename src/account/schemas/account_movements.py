@@ -2,9 +2,9 @@ from datetime import date
 from typing import Literal, Optional
 
 from django.db.models import Q
-from ninja import FilterSchema
 from pydantic import Field
 
+from core.api.filters import FilterSchema, MultiValue
 from core.schemas import ModelSchema
 from account.models import AccountMovement
 
@@ -53,17 +53,18 @@ class AccountMovementUpdateSchema(ModelSchema):
 
 
 class AccountMovementFilterSchema(FilterSchema):
-    account: Optional[str] = Field(
+    account: MultiValue(str, allow_null=False) = Field(
         None,
         q="account__id",
         title="Account",
-        description="Identifier of the account.",
+        description="Comma-separated identifiers of the accounts.",
     )
-    category: Optional[str] = Field(
+    category: MultiValue(str) = Field(
         None,
         q="category__id",
         title="Category",
-        description="Identifier of the category.",
+        description="Comma-separated identifiers of the categories, `null` for the "
+        "uncategorized movements.",
     )
     date_from: Optional[date] = Field(
         None,

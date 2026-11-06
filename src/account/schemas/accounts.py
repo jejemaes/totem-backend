@@ -1,8 +1,8 @@
 from typing import Optional
 
-from ninja import FilterSchema
 from pydantic import Field
 
+from core.api.filters import FilterSchema
 from core.schemas import ModelSchema
 from account.models import Account
 

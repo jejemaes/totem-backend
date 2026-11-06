@@ -1,10 +1,10 @@
 from typing import List, Optional
 
-from ninja import FilterSchema
 from pydantic import Field
 from ulid import ULID
 
 from base.schemas import CountryDisplayNameSchema
+from core.api.filters import FilterSchema, MultiValue
 from core.schemas import ModelSchema
 from contact.models import Contact
 
@@ -90,11 +90,12 @@ class ContactFilterSchema(FilterSchema):
         title="City",
         description="Search term in the city.",
     )
-    country: Optional[str] = Field(
+    country: MultiValue(str) = Field(
         None,
         q="country__code",
         title="Country",
-        description="ISO 3166-1 alpha-2 code of the country.",
+        description="Comma-separated ISO 3166-1 alpha-2 codes of the countries, `null` "
+        "for the contacts without one.",
     )
     # `ULID` rather than `str`: a malformed id is refused (422) instead of
     # silently matching nothing.

@@ -1,8 +1,9 @@
 from typing import Optional
 
-from ninja import FilterSchema, Schema
+from ninja import Schema
 from pydantic import Field
 
+from core.api.filters import FilterSchema
 from core.schemas import ModelSchema
 from base.models import Country
 

@@ -23,10 +23,10 @@ wiring a controller on it:
 
 from typing import Optional
 
-from ninja import FilterSchema
 from ninja.files import UploadedFile
 from pydantic import Field, field_validator
 
+from core.api.filters import FilterSchema
 from core.schemas import ModelSchema
 from website.models import Media
 
