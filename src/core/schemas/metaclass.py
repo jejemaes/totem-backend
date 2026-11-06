@@ -1,3 +1,4 @@
+import annotationlib
 import typing as t
 
 from django.db.models import Model as DjangoModel
@@ -81,7 +82,16 @@ class ModelSchemaMetaclass(ResolverMetaclass):
                 meta_conf = MetaConf.from_schema_class(name, namespace)
 
                 custom_fields = []
-                annotations = namespace.get("__annotations__", {})
+                # PEP 649: the namespace holds a lazy `__annotate__` function
+                # instead of an `__annotations__` dict.
+                annotate = annotationlib.get_annotate_from_class_namespace(namespace)
+                annotations = (
+                    annotationlib.call_annotate_function(
+                        annotate, annotationlib.Format.FORWARDREF
+                    )
+                    if annotate
+                    else {}
+                )
                 for attr_name, _type in annotations.items():
                     if attr_name.startswith("_"):
                         continue
