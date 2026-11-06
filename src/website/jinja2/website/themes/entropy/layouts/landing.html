@@ -1,0 +1,25 @@
+{# The only layout that does not render the page title: the hero carries the
+   site's own identity instead, which is the distinction between `landing` and
+   `full-width`. It is also what `/` falls back to with no homepage at all --
+   no title, no content, and the hero alone is still a coherent page.
+
+   Entropy's hero: centred, a very large bold title over a soft coral glow, the
+   headline below it. The glow is a static gradient, not an animation. #}
+{% extends "website/themes/entropy/base.html" %}
+
+{% block title %}{{ website.name if website else "" }}{% endblock %}
+
+{% block content %}
+<section class="t-hero">
+  <div class="container t-hero__intro">
+    <h1 class="t-hero__title">{{ website.name if website else "" }}</h1>
+    {% if website and website.headline %}
+    <p class="t-hero__headline">{{ website.headline }}</p>
+    {% endif %}
+  </div>
+</section>
+
+<div class="container t-section">
+  <div class="t-content">{{ content }}</div>
+</div>
+{% endblock %}

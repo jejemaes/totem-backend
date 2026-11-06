@@ -1,0 +1,356 @@
+/* The Entropy theme's own layer, over a stock Bootstrap 5 in dark colour mode.
+ *
+ * Entropy's design language expressed in our rules, not its Webflow export:
+ * that file styles Webflow's own markup and lives at a hashed path that changes
+ * on every republish. What is reproduced is the near-black canvas, the coral
+ * accent, Satoshi, the pill buttons and the bordered dark cards.
+ *
+ * What is not reproduced is the motion. The original fades and slides every
+ * section in as it scrolls into view; nothing here animates, and the only
+ * transitions are the short colour changes of a hovered button or link.
+ *
+ * Same two jobs as every theme stylesheet. Declare each `--t-*` with the value
+ * this theme ships, so the block the server injects carries only what an author
+ * changed and an unset option costs nothing. Then style the stable hooks: the
+ * layouts' `t-*` classes and the `t-widget-*` classes a widget template emits,
+ * which are the whole contract with a widget since widget templates are not
+ * theme-overridable.
+ */
+
+:root {
+  /* Entropy's palette. */
+  --t-color-primary: #ed5145;
+  --t-color-body-bg: #101011;
+  --t-color-surface: #151515;
+  --t-font-family-base: Satoshi, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --t-content-max-width: 46rem;
+
+  /* Derived, so setting one colour does not mean setting five. */
+  --t-color-ink: #fbfbfb;
+  --t-color-muted: #8e8c87;
+  --t-color-line: #353535;
+  --t-color-primary-soft: color-mix(in srgb, var(--t-color-primary) 55%, transparent);
+  --t-radius-pill: 800px;
+  --t-radius-card: 16px;
+  --t-section-space: 6rem;
+  --t-widget-spacing: 2rem;
+}
+
+/* Push the author's choices into Bootstrap's dark mode, rather than restating
+ * its rules. The selector matches the `data-bs-theme` Bootstrap scopes its own
+ * dark variables to, so ours win on specificity order rather than `!important`. */
+:root,
+[data-bs-theme="dark"] {
+  --bs-primary: var(--t-color-primary);
+  /* Bootstrap's `*-rgb` triplets cannot be derived from a colour in CSS, so
+   * these stay Entropy's coral: `.text-primary` and `.bg-primary` ignore an
+   * author's primary, while buttons, links and borders follow it. */
+  --bs-primary-rgb: 237, 81, 69;
+  --bs-body-bg: var(--t-color-body-bg);
+  --bs-body-color: var(--t-color-ink);
+  --bs-secondary-color: var(--t-color-muted);
+  --bs-body-font-family: var(--t-font-family-base);
+  --bs-link-color: var(--t-color-primary);
+  --bs-link-color-rgb: 237, 81, 69;
+  --bs-link-hover-color: color-mix(in srgb, var(--t-color-primary) 75%, white);
+  --bs-heading-color: var(--t-color-ink);
+  --bs-border-color: var(--t-color-line);
+  --bs-border-radius: 8px;
+  --bs-tertiary-bg: var(--t-color-surface);
+  --bs-secondary-bg: var(--t-color-surface);
+}
+
+body {
+  font-family: var(--t-font-family-base);
+  color: var(--t-color-ink);
+  background: var(--t-color-body-bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  color: var(--t-color-ink);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+h2 {
+  font-size: clamp(1.75rem, 3.5vw, 2.25rem);
+  line-height: 1.15;
+}
+
+a {
+  transition: color 0.15s ease;
+}
+
+/* Every button is a pill. Primary is the coral; outline buttons sit on a thin
+ * grey line, which is how Entropy draws its secondary call to action. */
+.btn {
+  --bs-btn-border-radius: var(--t-radius-pill);
+  --bs-btn-padding-x: 1.5rem;
+  --bs-btn-padding-y: 0.75rem;
+  --bs-btn-font-weight: 500;
+}
+
+.btn-primary {
+  --bs-btn-color: #fff;
+  --bs-btn-bg: var(--t-color-primary);
+  --bs-btn-border-color: var(--t-color-primary);
+  --bs-btn-hover-color: #fff;
+  --bs-btn-hover-bg: color-mix(in srgb, var(--t-color-primary) 85%, white);
+  --bs-btn-hover-border-color: color-mix(in srgb, var(--t-color-primary) 85%, white);
+  --bs-btn-active-bg: color-mix(in srgb, var(--t-color-primary) 85%, black);
+  --bs-btn-active-border-color: color-mix(in srgb, var(--t-color-primary) 85%, black);
+}
+
+.btn-outline-primary,
+.btn-outline-secondary,
+.btn-outline-light {
+  --bs-btn-color: var(--t-color-ink);
+  --bs-btn-border-color: var(--t-color-line);
+  --bs-btn-hover-color: var(--t-color-ink);
+  --bs-btn-hover-bg: var(--t-color-surface);
+  --bs-btn-hover-border-color: var(--t-color-muted);
+}
+
+/* Entropy's cards: a shade above the page, a hairline border, generous radius. */
+.card {
+  --bs-card-bg: var(--t-color-surface);
+  --bs-card-border-color: var(--t-color-line);
+  --bs-card-border-radius: var(--t-radius-card);
+  --bs-card-spacer-x: 1.5rem;
+  --bs-card-spacer-y: 1.5rem;
+}
+
+/* The bordered coral "tag" of the original, for authors who want one. */
+.badge {
+  border: 1px solid var(--t-color-primary-soft);
+  background: transparent;
+  color: var(--t-color-ink);
+  border-radius: var(--t-radius-pill);
+  font-weight: 500;
+  padding: 0.5em 0.9em;
+}
+
+.form-control,
+.form-select {
+  background-color: var(--t-color-surface);
+  border-color: var(--t-color-line);
+  border-radius: 8px;
+  min-height: 48px;
+}
+
+.form-control:focus,
+.form-select:focus {
+  border-color: var(--t-color-primary);
+  box-shadow: 0 0 0 0.2rem var(--t-color-primary-soft);
+}
+
+.table {
+  --bs-table-bg: transparent;
+  --bs-table-border-color: var(--t-color-line);
+}
+
+/* ---------------------------------------------------------------------------
+ * Chrome
+ * ------------------------------------------------------------------------ */
+
+/* Not sticky and not shrinking on scroll: the bar sits at the top of the page
+ * and scrolls away with it, like everything else. */
+.t-navbar {
+  background: var(--t-color-body-bg);
+  padding-block: 1.25rem;
+}
+
+.t-navbar__brand {
+  font-weight: 700;
+  font-size: 1.35rem;
+  color: var(--t-color-ink);
+}
+
+.t-navbar .nav-link {
+  color: var(--t-color-ink);
+  font-size: 0.95rem;
+  padding-inline: 1rem;
+}
+
+.t-navbar .nav-link:hover,
+.t-navbar .nav-link:focus {
+  color: var(--t-color-primary);
+}
+
+.t-navbar .navbar-toggler {
+  border-color: var(--t-color-line);
+}
+
+.t-navbar .dropdown-menu {
+  --bs-dropdown-bg: var(--t-color-surface);
+  --bs-dropdown-border-color: var(--t-color-line);
+  --bs-dropdown-border-radius: 12px;
+  --bs-dropdown-link-hover-bg: var(--t-color-body-bg);
+  --bs-dropdown-link-active-bg: var(--t-color-primary);
+}
+
+.t-footer {
+  border-top: 1px solid var(--t-color-line);
+  margin-top: var(--t-section-space);
+  padding-block: 4rem;
+}
+
+.t-footer__brand {
+  font-weight: 700;
+  font-size: 1.35rem;
+  color: var(--t-color-ink);
+}
+
+.t-footer__headline {
+  color: var(--t-color-muted);
+}
+
+.t-footer a {
+  color: var(--t-color-muted);
+  text-decoration: none;
+}
+
+.t-footer a:hover {
+  color: var(--t-color-ink);
+}
+
+.t-footer__legal {
+  border-top: 1px solid var(--t-color-line);
+  color: var(--t-color-muted);
+}
+
+/* ---------------------------------------------------------------------------
+ * Layouts
+ * ------------------------------------------------------------------------ */
+
+.t-main {
+  min-height: 50vh;
+}
+
+.t-section {
+  padding-block: var(--t-section-space);
+}
+
+.t-pagehead {
+  background: var(--t-color-surface);
+  border-bottom: 1px solid var(--t-color-line);
+  padding-block: 4rem;
+}
+
+.t-pagehead__title {
+  margin: 0;
+  font-size: clamp(2.25rem, 5vw, 3.5rem);
+  line-height: 1.1;
+}
+
+.t-narrow {
+  max-width: var(--t-content-max-width);
+}
+
+/* Centred and very large, over a coral glow. The glow is a fixed gradient: it
+ * does not follow the cursor or the scroll position as Webflow's would. */
+.t-hero {
+  position: relative;
+  text-align: center;
+  padding-block: clamp(5rem, 12vw, 9rem);
+  background:
+    radial-gradient(ellipse 60% 55% at 50% 0%, var(--t-color-primary-soft), transparent 70%),
+    var(--t-color-body-bg);
+}
+
+.t-hero__intro {
+  max-width: 56rem;
+}
+
+.t-hero__title {
+  font-size: clamp(2.5rem, 7vw, 4.5rem);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  margin: 0;
+}
+
+.t-hero__headline {
+  color: var(--t-color-muted);
+  font-size: 1.2rem;
+  max-width: 40rem;
+  margin: 1.5rem auto 0;
+}
+
+@media (min-width: 992px) {
+  .t-sidebar-layout--left .t-sidebar {
+    border-right: 1px solid var(--t-color-line);
+  }
+
+  .t-sidebar-layout--right .t-sidebar {
+    border-left: 1px solid var(--t-color-line);
+  }
+}
+
+.t-content > :last-child {
+  margin-bottom: 0;
+}
+
+.t-content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+
+.t-content blockquote {
+  background: var(--t-color-surface);
+  border-radius: 8px;
+  padding: 1.5rem;
+}
+
+.t-content hr {
+  border-color: var(--t-color-line);
+  opacity: 1;
+}
+
+/* ---------------------------------------------------------------------------
+ * Widgets
+ *
+ * `t-widget t-widget-<id>` is injected by `AbstractHtmlWidget.render`, so a
+ * widget carries it whether or not its template remembers to. Per-part classes
+ * follow the widget's *id*: `t-widget-last-page` for a template named
+ * `last_update_page.html`.
+ * ------------------------------------------------------------------------ */
+
+.t-widget {
+  margin-block: var(--t-widget-spacing);
+}
+
+.t-widget__heading {
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--t-color-muted);
+  margin-bottom: 0.75rem;
+}
+
+.t-widget-side-menu__list,
+.t-widget-last-page__list {
+  list-style: none;
+  padding-left: 0;
+  margin-bottom: 0;
+}
+
+.t-widget-side-menu__list--nested {
+  padding-left: 1rem;
+}
+
+.t-widget-side-menu__link,
+.t-widget-last-page__link {
+  display: inline-block;
+  padding-block: 0.35rem;
+  color: var(--t-color-ink);
+  text-decoration: none;
+}
+
+.t-widget-side-menu__link:hover,
+.t-widget-last-page__link:hover {
+  color: var(--t-color-primary);
+}
