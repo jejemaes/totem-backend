@@ -44,6 +44,11 @@ class Website(models.Model):
     # deletable out from under it. Nullable because a freshly provisioned system
     # has no content yet -- which is why `/` must degrade rather than 404.
     homepage = models.ForeignKey('website.Page', verbose_name="Homepage", null=True, blank=True, on_delete=models.PROTECT, related_name="+", help_text="Page rendered at the root of the website.")
+    # `SET_NULL` and not `PROTECT` like `homepage`: the cover is decoration, and
+    # every theme's hero renders without it. Refusing to delete a media because
+    # the site settings point at it would block the media library for nothing.
+    # An image only -- see `validate_cover_media`.
+    cover_media = models.ForeignKey('website.Media', verbose_name="Cover Media", null=True, blank=True, on_delete=models.SET_NULL, related_name="+", help_text="Image shown in the hero of the landing layout.")
 
     footer = fields.HtmlField("Footer Content", null=True, blank=True, allow_widget=True)
     side_bar_content = fields.HtmlField(
@@ -89,8 +94,21 @@ class Website(models.Model):
 
     objects = WebsiteQuerySet.as_manager()
 
+    @staticmethod
+    def validate_cover_media(media):
+        """The error message if `media` cannot be a cover, else None.
+
+        A cover ends up in an `<img src>` or a CSS `url()`: a PDF there is a
+        broken image, not a degraded one. Returns rather than raises so the
+        service and `clean()` each raise their own layer's error, like
+        `theme.validate_options`.
+        """
+        if media is not None and not (media.mimetype or "").startswith("image/"):
+            return f"The cover must be an image, not {media.mimetype or 'an unknown type'}."
+        return None
+
     def clean(self):
-        """The same two rules as `WebsiteService.validate_data`, for the admin.
+        """The same rules as `WebsiteService.validate_data`, for the admin.
 
         The admin writes through `Model.save()`, so the service hook never runs
         there -- the two-writer situation `WebsitePublishedMixin` already
@@ -101,6 +119,10 @@ class Website(models.Model):
         cannot bypass it either.
         """
         super().clean()
+
+        cover_error = self.validate_cover_media(self.cover_media)
+        if cover_error:
+            raise ValidationError({"cover_media": cover_error})
 
         theme = get_theme(self.theme)
         if theme is None:

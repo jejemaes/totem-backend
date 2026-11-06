@@ -19,6 +19,7 @@ WEBSITE_FIELDS = [
     "meta_description",
     "menu",
     "homepage",
+    "cover_media",
     "footer",
     "side_bar_content",
     "theme",
@@ -289,5 +290,20 @@ class WebsiteActionsAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                 )
             else:
                 self.assertIsNone(api_data["homepage"])
+        if "cover_media" in fields:
+            # `MediaListSchema`, so `content` is the public URL the hero and the
+            # editor's thumbnail put in an `<img src>`, not the stored path.
+            if obj.cover_media_id:
+                self.assertEqual(
+                    api_data["cover_media"],
+                    {
+                        "id": obj.cover_media.pk,
+                        "name": obj.cover_media.name,
+                        "content": obj.cover_media.content.url,
+                        "mimetype": obj.cover_media.mimetype,
+                    },
+                )
+            else:
+                self.assertIsNone(api_data["cover_media"])
 
         self.assertEqual(set(fields), set(api_data))

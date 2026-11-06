@@ -4,7 +4,13 @@
    no title, no content, and the hero alone is still a coherent page.
 
    Furni's hero is the theme's most recognisable element: a deep green band with
-   the headline set large and a light sage panel offset behind it. #}
+   the headline set large and a light sage panel beside it. The website's cover,
+   when set, takes the panel's place and is clipped to its box; without one the
+   panel stands alone and, being only decoration, is not rendered on small
+   screens. An `<img>` and not a
+   CSS `url()`, in all three themes: a stored filename may hold a quote or a
+   parenthesis, which attribute escaping makes harmless in `src` and not inside
+   a CSS value. #}
 {% extends "website/themes/furni/base.html" %}
 
 {% block title %}{{ website.name if website else "" }}{% endblock %}
@@ -19,8 +25,14 @@
         <p class="t-hero__headline">{{ website.headline }}</p>
         {% endif %}
       </div>
-      <div class="col-12 col-lg-6 d-none d-lg-block">
-        <div class="t-hero__panel" aria-hidden="true"></div>
+      <div class="col-12 col-lg-6{% if not cover_url %} d-none d-lg-block{% endif %}">
+        <div class="t-hero__figure">
+          {% if cover_url %}
+          <img class="t-hero__cover" src="{{ cover_url }}" alt="">
+          {% else %}
+          <div class="t-hero__panel" aria-hidden="true"></div>
+          {% endif %}
+        </div>
       </div>
     </div>
   </div>

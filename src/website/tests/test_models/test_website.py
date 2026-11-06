@@ -1,7 +1,10 @@
 from django.core.exceptions import ValidationError
-from django.test import TestCase
+import shutil
+import tempfile
 
-from website.models import Website
+from django.test import TestCase, override_settings
+
+from website.models import Media, Website
 from website.theme import DEFAULT_THEME_ID
 
 
@@ -93,3 +96,46 @@ class TestWebsiteClean(TestCase):
             self.build(theme=DEFAULT_THEME_ID, theme_options={"nope": 1}).clean()
 
         self.assertIn("theme_options", ctx.exception.message_dict)
+
+    def test_an_image_cover_passes(self):
+        cover = Media(name="fusee.png", mimetype="image/png")
+
+        self.build(cover_media=cover).clean()
+
+    def test_a_cover_that_is_not_an_image_is_refused(self):
+        cover = Media(name="journal.pdf", mimetype="application/pdf")
+
+        with self.assertRaises(ValidationError) as ctx:
+            self.build(cover_media=cover).clean()
+
+        self.assertIn("cover_media", ctx.exception.message_dict)
+
+
+class TestWebsiteCoverMedia(TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        # The media delete also deletes its file: keep it away from the real
+        # filestore, as `test_api.test_media` does.
+        cls._media_root = tempfile.mkdtemp()
+        cls._override = override_settings(MEDIA_ROOT=cls._media_root)
+        cls._override.enable()
+        super().setUpClass()
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        cls._override.disable()
+        shutil.rmtree(cls._media_root, ignore_errors=True)
+
+    def test_deleting_the_cover_media_unsets_the_cover(self):
+        """`SET_NULL`: the media library is never blocked by the site settings."""
+        cover = Media.objects.bulk_create([
+            Media(name="fusee.png", content="website/fusee.png", mimetype="image/png", checksum="a" * 40),
+        ])[0]
+        website = Website.objects.create(name="Moulinsart", headline="Le domaine", cover_media=cover)
+
+        Media.objects.filter(pk=cover.pk).delete()
+
+        website.refresh_from_db()
+        self.assertIsNone(website.cover_media_id)

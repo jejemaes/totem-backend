@@ -1,5 +1,6 @@
 from django.test import AsyncClient, TransactionTestCase
 
+from website.models import Media
 from website.views import HomePageView, PageView
 
 from .common import WebsiteViewTestMixin
@@ -30,14 +31,21 @@ class TestWebsiteAsyncSafety(WebsiteViewTestMixin, TransactionTestCase):
         self.page = self.build_page(
             slug="tresor", content=f"<div><p>x</p>{self.marker(attrs={'limit': 3})}</div>"
         )
+        # `landing`, the layout with the hero, so the cover is rendered too.
         self.homepage = self.build_page(
-            slug="home", content=f"<div>{self.marker()}</div>"
+            slug="home", content=f"<div>{self.marker()}</div>", layout="landing"
         )
         self.menu = self.build_menu_tree(page=self.page)
+        # The cover is a foreign key the landing hero shows: the view must hand
+        # the template its URL, never the lazy relation.
+        self.cover = Media.objects.bulk_create([
+            Media(name="fusee.png", content="website/fusee.png", mimetype="image/png", checksum="a" * 40),
+        ])[0]
         self.website = self.build_website(
             menu=self.menu,
             homepage=self.homepage,
             footer=f"<div>{self.marker()}</div>",
+            cover_media=self.cover,
         )
 
     async def test_the_homepage_render_is_async_safe(self):

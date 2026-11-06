@@ -278,6 +278,17 @@ a {
   margin: 1.5rem auto 0;
 }
 
+/* The cover as a bordered dark card under the headline, like every other card
+ * of the theme. Above the glow simply by coming later in the flow. */
+.t-hero__cover {
+  display: block;
+  width: 100%;
+  max-width: 64rem;
+  margin: clamp(3rem, 6vw, 4.5rem) auto 0;
+  border: 1px solid var(--t-color-line);
+  border-radius: 16px;
+}
+
 @media (min-width: 992px) {
   .t-sidebar-layout--left .t-sidebar {
     border-right: 1px solid var(--t-color-line);

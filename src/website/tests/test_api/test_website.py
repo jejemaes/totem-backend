@@ -4,7 +4,7 @@ from parameterized import parameterized
 from authentication.testing import mint_access_token
 from core.testing import APITestCaseMixin
 from user.access_rights import get_user_scopes
-from website.models import Website
+from website.models import Media, Website
 from website.theme import DEFAULT_THEME_ID
 
 from .common import PERMISSION_DENIED, WEBSITE_ID, WEBSITE_SCOPES, CommonTestMixin
@@ -12,6 +12,9 @@ from .common import PERMISSION_DENIED, WEBSITE_ID, WEBSITE_SCOPES, CommonTestMix
 # A well-formed but absent ULID: the schema types a relation with the target's
 # primary key type, so a malformed one would be refused before the service runs.
 UNKNOWN_ID = "01M209K5BNS12QRPHXFWVJ0000"
+
+MEDIA_ID1 = "01M209K5BNS12QRPHXFWVJNVX1"
+MEDIA_ID2 = "01M209K5BNS12QRPHXFWVJNVX2"
 
 WEBSITE_FIELDS = [
     "id",
@@ -21,6 +24,7 @@ WEBSITE_FIELDS = [
     "meta_description",
     "menu",
     "homepage",
+    "cover_media",
     "footer",
     "side_bar_content",
     "theme",
@@ -45,6 +49,22 @@ class WebsiteAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
     def setUpTestData(cls):
         super().setUpTestData()
 
+        # A checksum given: no file to read, nothing written to storage, so no
+        # MEDIA_ROOT of its own as `test_media` needs. The site gets the image as
+        # its cover, so retrieve serializes all three relations.
+        cls.media_cover, cls.media_pdf = Media.objects.bulk_create([
+            Media(
+                id=MEDIA_ID1, name="minas-tirith.jpg", content="website/minas-tirith.jpg",
+                mimetype="image/jpeg", checksum="a" * 40,
+            ),
+            Media(
+                id=MEDIA_ID2, name="red-book-of-westmarch.pdf", content="website/red-book-of-westmarch.pdf",
+                mimetype="application/pdf", checksum="b" * 40,
+            ),
+        ])
+        Website.objects.filter(pk=WEBSITE_ID).update(cover_media=cls.media_cover)
+        cls.website.refresh_from_db()
+
         cls.role.permissions = WEBSITE_SCOPES
         cls.role.rules = []
         cls.role.save()
@@ -67,7 +87,7 @@ class WebsiteAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         response = self.do_request("GET", self.url_detail)
 
         self.assertEqual(response.status_code, 200)
-        # Both relations are set, so serializing them is what forces them to be
+        # Every relation is set, so serializing them is what forces them to be
         # resolved: this covers the relational part of the payload.
         self.assert_api_format(response.json(), self.website)
 
@@ -127,6 +147,10 @@ class WebsiteAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             ({"menu": None}, 200, None),
             ({"homepage": UNKNOWN_ID}, 422, "homepage"),
             ({"menu": UNKNOWN_ID}, 422, "menu"),
+            ({"cover_media": None}, 200, None),
+            ({"cover_media": MEDIA_ID1}, 200, None),
+            ({"cover_media": UNKNOWN_ID}, 422, "cover_media"),
+            ({"cover_media": MEDIA_ID2}, 422, "cover_media"),
             ({"footer": '<t-widget name="nope"></t-widget>'}, 422, "footer"),
             ({"theme": None}, 422, "theme"),
             ({"theme": "no-such-theme"}, 422, "theme"),
@@ -143,7 +167,8 @@ class WebsiteAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         column is refused by the null check of the schemas and services; the
         relation rows are the scoped resolution through `browse`; the `footer`
         row is `HtmlField(allow_widget=True)` refusing a marker that names no
-        registered widget.
+        registered widget; the PDF `cover_media` row is `validate_data`, the one
+        relation with a rule on what it points at.
         """
         response = self.do_request("PATCH", self.url_detail, data={**self.payload_update, **extra_body})
 
@@ -159,6 +184,16 @@ class WebsiteAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(obj.name, "Gondor")
         # The relations were not in the payload and must survive it, still
         # expanded in the response.
+        self.assert_api_format(response.json(), obj)
+
+    def test_update_sets_the_cover(self):
+        Website.objects.filter(pk=WEBSITE_ID).update(cover_media=None)
+
+        response = self.do_request("PATCH", self.url_detail, data={"cover_media": MEDIA_ID1})
+
+        self.assertEqual(response.status_code, 200)
+        obj = Website.objects.get(id=WEBSITE_ID)
+        self.assertEqual(obj.cover_media_id, MEDIA_ID1)
         self.assert_api_format(response.json(), obj)
 
     def test_update_not_found(self):
@@ -291,5 +326,20 @@ class WebsiteAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                 )
             else:
                 self.assertIsNone(api_data["homepage"])
+        if "cover_media" in fields:
+            # `MediaListSchema`, so `content` is the public URL the hero and the
+            # editor's thumbnail put in an `<img src>`, not the stored path.
+            if obj.cover_media_id:
+                self.assertEqual(
+                    api_data["cover_media"],
+                    {
+                        "id": obj.cover_media.pk,
+                        "name": obj.cover_media.name,
+                        "content": obj.cover_media.content.url,
+                        "mimetype": obj.cover_media.mimetype,
+                    },
+                )
+            else:
+                self.assertIsNone(api_data["cover_media"])
 
         self.assertEqual(set(fields), set(api_data))

@@ -7,7 +7,7 @@ from django.views.generic.base import TemplateResponseMixin, View
 
 from core.html_widget import expand_widgets
 from core.views.mixins import EnvironmentViewMixin
-from website.services import MenuService, WebsiteService
+from website.services import MediaService, MenuService, WebsiteService
 from website.theme import DEFAULT_THEME_ID, LAYOUT_DEFAULT, get_theme
 
 _logger = logging.getLogger(__name__)
@@ -80,6 +80,17 @@ class WebsiteRenderContextMixin(EnvironmentViewMixin, RenderContextMixin):
         if website is not None and website.menu_id:
             menu_root = await self.env.get(MenuService).read_tree(website.menu_id)
 
+        # The URL, resolved here, and never `website.cover_media` in a template:
+        # that is a lazy foreign key, and loading it during the jinja render is a
+        # `SynchronousOnlyOperation`. Through `MediaService` like the menu, whose
+        # read is public. `afirst()` and not a `.get`: a cover deleted between
+        # the two reads is a hero without image, not an error.
+        cover_url = None
+        if website is not None and website.cover_media_id:
+            cover = await (await self.env.get(MediaService).browse([website.cover_media_id])).afirst()
+            if cover is not None:
+                cover_url = cover.content.url
+
         return {
             "website": website,
             # A list, never None: the template used to walk `menu_tree.children`,
@@ -87,6 +98,8 @@ class WebsiteRenderContextMixin(EnvironmentViewMixin, RenderContextMixin):
             # no main menu -- the branch the code already took when `menu_id`
             # was unset.
             "menu_nodes": menu_root.children if menu_root is not None else [],
+            # A plain string or None, for the landing hero of every theme.
+            "cover_url": cover_url,
             # The footer used to be four fixed widget slots. It is now one
             # `HtmlField` the author lays out, widget markers included -- one
             # content mechanism instead of two.
@@ -145,7 +158,7 @@ class WebsiteRenderContextMixin(EnvironmentViewMixin, RenderContextMixin):
 
         No `fields=`, deliberately: it would become an `only()`, and the layout
         reads `name`/`headline` while `get_website_context_data` reads
-        `menu_id`, `homepage_id` and `footer`. A name missing from that list
+        `menu_id`, `homepage_id`, `cover_media_id` and `footer`. A name missing from that list
         raises `SynchronousOnlyOperation` during the template render, well past
         any hop this view controls -- see `read_current`.
 
