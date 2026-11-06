@@ -1,10 +1,10 @@
 from typing import Optional
 
 from django.db.models import Q
-from ninja import FilterSchema
 from pydantic import Field
 from ulid import ULID
 
+from core.api.filters import FilterSchema, MultiValue
 from core.schemas import ModelSchema
 from account.models import AccountCategory
 
@@ -58,11 +58,12 @@ class AccountCategoryUpdateSchema(ModelSchema):
 class AccountCategoryFilterSchema(FilterSchema):
     # `ULID` rather than `str`: a malformed id is refused (422) instead of
     # silently matching nothing.
-    account: Optional[ULID] = Field(
+    account: MultiValue(ULID) = Field(
         None,
         q="account__id",
         title="Account",
-        description="Identifier of the account the categories are scoped to.",
+        description="Comma-separated identifiers of the accounts the categories are "
+        "scoped to, `null` for the general categories.",
     )
     applicable_to: Optional[ULID] = Field(
         None,

@@ -1,8 +1,9 @@
-from typing import List, Optional
+from typing import Optional
 
-from ninja import FilterSchema, Schema
+from ninja import Schema
 from pydantic import Field
 
+from core.api.filters import FilterSchema, MultiValue
 from core.schemas import ModelSchema
 from user.models import UserRole
 
@@ -38,11 +39,11 @@ class UserRoleSchema(ModelSchema):
 
 
 class UserRoleFilterSchema(FilterSchema):
-    id: Optional[List[str]] = Field(
+    id: MultiValue(str, allow_null=False) = Field(
         None,
-        q="id__in",
+        q="id",
         title="Id",
-        description="Search extact ID.",
+        description="Comma-separated exact IDs.",
     )
     name: Optional[str] = Field(
         None,

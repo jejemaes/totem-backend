@@ -128,7 +128,8 @@ class BudgetAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
 
         self.assertEqual(response.status_code, status_code)
         if error_field:
-            self.assertEqual([detail["loc"][-1] for detail in response.json()["detail"]], [error_field])
+            # The last name in `loc`: a multi-valued filter puts the index of the faulty item after it.
+            self.assertEqual([[part for part in detail["loc"] if isinstance(part, str)][-1] for detail in response.json()["detail"]], [error_field])
 
     @parameterized.expand(
         [

@@ -1,8 +1,9 @@
 from typing import List, Optional
 
-from ninja import FilterSchema
 from pydantic import Field
+from ulid import ULID
 
+from core.api.filters import FilterSchema, MultiValue
 from core.schemas import ModelSchema
 from core.tests.computed_app.models import Category, Line, Order, Product, Tag
 
@@ -67,11 +68,16 @@ class ProductBodySchema(ModelSchema):
 
 
 class ProductFilterSchema(FilterSchema):
+    id: MultiValue(int, allow_null=False) = Field(None, q="id")
     name: Optional[str] = Field(None, q="name__icontains")
 
 
 class LineFilterSchema(FilterSchema):
-    status: Optional[str] = Field(None, q="order__status")
+    # A choice-like column, a nullable foreign key with an int pk, and one with a
+    # ULID pk that is never null.
+    status: MultiValue(str) = Field(None, q="order__status")
+    product: MultiValue(int) = Field(None, q="product__id")
+    order: MultiValue(ULID, allow_null=False) = Field(None, q="order__id")
 
 
 class TagCreateSchema(ModelSchema):

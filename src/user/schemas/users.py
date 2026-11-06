@@ -1,8 +1,9 @@
 from typing import List, Optional
 
-from ninja import FilterSchema, Schema
+from ninja import Schema
 from pydantic import UUID4, Field
 
+from core.api.filters import FilterSchema
 from core.schemas import ModelSchema
 from user.models import User
 

@@ -1,8 +1,8 @@
 from typing import Optional
 
-from ninja import FilterSchema
 from pydantic import Field
 
+from core.api.filters import FilterSchema, MultiValue
 from core.schemas import ModelSchema
 from account.models import BudgetLine
 
@@ -69,9 +69,9 @@ class BudgetLineFilterSchema(FilterSchema):
         title="Name",
         description="Search term in the name.",
     )
-    position: Optional[str] = Field(
+    position: MultiValue(str, allow_null=False) = Field(
         None,
         q="position__id",
         title="Position",
-        description="Identifier of the position.",
+        description="Comma-separated identifiers of the positions.",
     )

@@ -1,10 +1,10 @@
 import uuid
 from typing import Optional
 
-from ninja import FilterSchema
 from pydantic import Field
 from ulid import ULID
 
+from core.api.filters import FilterSchema, MultiValue
 from core.schemas import ModelSchema
 from user.schemas import UserDisplayNameSchema
 from account.models import Budget
@@ -75,17 +75,18 @@ class BudgetFilterSchema(FilterSchema):
     )
     # Typed after the columns, not `str`: a malformed id is then refused by the
     # schema (422) instead of failing in the database against a UUID column (400).
-    user: Optional[uuid.UUID] = Field(
+    user: MultiValue(uuid.UUID) = Field(
         None,
         q="user__id",
         title="User",
-        description="Identifier of the user in charge.",
+        description="Comma-separated identifiers of the users in charge, `null` for "
+        "the budgets with none.",
     )
-    account: Optional[ULID] = Field(
+    account: MultiValue(ULID, allow_null=False) = Field(
         None,
         q="account__id",
         title="Account",
-        description="Identifier of the account.",
+        description="Comma-separated identifiers of the accounts.",
     )
     active: Optional[bool] = Field(
         None,

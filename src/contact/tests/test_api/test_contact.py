@@ -154,6 +154,10 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             ({"tag": TAG_ID3}, []),  # a tag nobody carries
             # Filters combine with AND.
             ({"tag": TAG_ID1, "country": "GD"}, [CONTACT_ID2]),
+            # Several values: any of them; `null`, the contacts without one.
+            ({"country": "SH,GD"}, [CONTACT_ID1, CONTACT_ID2]),
+            ({"country": "null"}, [CONTACT_ID3]),
+            ({"country": "SH,null"}, [CONTACT_ID1, CONTACT_ID3]),
         ]
     )
     def test_list_filters(self, filters, expected_pks):
