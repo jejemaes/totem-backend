@@ -13,6 +13,7 @@ DEV_API_KEY_SECRET = "dev-api-key-secret"
 class AuthenticationConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "authentication"
+    verbose_name = "Authentication"
 
     # `authentication` rather than `auth` (taken by `django.contrib.auth`), and
     # rather than keeping the `oauth` label: a label with a migration history
