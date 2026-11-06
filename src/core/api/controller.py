@@ -9,6 +9,7 @@ from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured, Perm
 from django.db.models import IntegerField, Model, Q, QuerySet, UUIDField
 from django.db.models.constants import LOOKUP_SEP
 from django.http import HttpRequest
+from django.apps import apps
 from django.conf import settings
 from ninja import Body, FilterSchema, NinjaAPI, Path, Query, Router, Schema
 from ninja.errors import ValidationError, HttpError
@@ -51,6 +52,9 @@ class BaseController:
     # Customizable options
     path_prefix: str = "/"
     auth: t.List[AuthBase] = None
+    # Group of the controller's tags in the documentation (`x-tagGroups`).
+    # Default: the `verbose_name` of the app the controller belongs to.
+    tag_group: t.Optional[str] = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -70,6 +74,38 @@ class BaseController:
         # Add the router to the API
         if cls.api is not None:
             cls.api.add_router(cls.path_prefix, cls._router)
+            cls._add_tag_group(cls.api)
+
+    @classmethod
+    def get_tag_group(cls) -> str:
+        if cls.tag_group:
+            return cls.tag_group
+        return apps.get_containing_app_config(cls.__module__).verbose_name
+
+    @classmethod
+    def _add_tag_group(cls, api: NinjaAPI) -> None:
+        """Files the tags of the controller's operations under its group, in the
+        `x-tagGroups` of the API documentation.
+
+        Written into `api.openapi_extra`, which ninja copies at the root of the
+        schema, rather than by overriding `NinjaAPI.get_openapi_schema`: no API
+        subclass to remember when declaring a new `NinjaAPI`. Every controller must
+        contribute, since Redoc hides a tag that belongs to no group.
+        """
+        tags = []
+        for path_view in cls._router.path_operations.values():
+            for operation in path_view.operations:
+                tags += [tag for tag in operation.tags or [] if tag not in tags]
+        if not tags:
+            return
+
+        name = cls.get_tag_group()
+        groups = api.openapi_extra.setdefault("x-tagGroups", [])
+        group = next((group for group in groups if group["name"] == name), None)
+        if group is None:
+            group = {"name": name, "tags": []}
+            groups.append(group)
+        group["tags"] += [tag for tag in tags if tag not in group["tags"]]
 
     @classmethod
     def add_routes_to(cls, router: Router) -> None:

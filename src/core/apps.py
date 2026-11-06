@@ -5,6 +5,7 @@ from django.utils.module_loading import autodiscover_modules
 class CoreConfig(AppConfig):
     default_auto_field = "django.db.models.BigAutoField"
     name = "core"
+    verbose_name = "Internal"
 
     def ready(self):
         # # Django Ninja consider model optional field as pydantic none required field, accepting
