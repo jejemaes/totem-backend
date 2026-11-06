@@ -37,6 +37,10 @@
     <link rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
 
+    {# The layout of the blocks the content editor emits, shared by every
+       theme and loaded first so this theme's stylesheet can restyle them. #}
+    <link rel="stylesheet" href="{{ static("website/content.css") }}">
+
     {% for stylesheet in theme.stylesheets %}
     <link rel="stylesheet" href="{{ static(stylesheet) }}">
     {% endfor %}
