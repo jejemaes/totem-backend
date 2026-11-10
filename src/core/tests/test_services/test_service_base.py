@@ -118,6 +118,89 @@ class TestValidateDataHook(TestCase):
         self.assertFalse(User.objects.filter(username="haddock").exists())
 
 
+class TestCreatePreprocessHook(TestCase):
+    """The hook deriving server-owned values, between validation and the INSERT.
+
+    `is_staff` stands for a derived value: it is a column of `User` that
+    `UserCreateSchema` does not declare, so a client cannot write it.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.actor = User.objects.create(
+            username="tintin", email="tintin@moulinsart.com"
+        )
+
+    @property
+    def service(self):
+        return Environment(user=self.actor).get(UserService)
+
+    def create(self, *logins):
+        data = [
+            UserCreateSchema(login=login, email=f"{login}@moulinsart.com", roles=[])
+            for login in logins
+        ]
+        return async_to_sync(self.service.create)(data)
+
+    def test_runs_after_validate_data_on_the_whole_batch(self):
+        calls = []
+
+        def preprocess(service, internal_data):
+            calls.append(("preprocess", [values["username"] for values in internal_data]))
+            return internal_data
+
+        with patch.object(UserService, "validate_data", lambda s, data, instance: calls.append(("validate", data["username"]))), \
+                patch.object(UserService, "_create_preprocess_values", preprocess):
+            self.create("haddock", "nestor")
+
+        self.assertEqual(calls, [
+            ("validate", "haddock"),
+            ("validate", "nestor"),
+            ("preprocess", ["haddock", "nestor"]),
+        ])
+
+    def test_not_called_when_validation_refuses(self):
+        calls = []
+
+        def refuse(service, data, instance):
+            raise service.ValidationError("nope", key="username")
+
+        with patch.object(UserService, "validate_data", refuse), \
+                patch.object(UserService, "_create_preprocess_values", lambda s, internal_data: calls.append(internal_data)):
+            with self.assertRaises(ServiceValidationMultiError):
+                self.create("haddock")
+
+        self.assertEqual(calls, [])
+
+    def test_added_value_is_persisted(self):
+        def preprocess(service, internal_data):
+            return [{**values, "is_staff": True} for values in internal_data]
+
+        with patch.object(UserService, "_create_preprocess_values", preprocess):
+            instances = self.create("haddock")
+
+        self.assertTrue(instances[0].is_staff)
+        self.assertTrue(User.objects.get(username="haddock").is_staff)
+
+    def test_raising_rolls_the_creation_back(self):
+        """Inside the transaction: what the hook itself wrote goes too.
+
+        Raising before the INSERT would leave no row anyway; the row the hook
+        writes is what proves it runs inside the creation's transaction.
+        """
+        def preprocess(service, internal_data):
+            User.objects.create(username="milou", email="milou@moulinsart.com")
+            raise RuntimeError("derivation failed")
+
+        with patch.object(UserService, "_create_preprocess_values", preprocess):
+            with self.assertRaises(RuntimeError):
+                self.create("haddock", "nestor")
+
+        self.assertFalse(
+            User.objects.filter(username__in=["haddock", "nestor", "milou"]).exists()
+        )
+
+
 class TestBrowse(TestCase):
     @classmethod
     def setUpTestData(cls):

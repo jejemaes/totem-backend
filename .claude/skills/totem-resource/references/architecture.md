@@ -161,7 +161,8 @@ whose `model` is `None`.
 | Relation exists and is visible | nowhere — automatic | resolved via the target service's `browse`, reported as `RelationNotFound` |
 | Needs the current record | service `validate_data` | the only hook that receives the instance |
 | Must hold on every write path | QuerySet override | services never call `save()`; the admin does |
-| Derived values | QuerySet `bulk_create` | `validate_data` runs before the instance exists, `_create_postprocess` after the INSERT |
+| Derived values, every writer | QuerySet `bulk_create` | `validate_data` must not write, `_create_postprocess` runs after the INSERT |
+| Derived values, service writes only | service `_create_preprocess_values` | after validation, inside the transaction, on internal values absent from the create schema; the admin (`Model.save()`) bypasses it |
 | Policy that would churn migrations | service | field `validators=[...]` change a field's deconstruction |
 
 ## Startup wiring
