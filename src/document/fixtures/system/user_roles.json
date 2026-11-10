@@ -1,0 +1,20 @@
+[
+{
+    "model": "user.userrole",
+    "pk": "DOCUMENT_USER",
+    "fields": {
+        "name": "User",
+        "permissions": "[\"totem.document.create\", \"totem.document.read\", \"totem.document.update\", \"totem.document.delete\", \"totem.documenttag.read\", \"totem.documenttagcategory.read\"]",
+        "rules": "[]"
+    }
+},
+{
+    "model": "user.userrole",
+    "pk": "DOCUMENT_MANAGER",
+    "fields": {
+        "name": "Administrator",
+        "permissions": "[\"totem.document.create\", \"totem.document.read\", \"totem.document.update\", \"totem.document.delete\", \"totem.documenttag.create\", \"totem.documenttag.read\", \"totem.documenttag.update\", \"totem.documenttag.delete\", \"totem.documenttagcategory.create\", \"totem.documenttagcategory.read\", \"totem.documenttagcategory.update\", \"totem.documenttagcategory.delete\"]",
+        "rules": "[]"
+    }
+}
+]
