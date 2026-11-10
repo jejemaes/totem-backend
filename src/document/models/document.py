@@ -40,7 +40,9 @@ class Document(CleanupFileModelMixin, models.Model):
 
     The content is fixed by `document_type`: a `file` document holds a file and
     no text, a `text` one no file. The type and the file never change after
-    creation, which keeps `mimetype`, `checksum` and `size` true to the file.
+    creation, which keeps `mimetype`, `checksum`, `size` and `thumbnail` true to
+    the file. The thumbnail is deleted with the document, as the file is:
+    `CleanupFileModelMixin` covers every field with a storage.
     """
 
     id = ULIDField("ID", primary_key=True)
@@ -62,6 +64,15 @@ class Document(CleanupFileModelMixin, models.Model):
         # nameless `FieldFile` into `str(value)`. Hence `NO_FILE` below.
         null=True,
         blank=True,
+    )
+    thumbnail = models.ImageField(
+        "Thumbnail",
+        storage=PrivateMediaFileSystemStorage(),
+        upload_to="document/thumbnails/%Y/%m",
+        max_length=256,
+        null=True,
+        blank=True,
+        help_text="WebP preview of an image or of the first page of a PDF, made at creation.",
     )
     text_content = HtmlField("Content", null=True, blank=True, help_text="HTML content of a text document.")
     mimetype = models.CharField(

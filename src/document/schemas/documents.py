@@ -45,6 +45,7 @@ class DocumentSchema(ModelSchema):
             "name",
             "document_type",
             "file",
+            "thumbnail",
             "text_content",
             "mimetype",
             "checksum",
@@ -58,11 +59,11 @@ class DocumentSchema(ModelSchema):
         ]
         optional_fields = "__all__"
 
-    # `check_fields=False`: `file` is derived from the model by the metaclass,
-    # after the class body; see `MediaListSchema`.
-    @field_validator("file", mode="before", check_fields=False)
+    # `check_fields=False`: `file` and `thumbnail` are derived from the model by
+    # the metaclass, after the class body; see `MediaListSchema`.
+    @field_validator("file", "thumbnail", mode="before", check_fields=False)
     @classmethod
-    def _stored_path_to_url(cls, value):
+    def _stored_path_to_url(cls, value, info):
         """The stored path -> the signed URL, whatever route serializes it.
 
         A list route serializes `instance.__dict__`, the bare stored path, while
@@ -71,7 +72,7 @@ class DocumentSchema(ModelSchema):
         reuses. Without it a listed file would not be downloadable.
         """
         if isinstance(value, str) and value and not value.startswith("/"):
-            return Document._meta.get_field("file").storage.url(value)
+            return Document._meta.get_field(info.field_name).storage.url(value)
         return value
 
 
@@ -108,6 +109,7 @@ class DocumentUpdateSchema(ModelSchema):
         optional_fields = "__all__"
 
 
+# No `thumbnail` in any write schema: it is made from the file at creation.
 # No `document_type` nor `file` in the update schema: replacing a file means
 # creating a new document, which keeps `checksum`, `mimetype` and `size` true
 # to the file, as for `Media`. `mimetype`, `checksum` and `size` are in no
