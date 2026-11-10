@@ -62,15 +62,10 @@ def model_prepare_fetch_fields(model: Model, field_lookups: t.Dict[str, t.Dict[s
                 qs = related_model.objects.all()
                 if related_only_fields:
                     qs = qs.only(*related_only_fields)
-                if related_prefetch:
-                    for rlookup, rprefetch_info in related_prefetch.items():
-                        qs = qs.prefetch_related(
-                            Prefetch(
-                                rlookup,
-                                queryset=rprefetch_info["queryset"],
-                                to_attr=fname
-                            )
-                        )
+                # A relation of the related model is already a `Prefetch` on its own
+                # lookup, relative to that model: nested as it is.
+                for related_prefetch_obj in related_prefetch.values():
+                    qs = qs.prefetch_related(related_prefetch_obj)
                 prefetch[fname] = Prefetch(
                     fname,
                     queryset=qs,
