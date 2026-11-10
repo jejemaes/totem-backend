@@ -27,6 +27,7 @@ from document.schemas import (
     DocumentTagUpdateSchema,
     DocumentUpdateSchema,
 )
+from document.thumbnails import make_thumbnail
 
 
 class DocumentTagCategoryService(
@@ -65,9 +66,9 @@ class DocumentService(
     """Two ways to create: `create`, one document from a form, the only one for
     a text; and `upload`, many files dropped at once.
 
-    `mimetype`, `checksum` and `size` are derived from the content by
-    `_create_preprocess_values`, after validation and before the INSERT, which
-    is also where `FileField.pre_save` commits the file to storage. They are on
+    `mimetype`, `checksum`, `size` and `thumbnail` are derived from the content
+    by `_create_preprocess_values`, after validation and before the INSERT,
+    which is also where `FileField.pre_save` commits the file to storage. They are on
     no write schema, so a client cannot set them; and since neither the type nor
     the file can change after creation, only the size of a text ever moves --
     which `DocumentQuerySet.update` follows.
@@ -171,6 +172,15 @@ class DocumentService(
                 # From the filename, as `validate_upload` checked it.
                 values["mimetype"] = mimetypes.guess_type(upload.name or "")[0]
                 values["size"] = len(bin_data)
+                # From the bytes already read. Synchronous: ~50 ms for an image,
+                # up to a second for a PDF, acceptable for `MAX_UPLOAD_COUNT`
+                # files; a celery task would only replace this call. Never
+                # recomputed: the file cannot change.
+                thumbnail = make_thumbnail(bin_data, values["mimetype"], upload.name)
+                if thumbnail is not None:
+                    # Committed to the storage by `ImageField.pre_save`, with
+                    # the INSERT, as the file.
+                    values["thumbnail"] = thumbnail
             else:
                 values["mimetype"] = "text/html"
                 values["size"] = text_size(values.get("text_content"))

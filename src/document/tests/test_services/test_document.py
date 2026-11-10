@@ -7,6 +7,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from freezegun import freeze_time
 from parameterized import parameterized
+from PIL import Image
 
 from base.models import FileReference
 from core.services import Environment
@@ -29,9 +30,11 @@ from document.tests.common import (
     USER_ID1,
     DocumentTestMixin,
 )
+from document.tests.images import image_bytes, jpeg_rotated_bytes, pdf_bytes
 from user.access_rights import get_all_permission
 
-PAYLOAD = b"%PDF-1.4 not really a pdf"
+# A real one, small: a creation now makes a thumbnail of it.
+PAYLOAD = pdf_bytes(size=(60, 80))
 
 
 def upload(name="map.pdf", payload=PAYLOAD):
@@ -196,12 +199,60 @@ class TestDocumentService(DocumentTestMixin, TestCase):
         self.assertNothingWritten(2)
 
     # ------------------------------------------
+    # Tests Thumbnail
+    # ------------------------------------------
+
+    @parameterized.expand(
+        [
+            ("image", "ring.png", image_bytes(size=(1000, 500)), (256, 128)),
+            ("photo", "frodon.jpg", jpeg_rotated_bytes(size=(400, 200)), (128, 256)),
+            ("pdf", "map.pdf", pdf_bytes(size=(600, 800)), (192, 256)),
+        ]
+    )
+    def test_create_file_with_thumbnail(self, dummy, name, payload, size):
+        document = self.create(document_type=DocumentType.FILE, file=upload(name, payload))
+
+        document = Document.objects.get(pk=document.pk)
+        with open(document.thumbnail.storage.symlink_path(document.thumbnail.name), "rb") as stored:
+            thumbnail = Image.open(stored)
+            self.assertEqual((thumbnail.format, thumbnail.size), ("WEBP", size))
+        # The file itself is stored untouched.
+        self.assertEqual(document.size, len(payload))
+
+    def test_create_file_without_thumbnail(self):
+        document = self.create(document_type=DocumentType.FILE, file=upload("notes.txt", b"One ring"))
+        self.assertFalse(Document.objects.get(pk=document.pk).thumbnail)
+
+    def test_create_text_without_thumbnail(self):
+        document = self.create(name="Letter", document_type=DocumentType.TEXT, text_content="<p>Hi</p>")
+        self.assertFalse(Document.objects.get(pk=document.pk).thumbnail)
+
+    def test_thumbnail_failure_does_not_refuse_the_upload(self):
+        # A PDF pdfium cannot read: the document is created, with no thumbnail.
+        payload = b"%PDF-1.4 not really a pdf"
+        with self.assertLogs("document.thumbnails", "WARNING"):
+            documents = async_to_sync(self.service.upload)([upload("map.pdf", payload)])
+        document = Document.objects.get(pk=documents[0].pk)
+        self.assertEqual(document.checksum, hashlib.sha1(payload).hexdigest())
+        self.assertFalse(document.thumbnail)
+
+    def test_delete_removes_the_thumbnail(self):
+        document = self.create(document_type=DocumentType.FILE, file=upload("ring.png", image_bytes()))
+        thumbnail = Document.objects.get(pk=document.pk).thumbnail
+        self.assertTrue(thumbnail.storage.symlink_exists(thumbnail.name))
+
+        async_to_sync(self.service.delete)({"id": document.pk})
+
+        self.assertFalse(thumbnail.storage.symlink_exists(thumbnail.name))
+        self.assertFalse(FileReference.objects.exists())
+
+    # ------------------------------------------
     # Tests Upload
     # ------------------------------------------
 
     def test_upload_creates_one_document_per_file(self):
         documents = async_to_sync(self.service.upload)(
-            [upload("map.pdf"), upload("ring.png", b"\x89PNG")],
+            [upload("map.pdf"), upload("ring.png", image_bytes())],
             tags=[TAG_SIGNED_ID],
             user=USER_ID1,
             contact=CONTACT_GALADRIEL_ID,

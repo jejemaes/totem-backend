@@ -31,7 +31,7 @@ class DocumentAdmin(admin.ModelAdmin):
     # too here: `Model.save()` would not refresh its `size`, which only
     # `DocumentQuerySet.update` follows.
     readonly_fields = (
-        "document_type", "file", "text_content", "mimetype", "checksum", "size",
+        "document_type", "file", "thumbnail", "text_content", "mimetype", "checksum", "size",
         "create_date", "update_date",
     )
 

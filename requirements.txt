@@ -17,6 +17,7 @@ psycopg[pool]==3.1.12
 psycopg-pool==3.3.3
 pydantic[email] == 2.12.3
 pyjwt==2.8.0
+pypdfium2==5.15.2
 python-json-logger==2.0.4
 python-ulid==4.0.1
 redis==6.4.0
