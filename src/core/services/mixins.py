@@ -202,6 +202,10 @@ class CreateMixin(t.Generic[CreateT]):
             if error:
                 raise error
 
+            # Derived values, before the many-to-many extraction: a hook may
+            # derive a relation as well as a column.
+            internal_data = self._create_preprocess_values(internal_data)
+
             # Remove many-to-many relationships from validated_data.
             # They are not valid arguments to the default `.create()` method,
             # as they require that the instance has already been saved.
@@ -265,6 +269,27 @@ class CreateMixin(t.Generic[CreateT]):
             prime_computed_values(instances)
 
         return instances
+
+    def _create_preprocess_values(self, internal_data: t.List[dict]) -> t.List[dict]:
+        """Derive server-owned values from validated input, before the INSERT.
+
+        Override it to add values the client must not write (a checksum, a
+        mimetype, a file built from the upload) to the internal values of each
+        record to create. It fills the gap between the two other hooks:
+        `validate_data` must not write, and `_create_postprocess` comes after the
+        INSERT -- too late for a NOT NULL column, and for a file, since
+        `queryset.update` does not go through `FileField.pre_save` and the
+        derived file would never be stored.
+
+        - After `validate_data`: a refused input costs no computation.
+        - On the internal values, keyed by ORM field name: a value added here
+          needs no field on `create_schema`, so it never becomes client-writable.
+        - Inside the transaction: raising here rolls the whole creation back.
+        - On the whole batch: a grouped computation stays possible.
+
+        Return the list, one dict per record, in the order received.
+        """
+        return internal_data
 
     def _create_postprocess(self, instances: t.List[models.Model]):
         """This is part of the atomic process of creation. Any error here will rollback the create.
