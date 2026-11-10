@@ -257,7 +257,8 @@ class TestUserService(TestCase):
             # table has no dependents of its own -- django fast-deletes it.
             # Five fewer than with the OAuth toolkit installed, which cascaded
             # over its own five tables, two of them needing a SELECT first.
-            ({"username": "Tintin"}, 13, 1),  # simple row, no relations deleted
+            # And one more for `Document.user`, nulled the same way as `Budget.user`.
+            ({"username": "Tintin"}, 14, 1),  # simple row, no relations deleted
             ({"id": USER_ID2, "username": "Tintin"}, 5, 0),  #  no matching row
             (
                 {"username": "notfound"},
@@ -266,7 +267,7 @@ class TestUserService(TestCase):
             ),  # user nonexistent --> no row deleted
             (
                 {"id": USER_ID2},
-                13,
+                14,
                 1,
             ),  # delete with m2m relations, relations should be deleted too
         ]

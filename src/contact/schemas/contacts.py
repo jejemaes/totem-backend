@@ -17,6 +17,12 @@ from .contact_tags import ContactTagDisplayNameSchema
 ADDRESS_FIELDS = ["number", "street", "zip", "city", "country"]
 
 
+class ContactDisplayNameSchema(ModelSchema):
+    class Meta:
+        model = Contact
+        fields = ["id", "first_name", "last_name"]
+
+
 class ContactSchema(ModelSchema):
 
     # Without these annotations a relation serializes to its bare primary key.

@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     "website",
     "contact",
     "account",
+    "document",
     "saas",
     # `core` must be last since it autodiscover `api` module
     # of each app, and generate schema on the fly (all models and
