@@ -90,7 +90,10 @@ class CleanupFileModelMixin(models.Model):
         file_field_names = [f.name for f in self.get_file_fields()]
         for fname, fval in self.__dict__.items():
             if fname in file_field_names:
-                file_state[fname] = fval.name if fval else ""
+                # A `str` right after a new file was stored: `FieldFile.save`
+                # sets the attribute to the stored name, which the descriptor
+                # only wraps back into a `FieldFile` on the next read.
+                file_state[fname] = getattr(fval, "name", fval) or ""
         setattr(self._state, "_initial_file_state", file_state)
 
     def delete(self, using=None, keep_parents=False):
