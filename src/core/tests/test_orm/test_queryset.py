@@ -2,14 +2,14 @@ from django.test import TestCase
 from parameterized import parameterized
 
 from core.orm.queryset import queryset_fetch_fields
-from core.tests.computed_app.models import Line, Order, Product
+from core.tests.computed_app.models import Category, Line, Order, Product
 
 
 class TestQuerysetFetchFields(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        product = Product.objects.create(name="Pipe")
+        product = Product.objects.create(name="Pipe", category=Category.objects.create(name="Smoking"))
         for label in ("A", "B", "C"):
             order = Order.objects.create(label=label)
             Line.objects.create(order=order, product=product)
@@ -39,3 +39,13 @@ class TestQuerysetFetchFields(TestCase):
         queryset = queryset_fetch_fields(Line.objects.all(), ["id", "order__label"])
 
         self.assertEqual(queryset.query.deferred_loading, ({"id", "order"}, False))
+
+    def test_nested_relation_is_prefetched(self):
+        """A relation of a relation: one prefetch per level, nested in the one
+        above. The nested `Prefetch` used to be read as a dict, so any schema
+        reaching that deep failed to build its queryset."""
+        queryset = queryset_fetch_fields(Line.objects.all(), ["id", "product__name", "product__category__name"])
+
+        with self.assertNumQueries(3):
+            names = [line.product.category.name for line in queryset]
+        self.assertEqual(names, ["Smoking"] * 3)
