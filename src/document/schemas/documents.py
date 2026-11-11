@@ -71,7 +71,11 @@ class DocumentSchema(ModelSchema):
         see `MediaListSchema._stored_path_to_url`, whose leading-slash test this
         reuses. Without it a listed file would not be downloadable.
         """
-        if isinstance(value, str) and value and not value.startswith("/"):
+        if value == "":
+            # No file (a text, or no thumbnail): `null`, as a retrieve gives it
+            # -- ninja's getter maps an empty `FieldFile` to None.
+            return None
+        if isinstance(value, str) and not value.startswith("/"):
             return Document._meta.get_field(info.field_name).storage.url(value)
         return value
 
@@ -100,6 +104,26 @@ class DocumentCreateSchema(ModelSchema):
         if not self.name and self.file is not None:
             self.name = self.file.name
         return self
+
+
+class DocumentCreateFormSchema(ModelSchema):
+    """The form fields of a creation, sent as `multipart/form-data` beside the
+    `file` part: `DocumentCreateSchema` without the file, which a multipart
+    route must take as a parameter of its own (see `DocumentController`)."""
+
+    class Meta:
+        model = Document
+        fields = ["name", "document_type", "text_content", "date", "user", "contact", "tags"]
+        optional_fields = ["name", "text_content", "date", "user", "contact", "tags"]
+
+
+class DocumentUploadFormSchema(ModelSchema):
+    """The form fields of an upload: what every document of the batch shares."""
+
+    class Meta:
+        model = Document
+        fields = ["user", "contact", "tags"]
+        optional_fields = "__all__"
 
 
 class DocumentUpdateSchema(ModelSchema):

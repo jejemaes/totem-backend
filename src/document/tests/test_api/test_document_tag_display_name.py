@@ -1,0 +1,130 @@
+from django.test import TestCase
+from parameterized import parameterized
+
+from authentication.testing import mint_access_token
+from core.testing import APITestCaseMixin
+from document.models import DocumentTag
+from user.access_rights import get_user_scopes
+
+from .common import (
+    TAG_DRAFT_ID,
+    TAG_SCOPES,
+    TAG_SHIRE_ID,
+    TAG_SIGNED_ID,
+    PERMISSION_DENIED,
+    CommonTestMixin,
+)
+
+
+class DocumentTagDisplayNameAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
+    """ No `*_access_rules` tests: no `BaseRule` is registered for `DocumentTag`. """
+
+    @classmethod
+    def setUpTestData(cls):
+        super().setUpTestData()
+
+        cls.role.permissions = TAG_SCOPES
+        cls.role.rules = []
+        cls.role.save()
+
+        cls.url = "/api/v1/document/tags/display-name/"
+        cls.ids = f"{TAG_SHIRE_ID},{TAG_DRAFT_ID},{TAG_SIGNED_ID}"
+
+    # ------------------------------------------
+    # Display Name
+    # ------------------------------------------
+
+    @parameterized.expand(
+        [
+            # The order asked is the order returned.
+            (f"{TAG_SHIRE_ID},{TAG_DRAFT_ID}", 200, [TAG_SHIRE_ID, TAG_DRAFT_ID]),
+            (f"{TAG_DRAFT_ID},{TAG_SHIRE_ID}", 200, [TAG_DRAFT_ID, TAG_SHIRE_ID]),
+            # An unknown id is absent, not an error.
+            (f"{TAG_SIGNED_ID},01JT0000000000000000000099", 200, [TAG_SIGNED_ID]),
+            ("", 200, []),
+            # A malformed id is the client's mistake.
+            (f"{TAG_SIGNED_ID},mithril", 422, None),
+            # Missing altogether.
+            (None, 422, None),
+        ]
+    )
+    def test_display_name_request(self, ids, status_code, expected_pks):
+        params = {"id": ids} if ids is not None else {}
+
+        response = self.do_request("GET", self.url, params=params)
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 200:
+            self.assertEqual([item["id"] for item in response.json()], expected_pks)
+        else:
+            self.assertEqual(response.json()["detail"][0]["loc"][:2], ["query", "id"])
+
+    def test_display_name_response(self):
+        response = self.do_request("GET", self.url, params={"id": self.ids})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.json()), 3)
+        for item in response.json():
+            self.assert_api_format(item, DocumentTag.objects.get(pk=item["id"]))
+
+    @parameterized.expand(
+        [
+            ([], 403),
+            (["totem.documenttag.read"], 200),
+            (["totem.documenttag.create", "totem.documenttag.update", "totem.documenttag.delete"], 403),
+            (["totem.documenttagcategory.read"], 403),
+        ]
+    )
+    def test_display_name_user_access_rights(self, permissions, status_code):
+        self.role.permissions = permissions
+        self.role.save()
+
+        response = self.do_request("GET", self.url, params={"id": self.ids})
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    @parameterized.expand(
+        [
+            ([], 403),
+            (["totem.documenttag.read"], 200),
+            (["totem.documenttag.create", "totem.documenttag.update", "totem.documenttag.delete"], 403),
+            (["totem.documenttagcategory.read"], 403),
+        ]
+    )
+    def test_display_name_apikey_access_rights(self, permissions, status_code):
+        self.api_key.scope = permissions
+        self.api_key.save()
+
+        response = self.do_request("GET", self.url, auth="apikey", params={"id": self.ids})
+
+        self.assertEqual(response.status_code, status_code)
+        if status_code == 403:
+            self.assertEqual(response.json(), PERMISSION_DENIED)
+
+    # ------------------------------------------
+    # Utils
+    # ------------------------------------------
+
+    def do_request(self, method, url, auth="user", data=None, params=None):
+        """ Call the API as Frodon (`auth="user"`) or as the API key (`"apikey"`).
+
+        Frodon's token is minted on each call from the permissions his roles hold
+        at that moment, as the login would.
+        """
+        if auth == "apikey":
+            return self.do_api_key_request(url, method, self.api_key_secret, data=data, params=params or {})
+        token = mint_access_token(self.user_frodon, get_user_scopes(self.user_frodon))
+        return self.do_api_request(url, method, token, data=data, params=params or {})
+
+    def assert_api_format(self, api_data, obj):
+        # With its category: a tag shows the color of its category, having none.
+        self.assertEqual(
+            api_data,
+            {
+                "id": obj.pk,
+                "name": obj.name,
+                "category": {"id": obj.category.pk, "name": obj.category.name, "color": obj.category.color},
+            },
+        )
