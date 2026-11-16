@@ -49,6 +49,17 @@ class AccountMovement(models.Model):
         blank=True,
         on_delete=models.SET_NULL,
     )
+    contact = models.ForeignKey(
+        "contact.Contact",
+        verbose_name="Contact",
+        # Not `movements`: seen from a contact, the name must say which ones.
+        related_name="account_movements",
+        null=True,
+        blank=True,
+        # The movement outlives its counterparty: the ledger keeps its amounts.
+        on_delete=models.SET_NULL,
+        help_text="Counterparty of the movement (a supplier, a customer...).",
+    )
 
     create_date = models.DateTimeField("Create Date", auto_now_add=True)
     update_date = models.DateTimeField("Update Date", auto_now=True)

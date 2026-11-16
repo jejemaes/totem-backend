@@ -16,6 +16,8 @@ from .common import (
     CATEGORY_BREE_ID,
     CATEGORY_GENERAL_ID,
     CATEGORY_SHIRE_ID,
+    CONTACT_LOBELIA_ID,
+    CONTACT_TOBOLD_ID,
     MOVEMENT_ID1,
     MOVEMENT_ID2,
     MOVEMENT_ID3,
@@ -25,6 +27,7 @@ from .common import (
 )
 
 MOVEMENT_ID4 = "01JM0000000000000000000099"  # matches no movement
+CONTACT_UNKNOWN_ID = "01JK0000000000000000000099"
 
 ALL_MOVEMENT_IDS = [MOVEMENT_ID1, MOVEMENT_ID2, MOVEMENT_ID3]
 
@@ -37,13 +40,16 @@ MOVEMENT_FIELDS = [
     "date",
     "reference",
     "category",
+    "contact",
     "create_date",
     "update_date",
 ]
 
 # The fields of the creation having a default; `account`, `amount`, `name` and
 # `date` have none.
-MOVEMENT_DEFAULT_FIELDS = ["description", "reference", "category"]
+MOVEMENT_DEFAULT_FIELDS = ["description", "reference", "category", "contact"]
+# Nullable columns: null is a value the record holds.
+MOVEMENT_DEFAULT_VALUES = dict.fromkeys(MOVEMENT_DEFAULT_FIELDS)
 
 
 @freeze_time("2026-10-15 11:12:13")
@@ -72,6 +78,7 @@ class AccountMovementAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             "date": "2026-10-01",
             "reference": "PONY-42",
             "category": CATEGORY_BREE_ID,
+            "contact": CONTACT_TOBOLD_ID,
         }
         cls.payload_update = {
             "amount": "-25.00",
@@ -80,6 +87,7 @@ class AccountMovementAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             "date": "2026-10-02",
             "reference": "TOBY-7",
             "category": CATEGORY_GENERAL_ID,
+            "contact": CONTACT_LOBELIA_ID,
         }
 
     # ------------------------------------------
@@ -103,6 +111,10 @@ class AccountMovementAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             ({"account": ACCOUNT_ID1}, ALL_MOVEMENT_IDS),
             ({"account": ACCOUNT_ID2}, []),
             ({"category": CATEGORY_GENERAL_ID}, [MOVEMENT_ID2]),
+            ({"contact": CONTACT_LOBELIA_ID}, [MOVEMENT_ID1]),
+            ({"contact": f"{CONTACT_LOBELIA_ID},{CONTACT_TOBOLD_ID}"}, [MOVEMENT_ID1, MOVEMENT_ID3]),
+            ({"contact": "null"}, [MOVEMENT_ID2]),
+            ({"contact": f"{CONTACT_TOBOLD_ID},null"}, [MOVEMENT_ID2, MOVEMENT_ID3]),
             ({"direction": "debit"}, [MOVEMENT_ID2, MOVEMENT_ID3]),
             ({"direction": "credit"}, [MOVEMENT_ID1]),
             ({"date_from": "2026-10-15"}, ALL_MOVEMENT_IDS),  # inclusive
@@ -163,10 +175,11 @@ class AccountMovementAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
     # and one prefetch per relation asked for, whatever the number of movements.
     @parameterized.expand(
         [
-            ([], MOVEMENT_FIELDS, 7),  # default means all fields
+            ([], MOVEMENT_FIELDS, 8),  # default means all fields
             (["amount"], ["id", "amount"], 5),  # `id` is always returned
             (["account"], ["id", "account"], 6),
             (["category"], ["id", "category"], 6),
+            (["contact"], ["id", "contact"], 6),
         ]
     )
     def test_list_query_fields(self, query_fields, received_fields, query_count):
@@ -187,6 +200,7 @@ class AccountMovementAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             (["not_existing_field", "account"],),  # with a relation
             (["not_existing_field", "name"],),
             (["account_id"],),  # the ORM column of a relation is not a public token
+            (["contact_id"],),
         ]
     )
     def test_list_invalid_query_fields(self, query_fields):
@@ -267,6 +281,15 @@ class AccountMovementAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assert_api_format(data, self.movement_sale)
         self.assertIsNone(data["category"])
 
+    def test_retrieve_response_without_contact(self):
+        # The relation unset: `contact` is null, and still in the response.
+        response = self.do_request("GET", f"{self.url}{MOVEMENT_ID2}/")
+        data = response.json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assert_api_format(data, self.movement_breakfast)
+        self.assertIsNone(data["contact"])
+
     def test_retrieve_not_found(self):
         response = self.do_request("GET", f"{self.url}{MOVEMENT_ID4}/")
 
@@ -325,10 +348,12 @@ class AccountMovementAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             ({"date": "2026-10-16"}, 422, "date"),  # in the future
             ({"date": "2026-10-15"}, 201, None),  # today
             ({"date": "2026-10-01T09:30:00Z"}, 422, "date"),  # a datetime
-            ({"description": None, "reference": None, "category": None}, 201, None),
+            ({"description": None, "reference": None, "category": None, "contact": None}, 201, None),
             ({"category": CATEGORY_GENERAL_ID}, 201, None),
             ({"category": CATEGORY_SHIRE_ID}, 422, "category"),  # another account's
             ({"category": "01JC0000000000000000000099"}, 422, "category"),
+            ({"contact": CONTACT_LOBELIA_ID}, 201, None),
+            ({"contact": CONTACT_UNKNOWN_ID}, 422, "contact"),
         ]
     )
     def test_create_request_field_validation(self, extra_body, status_code, error_field):
@@ -398,7 +423,7 @@ class AccountMovementAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
     @parameterized.expand(
         [
             ({}, 200, None),
-            ({"fields": "account,category"}, 200, None),
+            ({"fields": "account,category,contact"}, 200, None),
             ({"fields": "id"}, 422, "fields"),  # not a field of the creation
             ({"fields": "create_date"}, 422, "fields"),
             ({"fields": "category_id"}, 422, "fields"),  # the ORM column, not the field
@@ -421,25 +446,26 @@ class AccountMovementAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         response = self.do_request("GET", self.url_default_values, auth=auth)
 
         self.assertEqual(response.status_code, status_code)
-        # Nullable columns: null is a value the record holds.
-        self.assert_default_values_format(response.json(), {"description": None, "reference": None, "category": None})
+        self.assert_default_values_format(response.json(), MOVEMENT_DEFAULT_VALUES)
 
     @parameterized.expand(
         [
             (["category"], ["category"]),
+            (["contact"], ["contact"]),
             (["description", "reference"], ["description", "reference"]),
             # No default: absent, not null.
             (["account", "amount", "name", "date"], []),
-            (["account", "amount", "name", "description", "date", "reference", "category"], MOVEMENT_DEFAULT_FIELDS),
+            (
+                ["account", "amount", "name", "description", "date", "reference", "category", "contact"],
+                MOVEMENT_DEFAULT_FIELDS,
+            ),
         ]
     )
     def test_default_value_query_fields(self, query_fields, received_fields):
         response = self.do_request("GET", self.url_default_values, params={"fields": ",".join(query_fields)})
 
         self.assertEqual(response.status_code, 200)
-        self.assert_default_values_format(
-            response.json(), {"description": None, "reference": None, "category": None}, received_fields
-        )
+        self.assert_default_values_format(response.json(), MOVEMENT_DEFAULT_VALUES, received_fields)
 
     @parameterized.expand(
         [
@@ -482,7 +508,7 @@ class AccountMovementAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         response = self.do_request("GET", self.url_default_values)
 
         self.assertEqual(response.status_code, 200)
-        self.assert_default_values_format(response.json(), {"description": None, "reference": None, "category": None})
+        self.assert_default_values_format(response.json(), MOVEMENT_DEFAULT_VALUES)
 
     # ------------------------------------------
     # Update Operation
@@ -498,6 +524,8 @@ class AccountMovementAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             ({"category": None}, 200, None),
             ({"category": CATEGORY_SHIRE_ID}, 200, None),  # its own account's
             ({"category": CATEGORY_BREE_ID}, 422, "category"),  # another account's
+            ({"contact": None}, 200, None),
+            ({"contact": CONTACT_UNKNOWN_ID}, 422, "contact"),
         ]
     )
     def test_update_request_field_validation(self, extra_body, status_code, error_field):
@@ -662,6 +690,14 @@ class AccountMovementAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                 self.assertEqual(
                     api_data["category"],
                     {"id": obj.category.pk, "name": obj.category.name, "color": obj.category.color},
+                )
+        if "contact" in fields:
+            if obj.contact is None:
+                self.assertIsNone(api_data["contact"])
+            else:
+                self.assertEqual(
+                    api_data["contact"],
+                    {"id": obj.contact.pk, "first_name": obj.contact.first_name, "last_name": obj.contact.last_name},
                 )
         if "date" in fields:
             self.assertEqual(parse_date(api_data["date"]), obj.date)

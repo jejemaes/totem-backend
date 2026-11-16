@@ -16,6 +16,8 @@ from .common import (
     ACCOUNT_ID2,
     CATEGORY_GENERAL_ID,
     CATEGORY_SHIRE_ID,
+    CONTACT_LOBELIA_ID,
+    CONTACT_TOBOLD_ID,
     MOVEMENT_SCOPES,
     PERMISSION_DENIED,
     CommonTestMixin,
@@ -38,11 +40,11 @@ class AccountMovementGroupByAPITest(CommonTestMixin, APITestCaseMixin, TestCase)
     and two accounts:
 
         2026-09-03  BREE   -12.30  [Ale]
-        2026-09-20  SHIRE  +40.00  -
+        2026-09-20  SHIRE  +40.00  -                   <Lobelia>
         2026-09-25  SHIRE  -80.00  [Second Breakfast]
-        2026-10-15  SHIRE +150.00  -                    (common)
-        2026-10-15  SHIRE  -80.00  [Second Breakfast]   (common)
-        2026-10-15  SHIRE  -20.50  [Pipe-weed]          (common)
+        2026-10-15  SHIRE +150.00  -                   <Lobelia>  (common)
+        2026-10-15  SHIRE  -80.00  [Second Breakfast]             (common)
+        2026-10-15  SHIRE  -20.50  [Pipe-weed]         <Tobold>   (common)
 
     No `*_access_rules` tests: no `BaseRule` is registered for `AccountMovement`.
     """
@@ -58,7 +60,7 @@ class AccountMovementGroupByAPITest(CommonTestMixin, APITestCaseMixin, TestCase)
             ),
             AccountMovement(
                 id=MOVEMENT_SEPTEMBER_SALE_ID, account=cls.account_shire, amount=Decimal("40.00"),
-                name="Mushrooms sale", date=date(2026, 9, 20),
+                name="Mushrooms sale", date=date(2026, 9, 20), contact=cls.contact_lobelia,
             ),
             AccountMovement(
                 id=MOVEMENT_SEPTEMBER_BREAKFAST_ID, account=cls.account_shire, amount=Decimal("-80.00"),
@@ -185,6 +187,22 @@ class AccountMovementGroupByAPITest(CommonTestMixin, APITestCaseMixin, TestCase)
             [("Second Breakfast", 2), ("Pipe-weed", 1), ("Ale", 1), (None, 2)],
         )
 
+    def test_group_by_response_group_by_fields_contact(self):
+        # The contact as the list renders it; the movements without one group
+        # under a null, last.
+        response = self.do_request("POST", self.url, data={"group_by_fields": ["contact"], "measures": ["amount_sum"]})
+
+        self.assertEqual(response.status_code, 200)
+        results = response.json()["results"]
+        self.assertEqual(
+            results[0]["contact"],
+            {"id": CONTACT_LOBELIA_ID, "first_name": "Lobelia", "last_name": "Sackville-Baggins"},
+        )
+        self.assertEqual(
+            [(group["contact"]["id"] if group["contact"] else None, group["amount_sum"]) for group in results],
+            [(CONTACT_LOBELIA_ID, "190.00"), (CONTACT_TOBOLD_ID, "-20.50"), (None, "-172.30")],
+        )
+
     @parameterized.expand(
         [
             # Per account, SHIRE then BREE. Amounts are strings exact to the cent;
@@ -235,6 +253,8 @@ class AccountMovementGroupByAPITest(CommonTestMixin, APITestCaseMixin, TestCase)
             ({}, [("2026-09-01", 3), ("2026-10-01", 3)]),
             ({"account": ACCOUNT_ID2}, [("2026-09-01", 1)]),
             ({"category": CATEGORY_GENERAL_ID}, [("2026-09-01", 1), ("2026-10-01", 1)]),
+            ({"contact": CONTACT_LOBELIA_ID}, [("2026-09-01", 1), ("2026-10-01", 1)]),
+            ({"contact": "null"}, [("2026-09-01", 2), ("2026-10-01", 1)]),
             ({"direction": "debit"}, [("2026-09-01", 2), ("2026-10-01", 2)]),
             ({"direction": "credit"}, [("2026-09-01", 1), ("2026-10-01", 1)]),
             ({"date_from": "2026-10-01"}, [("2026-10-01", 3)]),  # inclusive
@@ -313,7 +333,7 @@ class AccountMovementGroupByAPITest(CommonTestMixin, APITestCaseMixin, TestCase)
         request = components["AccountMovementGroupBySchema"]["properties"]
         self.assertEqual(
             request["group_by_fields"]["items"]["enum"],
-            ["account", "category", "date_day", "date_week", "date_month", "date_quarter", "date_year"],
+            ["account", "category", "contact", "date_day", "date_week", "date_month", "date_quarter", "date_year"],
         )
         self.assertEqual(
             request["measures"]["items"]["enum"],

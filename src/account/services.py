@@ -71,14 +71,15 @@ class AccountMovementService(
     """Every write here goes stale the stored totals of the accounts concerned,
     which the computed-field context of the write refreshes before it commits.
 
-    Grouped by account, category and period. The amount is signed, so its sum is
-    the balance: the debits and the credits are measures of their own, as there is
-    no direction column to group by.
+    Grouped by account, category, contact and period. The amount is signed, so its
+    sum is the balance: the debits and the credits are measures of their own, as
+    there is no direction column to group by.
     """
 
     group_by_dimensions = {
         "account": Dimension("account"),
         "category": Dimension("category"),
+        "contact": Dimension("contact"),
         **date_dimensions("date", ["day", "week", "month", "quarter", "year"]),
     }
     group_by_measures = {
