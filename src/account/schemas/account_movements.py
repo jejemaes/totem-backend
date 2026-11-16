@@ -4,6 +4,7 @@ from typing import Literal, Optional
 from django.db.models import Q
 from pydantic import Field
 
+from contact.schemas import ContactDisplayNameSchema
 from core.api.filters import FilterSchema, MultiValue
 from core.schemas import ModelSchema
 from account.models import AccountMovement
@@ -15,12 +16,13 @@ from .accounts import AccountDisplayNameSchema
 # API Schemas
 # ----------------------------------------------------
 
-MOVEMENT_FIELDS = ["amount", "name", "description", "date", "reference", "category"]
+MOVEMENT_FIELDS = ["amount", "name", "description", "date", "reference", "category", "contact"]
 
 
 class AccountMovementSchema(ModelSchema):
     account: Optional[AccountDisplayNameSchema] = None
     category: Optional[AccountCategoryDisplayNameSchema] = None
+    contact: Optional[ContactDisplayNameSchema] = None
 
     class Meta:
         model = AccountMovement
@@ -32,7 +34,7 @@ class AccountMovementCreateSchema(ModelSchema):
     class Meta:
         model = AccountMovement
         fields = ["account", *MOVEMENT_FIELDS]
-        optional_fields = ["description", "reference", "category"]
+        optional_fields = ["description", "reference", "category", "contact"]
 
 
 class AccountMovementUpdateSchema(ModelSchema):
@@ -65,6 +67,13 @@ class AccountMovementFilterSchema(FilterSchema):
         title="Category",
         description="Comma-separated identifiers of the categories, `null` for the "
         "uncategorized movements.",
+    )
+    contact: MultiValue(str) = Field(
+        None,
+        q="contact__id",
+        title="Contact",
+        description="Comma-separated identifiers of the contacts, `null` for the "
+        "movements without counterparty.",
     )
     date_from: Optional[date] = Field(
         None,

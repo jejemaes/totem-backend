@@ -9,6 +9,7 @@ from account.models import (
     BudgetLine,
     BudgetPosition,
 )
+from contact.models import Contact
 from user.tests.test_api.common import CommonTestMixin as UserCommonTestMixin
 
 ACCOUNT_ID1 = "01JA0000000000000000000001"
@@ -18,6 +19,9 @@ ACCOUNT_ID3 = "01JA0000000000000000000003"
 CATEGORY_GENERAL_ID = "01JC0000000000000000000001"
 CATEGORY_SHIRE_ID = "01JC0000000000000000000002"
 CATEGORY_BREE_ID = "01JC0000000000000000000003"
+
+CONTACT_LOBELIA_ID = "01JK0000000000000000000001"
+CONTACT_TOBOLD_ID = "01JK0000000000000000000002"
 
 MOVEMENT_ID1 = "01JM0000000000000000000001"
 MOVEMENT_ID2 = "01JM0000000000000000000002"
@@ -57,14 +61,15 @@ class CommonTestMixin(UserCommonTestMixin):
 
     On top of the users, `role` and API key of `user`:
 
-        SHIRE  Bag End              +150.00  Mathom sale       (INV-001)
+        SHIRE  Bag End              +150.00  Mathom sale       (INV-001)  <Lobelia>
                                      -80.00  Second breakfast  [Second Breakfast]
-                                     -20.50  Pipe-weed         [Pipe-weed]
+                                     -20.50  Pipe-weed         [Pipe-weed]  <Tobold>
         BREE   The Prancing Pony    no movement
         MORIA  Khazad-dum           inactive, no movement
 
     Categories: "Second Breakfast" (general, no account), "Pipe-weed" (SHIRE) and
-    "Ale" (BREE).
+    "Ale" (BREE). Contacts: Lobelia, who bought the mathoms, and Tobold, who sold
+    the pipe-weed.
 
     Budgets: BUDGET_ID1 "Bag End 2026" on SHIRE, in charge of Frodon, with a
     position on Second Breakfast (sequence 1) and one on Pipe-weed (sequence 2),
@@ -97,10 +102,16 @@ class CommonTestMixin(UserCommonTestMixin):
             AccountCategory(id=CATEGORY_BREE_ID, name="Ale", account=cls.account_bree),
         ])
 
+        cls.contact_lobelia, cls.contact_tobold = Contact.objects.bulk_create([
+            Contact(id=CONTACT_LOBELIA_ID, first_name="Lobelia", last_name="Sackville-Baggins"),
+            Contact(id=CONTACT_TOBOLD_ID, first_name="Tobold", last_name="Hornblower"),
+        ])
+
         cls.movement_sale, cls.movement_breakfast, cls.movement_pipeweed = AccountMovement.objects.bulk_create([
             AccountMovement(
                 id=MOVEMENT_ID1, account=cls.account_shire, amount=Decimal("150.00"),
                 name="Mathom sale", date=date(2026, 10, 15), reference="INV-001",
+                contact=cls.contact_lobelia,
             ),
             AccountMovement(
                 id=MOVEMENT_ID2, account=cls.account_shire, amount=Decimal("-80.00"),
@@ -109,6 +120,7 @@ class CommonTestMixin(UserCommonTestMixin):
             AccountMovement(
                 id=MOVEMENT_ID3, account=cls.account_shire, amount=Decimal("-20.50"),
                 name="Pipe-weed", date=date(2026, 10, 15), category=cls.category_shire,
+                contact=cls.contact_tobold,
             ),
         ])
         Account.objects.refresh_computed()

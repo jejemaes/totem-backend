@@ -23,8 +23,8 @@ class AccountCategoryAdmin(admin.ModelAdmin):
 
 @admin.register(AccountMovement)
 class AccountMovementAdmin(admin.ModelAdmin):
-    list_display = ("date", "account", "name", "amount", "category", "reference")
-    list_filter = ("account", "category")
+    list_display = ("date", "account", "name", "amount", "category", "contact", "reference")
+    list_filter = ("account", "category", "contact")
     search_fields = ("name", "reference")
     date_hierarchy = "date"
 

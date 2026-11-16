@@ -3,6 +3,7 @@ from django.test import TestCase
 from django.utils import timezone
 
 from account.models import Account, AccountMovement
+from contact.models import Contact
 
 
 class TestAccountMovementModel(TestCase):
@@ -27,3 +28,14 @@ class TestAccountMovementModel(TestCase):
 
         movement.refresh_from_db()
         self.assertGreater(movement.update_date, update_date)
+
+    def test_deleting_the_contact_keeps_the_movement(self):
+        contact = Contact.objects.create(first_name="Lobelia", last_name="Sackville-Baggins")
+        movement = AccountMovement.objects.create(
+            account=self.account, amount=150, name="Sale", date=timezone.localdate(), contact=contact
+        )
+
+        contact.delete()
+
+        movement.refresh_from_db()
+        self.assertIsNone(movement.contact_id)
