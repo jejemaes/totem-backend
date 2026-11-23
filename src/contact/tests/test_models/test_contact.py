@@ -68,6 +68,84 @@ class TestContactModel(TestCase):
         self.assertEqual(contact.country, self.country)
 
 
+class TestContactCompanyModel(TestCase):
+    """The check constraints are the last line: the service reports the same rules
+    with keyed errors, but the admin and any future writer only meet these."""
+
+    def test_display_name_of_a_person(self):
+        contact = Contact.objects.create(first_name="Tryphon", last_name="Tournesol")
+
+        contact.refresh_from_db()
+        self.assertEqual(contact.display_name, "Tryphon Tournesol")
+
+    def test_display_name_of_a_person_without_first_name(self):
+        contact = Contact.objects.create(last_name="Tournesol")
+
+        contact.refresh_from_db()
+        # No leading space: `Trim`.
+        self.assertEqual(contact.display_name, "Tournesol")
+
+    def test_display_name_of_a_company(self):
+        company = Contact.objects.create(is_company=True, name="Moulinsart SA")
+
+        company.refresh_from_db()
+        self.assertEqual(company.display_name, "Moulinsart SA")
+
+    def test_display_name_follows_a_queryset_update(self):
+        contact = Contact.objects.create(last_name="Tournesol")
+
+        # The write path of the services: a generated column needs no `save()`.
+        Contact.objects.filter(pk=contact.pk).update(first_name="Tryphon")
+
+        contact.refresh_from_db()
+        self.assertEqual(contact.display_name, "Tryphon Tournesol")
+
+    def test_person_needs_a_last_name(self):
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Contact.objects.create(first_name="Tryphon")
+
+    def test_company_needs_a_name(self):
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Contact.objects.create(is_company=True, vat="BE0123456789")
+
+    def test_person_cannot_have_company_fields(self):
+        for values in ({"name": "Moulinsart SA"}, {"vat": "BE0123456789"}):
+            with self.subTest(values), self.assertRaises(IntegrityError), transaction.atomic():
+                Contact.objects.create(last_name="Tournesol", **values)
+
+    def test_company_cannot_have_person_fields(self):
+        for values in ({"first_name": "Tryphon"}, {"last_name": "Tournesol"}):
+            with self.subTest(values), self.assertRaises(IntegrityError), transaction.atomic():
+                Contact.objects.create(is_company=True, name="Moulinsart SA", **values)
+
+    def test_company_cannot_have_a_parent(self):
+        parent = Contact.objects.create(is_company=True, name="Moulinsart SA")
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Contact.objects.create(is_company=True, name="Labo SPRL", parent=parent)
+
+    def test_person_cannot_be_its_own_parent(self):
+        contact = Contact.objects.create(last_name="Tournesol")
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Contact.objects.filter(pk=contact.pk).update(parent=contact)
+
+    def test_vat_is_unique_case_insensitive(self):
+        Contact.objects.create(is_company=True, name="Moulinsart SA", vat="BE0123456789")
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Contact.objects.create(is_company=True, name="Moulinsart Bis", vat="be0123456789")
+
+    def test_deleting_a_company_keeps_its_persons(self):
+        company = Contact.objects.create(is_company=True, name="Moulinsart SA")
+        person = Contact.objects.create(last_name="Tournesol", parent=company)
+
+        company.delete()
+
+        person.refresh_from_db()
+        self.assertIsNone(person.parent_id)
+
+
 class TestContactTagModel(TestCase):
 
     def test_name_is_unique(self):

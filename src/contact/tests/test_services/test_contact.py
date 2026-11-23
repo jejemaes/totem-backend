@@ -109,6 +109,79 @@ class TestContactService(TestCase):
         self.assertFalse(Contact.objects.filter(pk=contact.pk).exists())
 
 
+class TestContactCompanyService(TestCase):
+    """`validate_data`: the type of a contact decides which fields it may fill.
+
+    Errors of a creation are keyed by the payload's index, those of an update by
+    the record's pk.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.company = Contact.objects.create(is_company=True, name="Moulinsart SA")
+        cls.person = Contact.objects.create(last_name="Haddock", parent=cls.company)
+
+    def setUp(self):
+        super().setUp()
+        self.env = Environment(None)
+        self.service = self.env.get(ContactService)
+
+    def test_create_a_person_in_a_company(self):
+        contacts = async_to_sync(self.service.create)([
+            ContactCreateSchema(last_name="Tournesol", parent=self.company.pk)
+        ])
+
+        self.assertEqual(Contact.objects.get(pk=contacts[0].pk).parent, self.company)
+
+    def test_create_a_person_under_a_person(self):
+        with self.assertRaises(ServiceValidationMultiError) as ctx:
+            async_to_sync(self.service.create)([
+                ContactCreateSchema(last_name="Tournesol", parent=self.person.pk)
+            ])
+
+        self.assertEqual(list(ctx.exception.dict()[0]), ["parent"])
+
+    def test_create_a_company_with_person_fields(self):
+        with self.assertRaises(ServiceValidationMultiError) as ctx:
+            async_to_sync(self.service.create)([
+                ContactCreateSchema(
+                    is_company=True, name="Labo SPRL", first_name="Tryphon", parent=self.company.pk
+                )
+            ])
+
+        self.assertCountEqual(ctx.exception.dict()[0], ["first_name", "parent"])
+
+    def test_update_keeps_the_type_of_the_record(self):
+        # Only `vat` is sent: the record says it is a person.
+        with self.assertRaises(ServiceValidationMultiError) as ctx:
+            async_to_sync(self.service.update)(
+                {"id": self.person.pk}, ContactUpdateSchema(vat="BE0123456789")
+            )
+
+        self.assertEqual(list(ctx.exception.dict()[self.person.pk]), ["vat"])
+
+    def test_update_a_company_without_contacts_to_a_person(self):
+        company = Contact.objects.create(is_company=True, name="Labo SPRL")
+
+        async_to_sync(self.service.update)(
+            {"id": company.pk},
+            ContactUpdateSchema(is_company=False, name=None, last_name="Tournesol"),
+        )
+
+        company.refresh_from_db()
+        self.assertFalse(company.is_company)
+        self.assertEqual(company.display_name, "Tournesol")
+
+    def test_update_a_company_with_contacts_to_a_person(self):
+        with self.assertRaises(ServiceValidationMultiError) as ctx:
+            async_to_sync(self.service.update)(
+                {"id": self.company.pk},
+                ContactUpdateSchema(is_company=False, name=None, last_name="Moulinsart"),
+            )
+
+        self.assertEqual(list(ctx.exception.dict()[self.company.pk]), ["is_company"])
+
+
 class TestContactTagService(TestCase):
 
     def setUp(self):

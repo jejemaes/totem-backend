@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from django.db.models import F
 from django.test import TestCase
 from django.utils.dateparse import parse_datetime
 from parameterized import parameterized
@@ -14,6 +15,7 @@ from .common import (
     CONTACT_ID1,
     CONTACT_ID2,
     CONTACT_ID3,
+    CONTACT_COMPANY_ID,
     CONTACT_SCOPES,
     PERMISSION_DENIED,
     TAG_ID1,
@@ -24,10 +26,15 @@ from .common import (
 
 CONTACT_ID4 = "01ARZ3NDEKTSV4RRFFQ69G5FAV"  # matches no contact
 
-ALL_CONTACT_IDS = [CONTACT_ID1, CONTACT_ID2, CONTACT_ID3]
+ALL_CONTACT_IDS = [CONTACT_ID1, CONTACT_ID2, CONTACT_ID3, CONTACT_COMPANY_ID]
 
 CONTACT_FIELDS = [
     "id",
+    "is_company",
+    "display_name",
+    "name",
+    "vat",
+    "parent",
     "first_name",
     "last_name",
     "email",
@@ -43,10 +50,16 @@ CONTACT_FIELDS = [
     "update_date",
 ]
 
-# The fields of the creation having a default; `last_name` has none, and neither
-# has `tags`, a many-to-many whose `None` only means "may be left out".
+# The fields of the creation having a default; `tags` has none, a many-to-many
+# whose `None` only means "may be left out". `last_name` has one since a company
+# leaves it NULL: that a person needs one is a rule of the service.
 CONTACT_DEFAULT_FIELDS = [
+    "is_company",
+    "name",
+    "vat",
+    "parent",
     "first_name",
+    "last_name",
     "email",
     "mobile",
     "birth_date",
@@ -56,6 +69,8 @@ CONTACT_DEFAULT_FIELDS = [
     "city",
     "country",
 ]
+# A new contact is a person.
+CONTACT_DEFAULT_VALUES = {**dict.fromkeys(CONTACT_DEFAULT_FIELDS), "is_company": False}
 
 
 class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
@@ -88,6 +103,13 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             "country": "GD",
             "tags": [TAG_ID3],
         }
+        cls.payload_create_company = {
+            "is_company": True,
+            "name": "Green Dragon",
+            "vat": "BE0987654321",
+            "city": "Bywater",
+            "country": "SH",
+        }
         cls.payload_update = {
             "first_name": "Samsagace",
             "email": "samsagace@lacomte.com",
@@ -107,8 +129,10 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(set(data), {"count", "results", "next", "previous"})
         self.assertEqual(data["count"], len(ALL_CONTACT_IDS))
-        # Default ordering is by last name, then first name.
-        self.assertEqual([item["id"] for item in data["results"]], [CONTACT_ID2, CONTACT_ID1, CONTACT_ID3])
+        # Default ordering is by display name, persons and companies mixed.
+        self.assertEqual(
+            [item["id"] for item in data["results"]], [CONTACT_ID2, CONTACT_ID3, CONTACT_ID1, CONTACT_COMPANY_ID]
+        )
 
         for item in data["results"]:
             self.assert_api_format(item, Contact.objects.get(pk=item["id"]))
@@ -144,7 +168,7 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
     @parameterized.expand(
         [
             ({"email": "gondor"}, [CONTACT_ID2]),
-            ({"email": ".com"}, [CONTACT_ID1, CONTACT_ID2]),
+            ({"email": ".com"}, [CONTACT_ID1, CONTACT_ID2, CONTACT_COMPANY_ID]),
             ({"city": "minas"}, [CONTACT_ID2]),
             ({"city": "rivendell"}, []),
             ({"country": "SH"}, [CONTACT_ID1]),
@@ -156,8 +180,13 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             ({"tag": TAG_ID1, "country": "GD"}, [CONTACT_ID2]),
             # Several values: any of them; `null`, the contacts without one.
             ({"country": "SH,GD"}, [CONTACT_ID1, CONTACT_ID2]),
-            ({"country": "null"}, [CONTACT_ID3]),
-            ({"country": "SH,null"}, [CONTACT_ID1, CONTACT_ID3]),
+            ({"country": "null"}, [CONTACT_ID3, CONTACT_COMPANY_ID]),
+            ({"country": "SH,null"}, [CONTACT_ID1, CONTACT_ID3, CONTACT_COMPANY_ID]),
+            ({"is_company": "true"}, [CONTACT_COMPANY_ID]),
+            ({"is_company": "false"}, [CONTACT_ID1, CONTACT_ID2, CONTACT_ID3]),
+            ({"parent": CONTACT_COMPANY_ID}, [CONTACT_ID1]),
+            ({"parent": CONTACT_ID2}, []),  # a person has no contacts
+            ({"parent": CONTACT_COMPANY_ID, "is_company": "true"}, []),
         ]
     )
     def test_list_filters(self, filters, expected_pks):
@@ -171,10 +200,13 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         for item in data["results"]:
             self.assert_api_format(item, Contact.objects.get(pk=item["id"]))
 
-    # `tag` is the only filter that can fail to parse: the others are strings.
+    # `tag`, `parent` and `is_company` are the only filters that can fail to
+    # parse: the others are strings.
     @parameterized.expand(
         [
             ({"tag": "not-a-ulid"}, "tag"),
+            ({"parent": "not-a-ulid"}, "parent"),
+            ({"is_company": "maybe"}, "is_company"),
         ]
     )
     def test_list_invalid_filters(self, filters, error_field):
@@ -185,9 +217,14 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
 
     @parameterized.expand(
         [
-            ([], ["last_name", "first_name", "id"]),  # default
+            ([], ["display_name", "id"]),  # default
+            (["display_name"], ["display_name", "id"]),
+            (["-display_name"], ["-display_name", "id"]),
+            (["is_company", "display_name"], ["is_company", "display_name", "id"]),
             (["last_name"], ["last_name", "id"]),
-            (["-last_name"], ["-last_name", "id"]),
+            # Nulls last both ways (`ordering_fields_nulls_last`): the companies have
+            # no last name, and PostgreSQL would put them first on a descending sort.
+            (["-last_name"], [F("last_name").desc(nulls_last=True), "id"]),
             (["first_name"], ["first_name", "id"]),
             (["email"], ["email", "id"]),
             (["city"], ["city", "id"]),
@@ -221,11 +258,13 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
     # The query counts include the one minting the token reads the roles with.
     @parameterized.expand(
         [
-            ([], CONTACT_FIELDS, 7),  # default means all fields: country and tags prefetched
+            ([], CONTACT_FIELDS, 8),  # default means all fields: country, parent and tags prefetched
             (["last_name"], ["id", "last_name"], 5),  # `id` is always returned
             (["last_name", "email", "city"], ["id", "last_name", "email", "city"], 5),
             (["country"], ["id", "country"], 6),
             (["tags"], ["id", "tags"], 6),
+            (["parent"], ["id", "parent"], 6),
+            (["display_name", "is_company"], ["id", "display_name", "is_company"], 5),  # a column
         ]
     )
     def test_list_query_fields(self, query_fields, received_fields, query_count):
@@ -257,6 +296,9 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         [
             ("gamegie", [CONTACT_ID1]),  # the last name
             ("ARAGORN", [CONTACT_ID2]),  # the first name, case insensitive
+            ("sam gam", [CONTACT_ID1]),  # across the first and last names
+            ("pony", [CONTACT_COMPANY_ID]),  # the name of a company
+            ("be0123", [CONTACT_COMPANY_ID]),  # the VAT number
             ("gondor.com", [CONTACT_ID2]),  # the email
             ("a", ALL_CONTACT_IDS),
             ("hobbiton", []),  # the city is not searched
@@ -329,6 +371,28 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(data["birth_date"], "2890-09-22")
         self.assert_api_format(data, Contact.objects.get(pk=CONTACT_ID3))
 
+    def test_retrieve_response_company(self):
+        response = self.do_request("GET", f"/api/v1/contacts/{CONTACT_COMPANY_ID}/")
+        data = response.json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(data["is_company"])
+        self.assertEqual(data["display_name"], "The Prancing Pony")
+        # The person fields stay, as `null`.
+        self.assertIsNone(data["first_name"])
+        self.assertIsNone(data["last_name"])
+        self.assertIsNone(data["parent"])
+        self.assert_api_format(data, Contact.objects.get(pk=CONTACT_COMPANY_ID))
+
+    def test_retrieve_response_with_a_company(self):
+        response = self.do_request("GET", self.url_detail)
+        data = response.json()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            data["parent"], {"id": CONTACT_COMPANY_ID, "display_name": "The Prancing Pony", "is_company": True}
+        )
+
     def test_retrieve_not_found(self):
         response = self.do_request("GET", f"/api/v1/contacts/{CONTACT_ID4}/")
 
@@ -387,6 +451,14 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             ({"country": "ZZ"}, 422, "country"),  # an unknown country
             ({"tags": ["01ARZ3NDEKTSV4RRFFQ69G5FAV"]}, 422, "tags"),  # an unknown tag
             ({"tags": ["not-a-ulid"]}, 422, "tags"),
+            ({"parent": CONTACT_COMPANY_ID}, 201, None),
+            ({"parent": CONTACT_ID2}, 422, "parent"),  # a person is no company
+            ({"parent": "01ARZ3NDEKTSV4RRFFQ69G5FAV"}, 422, "parent"),  # an unknown contact
+            # The fields of a company.
+            ({"name": "Gandalf Inc"}, 422, "name"),
+            ({"vat": "BE0987654321"}, 422, "vat"),
+            ({"last_name": None}, 422, "last_name"),
+            ({"last_name": ""}, 422, "last_name"),
         ]
     )
     def test_create_request_field_validation(self, extra_body, status_code, error_field):
@@ -410,6 +482,39 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(contact.country_id, "GD")
         self.assertEqual([tag.pk for tag in contact.tags.all()], [TAG_ID3])
         self.assert_api_format(data, contact)
+
+    @parameterized.expand(
+        [
+            ({}, 201, None),
+            ({"vat": None}, 201, None),
+            ({"name": None}, 422, "name"),
+            ({"name": ""}, 422, "name"),
+            # The fields of a person.
+            ({"first_name": "Barliman"}, 422, "first_name"),
+            ({"last_name": "Butterbur"}, 422, "last_name"),
+            ({"birth_date": "2968-09-22"}, 422, "birth_date"),
+            ({"parent": CONTACT_COMPANY_ID}, 422, "parent"),  # a company has no parent
+            # Prancing Pony's, in another case. Under `__all__`: a constraint on an
+            # expression (`Lower("vat")`) names no field.
+            ({"vat": "be0123456789"}, 422, "__all__"),
+        ]
+    )
+    def test_create_company_request_field_validation(self, extra_body, status_code, error_field):
+        response = self.do_request("POST", self.url, data={**self.payload_create_company, **extra_body})
+
+        self.assertEqual(response.status_code, status_code, response.content)
+        if status_code == 422:
+            self.assertIn(error_field, str(response.json()))
+            self.assertFalse(Contact.objects.filter(name="Green Dragon").exists())
+
+    def test_create_company_response(self):
+        response = self.do_request("POST", self.url, data=self.payload_create_company)
+        data = response.json()
+
+        self.assertEqual(response.status_code, 201, data)
+        self.assertTrue(data["is_company"])
+        self.assertEqual(data["display_name"], "Green Dragon")
+        self.assert_api_format(data, Contact.objects.get(pk=data["id"]))
 
     def test_create_without_a_country(self):
         # First nullable foreign key of the project: `create` builds its values
@@ -509,18 +614,19 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
 
         self.assertEqual(response.status_code, status_code)
         # Every default is the `None` of a nullable column: a contact may be a bare name.
-        self.assert_default_values_format(response.json(), dict.fromkeys(CONTACT_DEFAULT_FIELDS))
+        self.assert_default_values_format(response.json(), CONTACT_DEFAULT_VALUES)
 
     @parameterized.expand(
         [
             (["first_name"], ["first_name"]),
             (["country", "city"], ["country", "city"]),
+            (["is_company"], ["is_company"]),
             # No default: absent, not null.
-            (["last_name", "tags"], []),
-            (["last_name", "first_name", "tags"], ["first_name"]),
+            (["tags"], []),
+            (["last_name", "first_name", "tags"], ["last_name", "first_name"]),
             (
-                ["first_name", "last_name", "email", "mobile", "birth_date", "number", "street", "zip", "city",
-                 "country", "tags"],
+                ["is_company", "name", "vat", "parent", "first_name", "last_name", "email", "mobile", "birth_date",
+                 "number", "street", "zip", "city", "country", "tags"],
                 CONTACT_DEFAULT_FIELDS,
             ),
         ]
@@ -529,7 +635,7 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         response = self.do_request("GET", self.url_default_values, params={"fields": ",".join(query_fields)})
 
         self.assertEqual(response.status_code, 200)
-        self.assert_default_values_format(response.json(), dict.fromkeys(CONTACT_DEFAULT_FIELDS), received_fields)
+        self.assert_default_values_format(response.json(), CONTACT_DEFAULT_VALUES, received_fields)
 
     @parameterized.expand(
         [
@@ -573,7 +679,7 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         response = self.do_request("GET", self.url_default_values)
 
         self.assertEqual(response.status_code, 200)
-        self.assert_default_values_format(response.json(), dict.fromkeys(CONTACT_DEFAULT_FIELDS))
+        self.assert_default_values_format(response.json(), CONTACT_DEFAULT_VALUES)
 
     # ------------------------------------------
     # Update Operation
@@ -588,6 +694,13 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             ({"birth_date": "not a date"}, 422, "birth_date"),
             ({"country": "ZZ"}, 422, "country"),
             ({"tags": ["01ARZ3NDEKTSV4RRFFQ69G5FAV"]}, 422, "tags"),
+            ({"parent": None}, 200, None),  # leaves the company
+            ({"parent": CONTACT_ID2}, 422, "parent"),  # a person is no company
+            ({"parent": CONTACT_ID1}, 422, "parent"),  # itself, a person all the same
+            ({"vat": "BE0987654321"}, 422, "vat"),
+            ({"last_name": None}, 422, "last_name"),
+            # Sam still has a first and last name, and a company.
+            ({"is_company": True, "name": "Gamegie & Sons"}, 422, "first_name"),
         ]
     )
     def test_update_request_field_validation(self, extra_body, status_code, error_field):
@@ -610,6 +723,40 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         # `tags` replaces the set, it does not add to it.
         self.assertEqual([tag.pk for tag in contact.tags.all()], [TAG_ID2])
         self.assert_api_format(data, contact)
+
+    def test_update_person_to_company(self):
+        # Every field of a person goes in the same payload: the type is checked on
+        # the record as it will be, not field by field.
+        response = self.do_request(
+            "PATCH",
+            f"/api/v1/contacts/{CONTACT_ID2}/",
+            data={"is_company": True, "name": "Dunedain", "first_name": None, "last_name": None},
+        )
+        data = response.json()
+
+        self.assertEqual(response.status_code, 200, data)
+        contact = Contact.objects.get(pk=CONTACT_ID2)
+        self.assertTrue(contact.is_company)
+        self.assertEqual(contact.display_name, "Dunedain")
+        self.assert_api_format(data, contact)
+
+    def test_update_company_with_contacts_to_person(self):
+        response = self.do_request(
+            "PATCH",
+            f"/api/v1/contacts/{CONTACT_COMPANY_ID}/",
+            data={"is_company": False, "name": None, "vat": None, "last_name": "Butterbur"},
+        )
+
+        self.assertEqual(response.status_code, 422, response.content)
+        self.assertIn("is_company", str(response.json()))
+        self.assertTrue(Contact.objects.get(pk=CONTACT_COMPANY_ID).is_company)
+
+    def test_update_company_name_moves_display_name(self):
+        response = self.do_request("PATCH", f"/api/v1/contacts/{CONTACT_COMPANY_ID}/", data={"name": "The Pony"})
+
+        self.assertEqual(response.status_code, 200, response.content)
+        # A generated column: recomputed by the `UPDATE` itself.
+        self.assertEqual(response.json()["display_name"], "The Pony")
 
     def test_update_moves_update_date(self):
         before = Contact.objects.get(pk=CONTACT_ID1)
@@ -680,6 +827,13 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(Contact.tags.through.objects.filter(contact_id=CONTACT_ID1).count(), 0)
         self.assertTrue(Contact.tags.field.related_model.objects.filter(pk__in=[TAG_ID1, TAG_ID2]).count() == 2)
 
+    def test_delete_company_keeps_its_contacts(self):
+        response = self.do_request("DELETE", f"/api/v1/contacts/{CONTACT_COMPANY_ID}/")
+
+        self.assertEqual(response.status_code, 204)
+        # `SET_NULL`: Sam stays in the address book, without a company.
+        self.assertIsNone(Contact.objects.get(pk=CONTACT_ID1).parent_id)
+
     def test_delete_not_found(self):
         response = self.do_request("DELETE", f"/api/v1/contacts/{CONTACT_ID4}/")
 
@@ -743,11 +897,20 @@ class ContactAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
 
         if "id" in fields:
             self.assertEqual(api_data["id"], obj.pk)
-        for name in ["first_name", "last_name", "email", "mobile", "number", "street", "zip", "city"]:
+        for name in [
+            "is_company", "display_name", "name", "vat",
+            "first_name", "last_name", "email", "mobile", "number", "street", "zip", "city",
+        ]:
             if name in fields:
                 self.assertEqual(api_data[name], getattr(obj, name))
         if "birth_date" in fields:
             self.assertEqual(api_data["birth_date"], obj.birth_date.isoformat() if obj.birth_date else None)
+        if "parent" in fields:
+            self.assertEqual(
+                api_data["parent"],
+                {"id": obj.parent.pk, "display_name": obj.parent.display_name, "is_company": True}
+                if obj.parent else None,
+            )
         if "country" in fields:
             self.assertEqual(
                 api_data["country"],

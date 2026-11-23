@@ -196,7 +196,7 @@ class AccountMovementGroupByAPITest(CommonTestMixin, APITestCaseMixin, TestCase)
         results = response.json()["results"]
         self.assertEqual(
             results[0]["contact"],
-            {"id": CONTACT_LOBELIA_ID, "first_name": "Lobelia", "last_name": "Sackville-Baggins"},
+            {"id": CONTACT_LOBELIA_ID, "display_name": "Lobelia Sackville-Baggins", "is_company": False},
         )
         self.assertEqual(
             [(group["contact"]["id"] if group["contact"] else None, group["amount_sum"]) for group in results],

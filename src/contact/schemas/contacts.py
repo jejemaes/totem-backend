@@ -18,9 +18,10 @@ ADDRESS_FIELDS = ["number", "street", "zip", "city", "country"]
 
 
 class ContactDisplayNameSchema(ModelSchema):
+    # `display_name` rather than the first and last names: a company has neither.
     class Meta:
         model = Contact
-        fields = ["id", "first_name", "last_name"]
+        fields = ["id", "display_name", "is_company"]
 
 
 class ContactSchema(ModelSchema):
@@ -31,11 +32,17 @@ class ContactSchema(ModelSchema):
     # async route needs to serialize outside of any `sync_to_async`.
     country: Optional[CountryDisplayNameSchema] = None
     tags: Optional[List[ContactTagDisplayNameSchema]] = None
+    parent: Optional[ContactDisplayNameSchema] = None
 
     class Meta:
         model = Contact
         fields = [
             "id",
+            "is_company",
+            "display_name",
+            "name",
+            "vat",
+            "parent",
             "first_name",
             "last_name",
             "email",
@@ -53,6 +60,10 @@ class ContactCreateSchema(ModelSchema):
     class Meta:
         model = Contact
         fields = [
+            "is_company",
+            "name",
+            "vat",
+            "parent",
             "first_name",
             "last_name",
             "email",
@@ -67,6 +78,10 @@ class ContactUpdateSchema(ModelSchema):
     class Meta:
         model = Contact
         fields = [
+            "is_company",
+            "name",
+            "vat",
+            "parent",
             "first_name",
             "last_name",
             "email",
@@ -103,8 +118,20 @@ class ContactFilterSchema(FilterSchema):
         description="Comma-separated ISO 3166-1 alpha-2 codes of the countries, `null` "
         "for the contacts without one.",
     )
+    is_company: Optional[bool] = Field(
+        None,
+        q="is_company",
+        title="Is a Company",
+        description="`true` for the companies only, `false` for the persons only.",
+    )
     # `ULID` rather than `str`: a malformed id is refused (422) instead of
     # silently matching nothing.
+    parent: Optional[ULID] = Field(
+        None,
+        q="parent__id",
+        title="Company",
+        description="Identifier of the company the persons must belong to.",
+    )
     tag: Optional[ULID] = Field(
         None,
         q="tags__id",
@@ -113,7 +140,8 @@ class ContactFilterSchema(FilterSchema):
     )
     search: Optional[str] = Field(
         None,
-        q=["first_name__icontains", "last_name__icontains", "email__icontains"],
+        q=["display_name__icontains", "email__icontains", "vat__icontains"],
         title="Search Term",
-        description="Search term in the first name, the last name or the email.",
+        description="Search term in the name (of a person or a company), the email or "
+        "the VAT number.",
     )

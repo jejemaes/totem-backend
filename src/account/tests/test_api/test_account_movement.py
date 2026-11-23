@@ -697,7 +697,7 @@ class AccountMovementAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             else:
                 self.assertEqual(
                     api_data["contact"],
-                    {"id": obj.contact.pk, "first_name": obj.contact.first_name, "last_name": obj.contact.last_name},
+                    {"id": obj.contact.pk, "display_name": obj.contact.display_name, "is_company": obj.contact.is_company},
                 )
         if "date" in fields:
             self.assertEqual(parse_date(api_data["date"]), obj.date)

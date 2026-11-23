@@ -226,7 +226,7 @@ class DocumentActionsAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(api_data["user"], {"id": str(obj.user.pk), "login": obj.user.username} if obj.user else None)
         self.assertEqual(
             api_data["contact"],
-            {"id": obj.contact.pk, "first_name": obj.contact.first_name, "last_name": obj.contact.last_name}
+            {"id": obj.contact.pk, "display_name": obj.contact.display_name, "is_company": obj.contact.is_company}
             if obj.contact else None,
         )
         self.assertEqual(
