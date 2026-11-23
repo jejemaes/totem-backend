@@ -7,6 +7,7 @@ from user.tests.test_api.common import CommonTestMixin as UserCommonTestMixin
 CONTACT_ID1 = "01JK0000000000000000000001"
 CONTACT_ID2 = "01JK0000000000000000000002"
 CONTACT_ID3 = "01JK0000000000000000000003"
+CONTACT_COMPANY_ID = "01JK0000000000000000000004"
 
 TAG_ID1 = "01JT0000000000000000000001"
 TAG_ID2 = "01JT0000000000000000000002"
@@ -34,6 +35,10 @@ class CommonTestMixin(UserCommonTestMixin):
         CONTACT_ID2  Aragorn Elessar aragorn@gondor.com    Minas Tirith, Gondor  [Fellowship]
         CONTACT_ID3  Bilbon Sacquet  (no email, no address, born 2890-09-22)     no tag
 
+        CONTACT_COMPANY_ID  The Prancing Pony (company, VAT BE0123456789)
+                            barliman@prancingpony.com, Bree, no country, no tag
+                            Sam belongs to it.
+
     No access rule is registered on either model: whoever holds a scope reaches
     every contact and every tag. `role` is granted nothing here: each test class
     grants the scopes of its resource.
@@ -54,11 +59,16 @@ class CommonTestMixin(UserCommonTestMixin):
             ContactTag(id=TAG_ID3, name="Wizard", color=9),
         ])
 
-        cls.contact_sam, cls.contact_aragorn, cls.contact_bilbon = Contact.objects.bulk_create([
+        # The company first: Sam points at it.
+        cls.contact_pony, cls.contact_sam, cls.contact_aragorn, cls.contact_bilbon = Contact.objects.bulk_create([
+            Contact(
+                id=CONTACT_COMPANY_ID, is_company=True, name="The Prancing Pony", vat="BE0123456789",
+                email="barliman@prancingpony.com", city="Bree",
+            ),
             Contact(
                 id=CONTACT_ID1, first_name="Sam", last_name="Gamegie", email="sam@lacomte.com",
                 mobile="+32 470 00 00 01", street="Bagshot Row", number="3", zip="1000",
-                city="Hobbiton", country=cls.country_shire,
+                city="Hobbiton", country=cls.country_shire, parent_id=CONTACT_COMPANY_ID,
             ),
             Contact(
                 id=CONTACT_ID2, first_name="Aragorn", last_name="Elessar", email="aragorn@gondor.com",

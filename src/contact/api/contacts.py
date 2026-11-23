@@ -33,6 +33,8 @@ class ContactController(TokenHasScopePermissionModelControllerMixin, ModelContro
     # Direct model fields only: `queryset_order_by_fields` resolves each one with
     # `model._meta.get_field()`, which a related lookup would not survive.
     list_ordering_fields = [
+        "display_name",
+        "is_company",
         "last_name",
         "first_name",
         "email",
@@ -42,7 +44,8 @@ class ContactController(TokenHasScopePermissionModelControllerMixin, ModelContro
         "create_date",
         "update_date",
     ]
-    list_ordering_default_fields = ["last_name", "first_name"]
+    # Not by last name: a company has none, they would all sort last.
+    list_ordering_default_fields = ["display_name"]
 
     retrieve_response_schema: Schema = ContactSchema
     create_request_schema = ContactCreateSchema
