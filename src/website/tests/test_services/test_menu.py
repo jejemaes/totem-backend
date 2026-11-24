@@ -1,280 +1,342 @@
 from asgiref.sync import async_to_sync
 from django.test import TestCase
+from parameterized import parameterized
 
-from core.services import Environment
 from core.services.exceptions import ServiceValidationMultiError
-from website.models import Menu, Page
+from core.testing import ServiceTestCaseMixin
+from website.models import Menu
 from website.schemas import MenuCreateSchema, MenuFilterSchema, MenuUpdateSchema
 from website.services import MenuService
 
+from website.tests.test_services.common_menu import (
+    MENU_FELLOWSHIP_ID,
+    MENU_JOURNEYS_ID,
+    MENU_MORDOR_ID,
+    MENU_ROOT_ID,
+    MENU_SHIRE_ID,
+    MENU_UNKNOWN_ID,
+    MENU_WEST_ID,
+    MenuServiceCommonMixin,
+)
+from website.tests.test_services.common_page import PAGE_RIVENDELL_ID, PAGE_SHIRE_ID, PAGE_UNKNOWN_ID
 
-class TestMenuService(TestCase):
+ALL_MENU_IDS = [MENU_ROOT_ID, MENU_FELLOWSHIP_ID, MENU_JOURNEYS_ID, MENU_SHIRE_ID, MENU_MORDOR_ID, MENU_WEST_ID]
 
-    @classmethod
-    def setUpTestData(cls):
-        # Created through `save()`, so their own paths are set the historical way.
-        cls.root = Menu.objects.create(name="Root")
-        cls.other_root = Menu.objects.create(name="Other Root")
-        cls.page = Page.objects.create(
-            title="Page", slug="page", content="<p>x</p>"
-        )
+# As the common data leaves them.
+PATHS = {
+    MENU_ROOT_ID: f"{MENU_ROOT_ID}/",
+    MENU_FELLOWSHIP_ID: f"{MENU_ROOT_ID}/{MENU_FELLOWSHIP_ID}/",
+    MENU_JOURNEYS_ID: f"{MENU_ROOT_ID}/{MENU_JOURNEYS_ID}/",
+    MENU_SHIRE_ID: f"{MENU_ROOT_ID}/{MENU_JOURNEYS_ID}/{MENU_SHIRE_ID}/",
+    MENU_MORDOR_ID: f"{MENU_ROOT_ID}/{MENU_JOURNEYS_ID}/{MENU_MORDOR_ID}/",
+    MENU_WEST_ID: f"{MENU_WEST_ID}/",
+}
+
+LINK_OR_PAGE = "Menu must be linked to an URL or a page."
+
+
+class MenuServiceTest(MenuServiceCommonMixin, ServiceTestCaseMixin, TestCase):
+    """ `MenuService`: create, read, update, delete. `parent_path` is kept by
+    `MenuQuerySet` on every write: each test reads the paths back.
+
+    No access rules tests: no `BaseRule` is registered for `Menu`.
+    """
 
     def setUp(self):
         super().setUp()
-        self.env = Environment(None)
-        self.service = self.env.get(MenuService)
-
-    def _create(self, **kwargs):
-        return async_to_sync(self.service.create)([MenuCreateSchema(**kwargs)])[0]
+        self.service = self.get_service(MenuService, user=self.user_frodon)
 
     # ------------------------------------------
-    # Tests Create
+    # Create
     # ------------------------------------------
 
-    def test_create_a_root_item_materializes_its_own_path(self):
-        # `parent_path` is `null=False` with no default, and the service inserts
-        # through `bulk_create`, which never calls the `save()` that computes it.
-        menu = self._create(name="New Root")
+    @parameterized.expand(
+        [
+            # `parent_path` is not null and has no default: the service inserts
+            # through `bulk_create`, which never calls the `save()` computing it.
+            ("a root", {"name": "Rohan"}, 5, [], {"link": None, "page_id": None}),
+            # The constraint exempts the roots: containers, not destinations.
+            ("a child with a link", {"name": "Bree", "parent": MENU_ROOT_ID, "link": "/bree/"}, 6, [MENU_ROOT_ID], {"link": "/bree/"}),
+            # The page is resolved through its service.
+            (
+                "a grandchild with a page",
+                {"name": "Rivendell", "parent": MENU_JOURNEYS_ID, "page": PAGE_RIVENDELL_ID, "sequence": 5},
+                7,
+                [MENU_ROOT_ID, MENU_JOURNEYS_ID],
+                {"page_id": PAGE_RIVENDELL_ID, "sequence": 5},
+            ),
+        ]
+    )
+    def test_create(self, label, payload, query_count, ancestors, expected_values):
+        with self.assertNumQueries(query_count):
+            instances = async_to_sync(self.service.create)([MenuCreateSchema(**payload)])
 
-        self.assertEqual(
-            Menu.objects.get(pk=menu.pk).parent_path, f"{menu.pk}/"
-        )
+        self.assertEqual([menu.name for menu in instances], [payload["name"]])
+        menu = Menu.objects.get(pk=instances[0].pk)
+        self.assertEqual(menu.parent_path, "".join(f"{pk}/" for pk in [*ancestors, menu.pk]))
+        self.assertEqual({name: getattr(menu, name) for name in expected_values}, expected_values)
 
-    def test_create_a_child_materializes_the_full_path(self):
-        menu = self._create(name="Child", parent=str(self.root.pk), link="/a/")
+    @parameterized.expand(
+        [
+            # `menu_page_or_link`, surfaced through its `violation_error_message`.
+            ("a child without link or page", {"name": "Bree", "parent": MENU_ROOT_ID}, 6, LINK_OR_PAGE),
+        ]
+    )
+    def test_create_invalid(self, label, payload, query_count, message):
+        with self.assertNumQueries(query_count):
+            with self.assertRaises(ServiceValidationMultiError) as ctx:
+                async_to_sync(self.service.create)([MenuCreateSchema(**payload)])
 
-        self.assertEqual(
-            Menu.objects.get(pk=menu.pk).parent_path,
-            f"{self.root.pk}/{menu.pk}/",
-        )
+        self.assertEqual(ctx.exception.dict(), {"__all__": {"__all__": [message]}})
+        self.assertEqual(Menu.objects.count(), 6)
 
-    def test_create_a_grandchild_materializes_the_full_path(self):
-        child = self._create(name="Child", parent=str(self.root.pk), link="/a/")
-        grandchild = self._create(name="Grandchild", parent=str(child.pk), link="/b/")
+    def test_create_refuses_a_dict(self):
+        with self.assertNumQueries(0):
+            with self.assertRaises(TypeError):
+                async_to_sync(self.service.create)([{"name": "Rohan"}])
 
-        self.assertEqual(
-            Menu.objects.get(pk=grandchild.pk).parent_path,
-            f"{self.root.pk}/{child.pk}/{grandchild.pk}/",
-        )
+        self.assertEqual(Menu.objects.count(), 6)
 
-    def test_create_resolves_the_target_page_through_its_service(self):
-        menu = self._create(name="Child", parent=str(self.root.pk), page=self.page.pk)
+    @parameterized.expand(
+        [
+            # The roles, then one query per relation given.
+            ("unknown parent", {"parent": MENU_UNKNOWN_ID, "link": "/bree/"}, 2, "parent"),
+            ("unknown page", {"parent": MENU_ROOT_ID, "page": PAGE_UNKNOWN_ID}, 3, "page"),
+        ]
+    )
+    def test_create_relations(self, label, values, query_count, error_key):
+        with self.assertNumQueries(query_count):
+            with self.assertRaises(ServiceValidationMultiError) as ctx:
+                async_to_sync(self.service.create)([MenuCreateSchema(name="Bree", **values)])
 
-        self.assertEqual(Menu.objects.get(pk=menu.pk).page_id, self.page.pk)
+        self.assertEqual(list(ctx.exception.dict()[0]), [error_key])
+        self.assertEqual(Menu.objects.count(), 6)
 
-    def test_create_with_an_unknown_parent_is_rejected(self):
-        with self.assertRaises(ServiceValidationMultiError) as ctx:
-            self._create(
-                name="Child",
-                # Well-formed but absent: `MenuCreateSchema.parent` borrows the
-                # constraints of the target primary key, so a string longer than
-                # 26 characters would be rejected before the service runs.
-                parent="01ARZ3NDEKTSV4RRFFQ69G5FAV",
-                link="/a/",
-            )
+    @parameterized.expand(
+        [
+            ("every input valid", [{"name": "Rohan"}, {"name": "Bree", "parent": MENU_ROOT_ID, "link": "/bree/"}], 6, None),
+            # All or nothing: the valid first input is not written either.
+            ("the second input invalid", [{"name": "Rohan"}, {"name": "Bree", "parent": MENU_ROOT_ID}], 6, "__all__"),
+        ]
+    )
+    def test_create_batch(self, label, payloads, query_count, error_key):
+        data = [MenuCreateSchema(**payload) for payload in payloads]
 
-        self.assertIn("parent", ctx.exception.dict()[0])
+        with self.assertNumQueries(query_count):
+            if error_key is None:
+                instances = async_to_sync(self.service.create)(data)
+            else:
+                with self.assertRaises(ServiceValidationMultiError) as ctx:
+                    async_to_sync(self.service.create)(data)
 
-    def test_create_a_child_without_a_link_or_a_page_is_rejected(self):
-        with self.assertRaises(ServiceValidationMultiError) as ctx:
-            self._create(name="Child", parent=str(self.root.pk))
+        if error_key is None:
+            self.assertEqual([menu.name for menu in instances], ["Rohan", "Bree"])
+            self.assertEqual(Menu.objects.count(), 8)
+        else:
+            self.assertEqual(list(ctx.exception.dict()), [error_key])
+            self.assertFalse(Menu.objects.filter(name="Rohan").exists())
 
-        # `menu_page_or_link`, surfaced through its `violation_error_message`.
-        self.assertIn(
-            "Menu must be linked to an URL or a page.",
-            str(ctx.exception.dict()["__all__"]),
-        )
+    @parameterized.expand(
+        [
+            ("every field", None, {"sequence": 20, "new_window": False}),
+            ("the fields asked", ["sequence", "parent"], {"sequence": 20}),
+        ]
+    )
+    def test_default_values(self, label, fields, expected):
+        with self.assertNumQueries(0):
+            values = async_to_sync(self.service.default_values)(fields)
 
-    def test_create_a_root_without_a_link_or_a_page_is_allowed(self):
-        # The constraint exempts roots: they are containers, not destinations.
-        menu = self._create(name="New Root")
-
-        self.assertTrue(Menu.objects.filter(pk=menu.pk).exists())
-
-    def test_the_materialized_path_is_not_writable(self):
-        for schema in (MenuCreateSchema, MenuUpdateSchema):
-            self.assertNotIn("parent_path", schema.model_fields)
-
-    # ------------------------------------------
-    # Tests Update
-    # ------------------------------------------
-
-    def test_moving_an_item_recomputes_its_whole_subtree(self):
-        child = self._create(name="Child", parent=str(self.root.pk), link="/a/")
-        grandchild = self._create(name="Grandchild", parent=str(child.pk), link="/b/")
-
-        async_to_sync(self.service.update)(
-            {"id": child.pk}, MenuUpdateSchema(parent=str(self.other_root.pk))
-        )
-
-        # The moved row *and* everything below it: the recursive recompute is
-        # what makes the descendants follow.
-        self.assertEqual(
-            Menu.objects.get(pk=child.pk).parent_path,
-            f"{self.other_root.pk}/{child.pk}/",
-        )
-        self.assertEqual(
-            Menu.objects.get(pk=grandchild.pk).parent_path,
-            f"{self.other_root.pk}/{child.pk}/{grandchild.pk}/",
-        )
-
-    def test_unparenting_an_item_makes_it_a_root(self):
-        child = self._create(name="Child", parent=str(self.root.pk), link="/a/")
-        grandchild = self._create(name="Grandchild", parent=str(child.pk), link="/b/")
-
-        async_to_sync(self.service.update)(
-            {"id": child.pk}, MenuUpdateSchema(parent=None)
-        )
-
-        self.assertEqual(
-            Menu.objects.get(pk=child.pk).parent_path, f"{child.pk}/"
-        )
-        self.assertEqual(
-            Menu.objects.get(pk=grandchild.pk).parent_path,
-            f"{child.pk}/{grandchild.pk}/",
-        )
-
-    def test_updating_a_plain_field_leaves_the_path_alone(self):
-        child = self._create(name="Child", parent=str(self.root.pk), link="/a/")
-        path = Menu.objects.get(pk=child.pk).parent_path
-
-        async_to_sync(self.service.update)(
-            {"id": child.pk}, MenuUpdateSchema(name="Renamed")
-        )
-
-        self.assertEqual(Menu.objects.get(pk=child.pk).parent_path, path)
-
-    def test_an_item_cannot_become_its_own_parent(self):
-        child = self._create(name="Child", parent=str(self.root.pk), link="/a/")
-
-        with self.assertRaises(ServiceValidationMultiError) as ctx:
-            async_to_sync(self.service.update)(
-                {"id": child.pk}, MenuUpdateSchema(parent=str(child.pk))
-            )
-
-        self.assertIn("parent", ctx.exception.dict()[child.pk])
-        self.assertEqual(
-            Menu.objects.get(pk=child.pk).parent_path,
-            f"{self.root.pk}/{child.pk}/",
-        )
-
-    def test_an_item_cannot_be_moved_under_its_own_child(self):
-        # Without the guard this is not an error anywhere downstream: the
-        # recursive recompute walks *down* from the roots, so the cycled rows
-        # simply become unreachable, keep a stale path and vanish from every
-        # tree read.
-        child = self._create(name="Child", parent=str(self.root.pk), link="/a/")
-        grandchild = self._create(name="Grandchild", parent=str(child.pk), link="/b/")
-
-        with self.assertRaises(ServiceValidationMultiError) as ctx:
-            async_to_sync(self.service.update)(
-                {"id": child.pk}, MenuUpdateSchema(parent=str(grandchild.pk))
-            )
-
-        self.assertIn("parent", ctx.exception.dict()[child.pk])
-        self.assertEqual(
-            Menu.objects.get(pk=grandchild.pk).parent_path,
-            f"{self.root.pk}/{child.pk}/{grandchild.pk}/",
-        )
+        self.assertEqual({name: value for name, value in values.items() if value is not None}, expected)
 
     # ------------------------------------------
-    # Tests Read
+    # Read
     # ------------------------------------------
 
-    def test_the_tree_reads_back_what_the_service_created(self):
-        # End-to-end proof that the materialized path is right: `read_tree`
-        # depends on it entirely, and a wrong path loses the node silently.
-        child = self._create(name="Child", parent=str(self.root.pk), link="/a/")
-        grandchild = self._create(name="Grandchild", parent=str(child.pk), link="/b/")
-
-        root_node = async_to_sync(self.service.read_tree)(self.root.pk)
-
-        self.assertEqual(root_node.data.pk, self.root.pk)
-        self.assertEqual([n.data.pk for n in root_node.children], [child.pk])
-        self.assertEqual(
-            [n.data.pk for n in root_node.children[0].children], [grandchild.pk]
-        )
-
-    def test_the_tree_reads_back_a_subtree_rooted_on_an_inner_item(self):
-        # A `parent_path` starts at a top-level item, so filtering on the pk
-        # itself only ever matched a top-level root -- a `Website.menu`, or a
-        # side-menu widget, pointing at an inner item read nothing at all.
-        child = self._create(name="Child", parent=str(self.root.pk), link="/a/")
-        grandchild = self._create(name="Grandchild", parent=str(child.pk), link="/b/")
-
-        child_node = async_to_sync(self.service.read_tree)(child.pk)
-
-        self.assertEqual(child_node.data.pk, child.pk)
-        # A root of its own tree, even though the record has a parent: the
-        # parent sits outside the subtree that was asked for.
-        self.assertIsNone(child_node.parent)
-        self.assertEqual(
-            [n.data.pk for n in child_node.children], [grandchild.pk]
-        )
-
-    def test_the_tree_is_none_when_the_root_does_not_exist(self):
-        # Never index blindly into the result: that is what used to raise
-        # `IndexError` in the view.
-        self.assertIsNone(async_to_sync(self.service.read_tree)(None))
-        self.assertIsNone(async_to_sync(self.service.read_tree)("not-a-ulid"))
-
-    def test_the_tree_resolves_the_target_page_in_two_queries(self):
-        # `Menu.url` reads `page.slug` while the template renders, out of reach
-        # of any `sync_to_async` hop, so the relation must come back with the
-        # tree -- hence `select_related` and not a second query per node. Two
-        # queries and not one: the root's own `parent_path` is what the subtree
-        # is filtered on, and it takes a read to know it.
-        self._create(name="Child", parent=str(self.root.pk), page=self.page.pk)
-
+    @parameterized.expand(
+        [
+            ("no filter", None, ALL_MENU_IDS),
+            # The filter schema of the API, with its own lookups.
+            ("a whole tree", MenuFilterSchema(root=MENU_ROOT_ID), [MENU_ROOT_ID, MENU_FELLOWSHIP_ID, MENU_JOURNEYS_ID, MENU_SHIRE_ID, MENU_MORDOR_ID]),
+            # Pinned as found, worth a fix of its own: a path starts at the top of
+            # its tree, so an inner ancestor is the prefix of nothing -- the bug
+            # `read_tree` was fixed of, still in this filter.
+            ("the subtree of an inner item", MenuFilterSchema(root=MENU_JOURNEYS_ID), []),
+            ("the direct children", MenuFilterSchema(parent=[MENU_ROOT_ID]), [MENU_FELLOWSHIP_ID, MENU_JOURNEYS_ID]),
+            ("the top-level items", MenuFilterSchema(parent=["null"]), [MENU_ROOT_ID, MENU_WEST_ID]),
+            ("by target page", MenuFilterSchema(target_page=[PAGE_SHIRE_ID]), [MENU_SHIRE_ID]),
+            ("by a search term in the link", MenuFilterSchema(search="fellow"), [MENU_FELLOWSHIP_ID]),
+            ("nothing matches", MenuFilterSchema(name="Isengard"), []),
+        ]
+    )
+    def test_read_filters(self, label, filters, expected_pks):
         with self.assertNumQueries(2):
-            root_node = async_to_sync(self.service.read_tree)(self.root.pk)
-            for node in root_node.children:
-                node.data.url
+            pks = [menu.pk for menu in async_to_sync(self.service.read)(filters)]
 
-    def test_the_tree_orders_by_sequence(self):
-        second = self._create(
-            name="Second", parent=str(self.root.pk), link="/b/", sequence=20
-        )
-        first = self._create(
-            name="First", parent=str(self.root.pk), link="/a/", sequence=10
-        )
+        self.assertCountEqual(pks, expected_pks)
 
-        root_node = async_to_sync(self.service.read_tree)(self.root.pk)
+    @parameterized.expand(
+        [
+            ("by sequence, then name", ["sequence", "name"], [MENU_FELLOWSHIP_ID, MENU_SHIRE_ID, MENU_ROOT_ID, MENU_JOURNEYS_ID, MENU_WEST_ID, MENU_MORDOR_ID]),
+            # The materialized path orders a tree depth first.
+            ("by path", ["parent_path"], [MENU_ROOT_ID, MENU_FELLOWSHIP_ID, MENU_JOURNEYS_ID, MENU_SHIRE_ID, MENU_MORDOR_ID, MENU_WEST_ID]),
+        ]
+    )
+    def test_read_ordering(self, label, ordering, expected_pks):
+        with self.assertNumQueries(2):
+            pks = [menu.pk for menu in async_to_sync(self.service.read)(ordering=ordering)]
 
-        self.assertEqual(
-            [n.data.pk for n in root_node.children], [first.pk, second.pk]
-        )
+        self.assertEqual(pks, expected_pks)
 
-    def test_read_filters_on_a_whole_subtree(self):
-        child = self._create(name="Child", parent=str(self.root.pk), link="/a/")
-        self._create(name="Elsewhere", parent=str(self.other_root.pk), link="/c/")
+    @parameterized.expand(
+        [
+            ("plain fields", ["id", "name"], 2, None),
+            # The page is prefetched, with the fields asked on it.
+            ("the target page", ["id", "page__slug"], 3, "shire"),
+        ]
+    )
+    def test_read_fields(self, label, fields, query_count, slug):
+        with self.assertNumQueries(query_count):
+            menus = list(async_to_sync(self.service.read)({"id": MENU_SHIRE_ID}, fields=fields))
+            loaded = menus[0].page.slug if slug else None
 
-        queryset = async_to_sync(self.service.read)(
-            MenuFilterSchema(root=str(self.root.pk))
-        )
-
-        self.assertEqual(
-            {m.pk for m in queryset}, {self.root.pk, child.pk}
-        )
+        self.assertEqual(loaded, slug)
+        self.assertIn("link", menus[0].get_deferred_fields())
 
     # ------------------------------------------
-    # Tests Delete
+    # Update
     # ------------------------------------------
 
-    def test_delete_a_leaf(self):
-        child = self._create(name="Child", parent=str(self.root.pk), link="/a/")
+    @parameterized.expand(
+        [
+            # A plain field leaves the paths alone; a move recomputes them.
+            ("the name", MENU_JOURNEYS_ID, {"name": "Roads"}, 5, {}),
+            # The moved row and everything below it: the recursive recompute is
+            # what makes the descendants follow.
+            (
+                "moved under another root",
+                MENU_JOURNEYS_ID,
+                {"parent": MENU_WEST_ID},
+                7,
+                {
+                    MENU_JOURNEYS_ID: f"{MENU_WEST_ID}/{MENU_JOURNEYS_ID}/",
+                    MENU_SHIRE_ID: f"{MENU_WEST_ID}/{MENU_JOURNEYS_ID}/{MENU_SHIRE_ID}/",
+                    MENU_MORDOR_ID: f"{MENU_WEST_ID}/{MENU_JOURNEYS_ID}/{MENU_MORDOR_ID}/",
+                },
+            ),
+            (
+                "unparented: a root",
+                MENU_JOURNEYS_ID,
+                {"parent": None},
+                6,
+                {
+                    MENU_JOURNEYS_ID: f"{MENU_JOURNEYS_ID}/",
+                    MENU_SHIRE_ID: f"{MENU_JOURNEYS_ID}/{MENU_SHIRE_ID}/",
+                    MENU_MORDOR_ID: f"{MENU_JOURNEYS_ID}/{MENU_MORDOR_ID}/",
+                },
+            ),
+            ("a leaf moved up", MENU_SHIRE_ID, {"parent": MENU_ROOT_ID}, 7, {MENU_SHIRE_ID: f"{MENU_ROOT_ID}/{MENU_SHIRE_ID}/"}),
+        ]
+    )
+    def test_update(self, label, pk, payload, query_count, moved_paths):
+        with self.assertNumQueries(query_count):
+            count, queryset = async_to_sync(self.service.update)({"id": pk}, MenuUpdateSchema(**payload))
 
-        async_to_sync(self.service.delete)({"id": child.pk})
+        self.assertEqual(count, 1)
+        self.assertEqual([menu.pk for menu in queryset], [pk])
+        self.assertEqual(dict(Menu.objects.values_list("pk", "parent_path")), {**PATHS, **moved_paths})
+        if "name" in payload:
+            self.assertEqual(Menu.objects.get(pk=pk).name, payload["name"])
 
-        self.assertFalse(Menu.objects.filter(pk=child.pk).exists())
+    def test_update_partial(self):
+        async_to_sync(self.service.update)({"id": MENU_FELLOWSHIP_ID}, MenuUpdateSchema(new_window=True))
 
-    def test_delete_a_parent_is_refused(self):
-        child = self._create(name="Child", parent=str(self.root.pk), link="/a/")
+        menu = Menu.objects.get(pk=MENU_FELLOWSHIP_ID)
+        self.assertEqual(
+            (menu.name, menu.link, menu.sequence, menu.parent_id, menu.new_window),
+            ("The Fellowship", "/fellowship/", 10, MENU_ROOT_ID, True),
+        )
 
-        # `Menu.parent` is `PROTECT`; see the note in `test_page`.
-        with self.assertRaises(ServiceValidationMultiError) as ctx:
-            async_to_sync(self.service.delete)({"id": self.root.pk})
+    @parameterized.expand(
+        [
+            # `validate_data` during an update: keyed by the pk of the record.
+            ("its own parent", MENU_JOURNEYS_ID, MenuUpdateSchema(parent=MENU_JOURNEYS_ID), 6, {MENU_JOURNEYS_ID: ["parent"]}),
+            # Without the guard, no error downstream: the recompute walks down from
+            # the roots, so the cycled rows keep a stale path and vanish from
+            # every tree read.
+            ("under its own child", MENU_JOURNEYS_ID, MenuUpdateSchema(parent=MENU_SHIRE_ID), 6, {MENU_JOURNEYS_ID: ["parent"]}),
+            ("under its own grandchild", MENU_ROOT_ID, MenuUpdateSchema(parent=MENU_MORDOR_ID), 6, {MENU_ROOT_ID: ["parent"]}),
+            # Resolved before any row is read: keyed by the index of the payload.
+            ("unknown parent", MENU_JOURNEYS_ID, MenuUpdateSchema(parent=MENU_UNKNOWN_ID), 2, {0: ["parent"]}),
+            # The constraint of the table: keyed on nobody.
+            ("a child losing its link", MENU_FELLOWSHIP_ID, MenuUpdateSchema(link=None), 6, {"__all__": ["__all__"]}),
+        ]
+    )
+    def test_update_invalid(self, label, pk, data, query_count, errors):
+        with self.assertNumQueries(query_count):
+            with self.assertRaises(ServiceValidationMultiError) as ctx:
+                async_to_sync(self.service.update)({"id": pk}, data)
+
+        self.assertEqual({key: list(value) for key, value in ctx.exception.dict().items()}, errors)
+        self.assertEqual(dict(Menu.objects.values_list("pk", "parent_path")), PATHS)
+        self.assertEqual(Menu.objects.get(pk=MENU_FELLOWSHIP_ID).link, "/fellowship/")
+
+    def test_update_refuses_a_dict(self):
+        with self.assertNumQueries(0):
+            with self.assertRaises(TypeError):
+                async_to_sync(self.service.update)({"id": MENU_ROOT_ID}, {"name": "Arda"})
+
+        self.assertEqual(Menu.objects.get(pk=MENU_ROOT_ID).name, "Middle-earth")
+
+    def test_update_batch(self):
+        with self.assertNumQueries(5):
+            count, queryset = async_to_sync(self.service.update)(
+                MenuFilterSchema(parent=[MENU_JOURNEYS_ID]), MenuUpdateSchema(new_window=True)
+            )
+
+        self.assertEqual(count, 2)
+        self.assertCountEqual([menu.pk for menu in queryset], [MENU_SHIRE_ID, MENU_MORDOR_ID])
+        self.assertCountEqual(Menu.objects.filter(new_window=True).values_list("pk", flat=True), [MENU_SHIRE_ID, MENU_MORDOR_ID])
+
+    def test_update_not_found(self):
+        with self.assertNumQueries(4):
+            count, queryset = async_to_sync(self.service.update)({"id": MENU_UNKNOWN_ID}, MenuUpdateSchema(name="Isengard"))
+
+        self.assertEqual((count, list(queryset)), (0, []))
+        self.assertFalse(Menu.objects.filter(name="Isengard").exists())
+
+    # ------------------------------------------
+    # Delete
+    # ------------------------------------------
+
+    @parameterized.expand(
+        [
+            ("a leaf", {"id": MENU_FELLOWSHIP_ID}, 7, 1),
+            ("a root without item", {"id": MENU_WEST_ID}, 7, 1),
+            ("nothing matches", {"id": MENU_UNKNOWN_ID}, 4, 0),
+        ]
+    )
+    def test_delete(self, label, filters, query_count, affected):
+        with self.assertNumQueries(query_count):
+            count = async_to_sync(self.service.delete)(filters)
+
+        self.assertEqual(count, affected)
+        self.assertEqual(Menu.objects.count(), 6 - affected)
+        self.assertFalse(Menu.objects.filter(**filters).exists())
+
+    @parameterized.expand(
+        [
+            # `Menu.parent` is PROTECT: an item with children stays.
+            ("an item with children", {"id": MENU_JOURNEYS_ID}, "Menu.parent"),
+            # Even with its children in the same delete. Pinned as found.
+            ("a whole subtree at once", {"parent_path__startswith": f"{MENU_ROOT_ID}/{MENU_JOURNEYS_ID}/"}, "Menu.parent"),
+        ]
+    )
+    def test_delete_protected(self, label, filters, relation):
+        # Refused by the collector, before any DELETE.
+        with self.assertNumQueries(6):
+            with self.assertRaises(ServiceValidationMultiError) as ctx:
+                async_to_sync(self.service.delete)(filters)
 
         self.assertEqual(ctx.exception.code, "protected_error")
-        self.assertIn("Menu.parent", str(ctx.exception.dict()["__all__"]))
-        self.assertTrue(Menu.objects.filter(pk=child.pk).exists())
+        self.assertIn(relation, str(ctx.exception.dict()["__all__"]))
+        self.assertEqual(Menu.objects.count(), 6)
