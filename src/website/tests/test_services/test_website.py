@@ -1,263 +1,214 @@
 from asgiref.sync import async_to_sync
 from django.test import TestCase
+from parameterized import parameterized
 
-from core.services import Environment
 from core.services.exceptions import ServiceValidationMultiError
-from user.models import User
-from website.models import Media, Menu, Page, Website
+from core.testing import ServiceTestCaseMixin
+from website.models import Website
 from website.schemas import WebsiteUpdateSchema
 from website.services import WebsiteService
 from website.theme import DEFAULT_THEME_ID
 
-# A well-formed but absent ULID: the schema types a relation with the target's
-# primary key type, so a malformed one would be rejected before the service runs.
-UNKNOWN_PAGE_ID = "01M209K5BNS12QRPHXFWVJ0000"
+from website.tests.test_services.common_media import MEDIA_BOOK_ID, MEDIA_MAP_ID
+from website.tests.test_services.common_menu import MENU_ROOT_ID, MENU_WEST_ID
+from website.tests.test_services.common_page import PAGE_MORDOR_ID, PAGE_SHIRE_ID, PAGE_UNKNOWN_ID
+from website.tests.test_services.common_website import WEBSITE_ID, WebsiteServiceCommonMixin
+
+OWN_PAGE = ["website_manage_own_page"]
 
 
-class TestWebsiteService(TestCase):
+class WebsiteServiceTest(WebsiteServiceCommonMixin, ServiceTestCaseMixin, TestCase):
+    """ `WebsiteService`: the site's own settings, one row. Read and update only.
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.author = User.objects.create(
-            username="tintin", email="tintin@moulinsart.com"
-        )
-        cls.page = Page.objects.create(
-            title="Le Hike", slug="hike", content="<p>Mille sabords</p>",
-            is_published=True, user=cls.author,
-        )
-        cls.draft = Page.objects.create(title="Atout Camp", slug="camp")
-        cls.menu = Menu.objects.create(name="Main")
-        # Checksums given: nothing is read from or written to storage.
-        cls.image, cls.pdf = Media.objects.bulk_create([
-            Media(name="fusee.png", content="website/fusee.png", mimetype="image/png", checksum="a" * 40),
-            Media(name="journal.pdf", content="website/journal.pdf", mimetype="application/pdf", checksum="b" * 40),
-        ])
+    No access rules tests on the website itself: `website.security` registers
+    no `BaseRule` for `Website`, and the first one would blank the public site,
+    which reads the row as `user=None`. Its relations are resolved through their
+    own services, whose rules apply: see `test_update_relations_access_rules`.
+    """
 
     def setUp(self):
         super().setUp()
-        self.env = Environment(None)
-        self.service = self.env.get(WebsiteService)
-
-    def build_website(self, **values):
-        values.setdefault("name", "Le Trésor")
-        values.setdefault("headline", "Rackham le Rouge")
-        return Website.objects.create(**values)
-
-    def update(self, **values):
-        return async_to_sync(self.service.update)(
-            {}, WebsiteUpdateSchema(**values)
-        )
+        self.service = self.get_service(WebsiteService, user=self.user_frodon)
 
     # ------------------------------------------
-    # Composition
+    # Create and Delete
     # ------------------------------------------
 
-    def test_the_singleton_is_guarded_by_the_absent_mixins(self):
-        """The only guard there is, so it needs a contract test.
-
-        Nothing at the database level constrains this table to one row -- see
-        `WebsiteService` -- so "you cannot create a second website, and you
-        cannot delete the only one" is expressed purely by not composing the two
-        mixins. A later refactor adding `CreateMixin` for symmetry would silently
-        undo that.
-        """
-        self.assertFalse(hasattr(WebsiteService, "create"))
-        self.assertFalse(hasattr(WebsiteService, "delete"))
-        self.assertTrue(hasattr(WebsiteService, "read"))
-        self.assertTrue(hasattr(WebsiteService, "update"))
+    @parameterized.expand([("create",), ("default_values",), ("delete",), ("resequence",)])
+    def test_operation_is_not_composed(self, operation):
+        # The only guard of the singleton: nothing constrains the table to one
+        # row at the database level, so "no second website, and the only one
+        # stays" is expressed by not composing the mixins. A refactor adding
+        # `CreateMixin` for symmetry would silently undo it.
+        self.assertFalse(hasattr(WebsiteService, operation))
 
     # ------------------------------------------
-    # read_current
+    # Read
     # ------------------------------------------
 
-    def test_read_current_returns_none_on_an_unpopulated_database(self):
-        """`/` must answer on a fresh install, so this cannot raise."""
-        self.assertIsNone(async_to_sync(self.service.read_current)())
+    @parameterized.expand(
+        [
+            ("no filter", None, [WEBSITE_ID]),
+            ("by its menu", {"menu": MENU_ROOT_ID}, [WEBSITE_ID]),
+            ("nothing matches", {"theme": "furni"}, []),
+        ]
+    )
+    def test_read_filters(self, label, filters, expected_pks):
+        with self.assertNumQueries(2):
+            pks = [website.pk for website in async_to_sync(self.service.read)(filters)]
 
-    def test_read_current_returns_the_row(self):
-        website = self.build_website()
+        self.assertEqual(pks, expected_pks)
 
-        self.assertEqual(async_to_sync(self.service.read_current)().pk, website.pk)
+    @parameterized.expand(
+        [
+            ("plain fields", ["id", "name", "headline"], 2, None),
+            # A relation is prefetched, with the fields asked on it.
+            ("the homepage", ["id", "homepage__slug"], 3, "shire"),
+        ]
+    )
+    def test_read_fields(self, label, fields, query_count, slug):
+        with self.assertNumQueries(query_count):
+            websites = list(async_to_sync(self.service.read)(fields=fields))
+            loaded = websites[0].homepage.slug if slug else None
 
-    def test_read_current_is_deterministic_with_several_rows(self):
-        """Nothing forbids a second row, so the read must not depend on the planner."""
-        first = self.build_website(id="01M209K5BNS12QRPHXFWVJNVD1", name="First")
-        self.build_website(id="01M209K5BNS12QRPHXFWVJNVD2", name="Second")
-
-        self.assertEqual(async_to_sync(self.service.read_current)().pk, first.pk)
-
-    def test_read_current_is_readable_by_an_anonymous_visitor(self):
-        """The public render path, and the reason no `BaseRule` may target `Website`.
-
-        `Environment(None)` is what every request on the public site carries.
-        """
-        self.build_website()
-
-        self.assertIsNotNone(async_to_sync(self.service.read_current)())
+        self.assertEqual(loaded, slug)
+        self.assertIn("footer", websites[0].get_deferred_fields())
 
     # ------------------------------------------
     # Update
     # ------------------------------------------
 
-    def test_update_writes_the_identity_and_the_footer(self):
-        self.build_website()
+    @parameterized.expand(
+        [
+            (
+                "the identity and the footer",
+                {},
+                {"name": "Arda", "headline": "The Fourth Age", "footer": "<p>Bree</p>", "meta_description": "Maps"},
+                5,
+                {"name": "Arda", "headline": "The Fourth Age", "footer": "<p>Bree</p>", "meta_description": "Maps"},
+            ),
+            ("the relations", {}, {"menu": MENU_WEST_ID, "homepage": PAGE_SHIRE_ID}, 7, {"menu_id": MENU_WEST_ID, "homepage_id": PAGE_SHIRE_ID}),
+            ("an image as the cover", {}, {"cover_media": MEDIA_MAP_ID}, 6, {"cover_media_id": MEDIA_MAP_ID}),
+            # `HomePageView` renders the hero alone when the homepage is a draft:
+            # refusing one here would break the natural set-then-publish order.
+            ("a draft as the homepage", {}, {"homepage": PAGE_MORDOR_ID}, 6, {"homepage_id": PAGE_MORDOR_ID}),
+            ("the relations emptied", {}, {"menu": None, "homepage": None}, 5, {"menu_id": None, "homepage_id": None}),
+            # A switch clears the stored options: they are keyed by the names of
+            # one theme's options (`WebsiteQuerySet.update`).
+            ("a theme switch", {"theme_options": {"color_primary": "#fff"}}, {"theme": "furni"}, 5, {"theme": "furni", "theme_options": {}}),
+            # Options sent with the switch still win.
+            ("a theme with its options", {}, {"theme": "furni", "theme_options": {"color_primary": "#000"}}, 5, {"theme_options": {"color_primary": "#000"}}),
+            # Validated against the incoming theme, not the stored one, gone.
+            ("away from a theme gone", {"theme": "deleted-from-the-code"}, {"theme": DEFAULT_THEME_ID, "theme_options": {}}, 5, {"theme": DEFAULT_THEME_ID}),
+            # Options alone: validated against the stored theme.
+            ("the options alone", {}, {"theme_options": {"color_primary": "#fff"}}, 5, {"theme": DEFAULT_THEME_ID, "theme_options": {"color_primary": "#fff"}}),
+        ]
+    )
+    def test_update(self, label, stored, payload, query_count, expected_values):
+        Website.objects.filter(pk=WEBSITE_ID).update(**stored)
 
-        count, queryset = self.update(
-            name="Moulinsart",
-            headline="Tonnerre de Brest",
-            footer="<p>Mille sabords</p>",
-            meta_description="Le trésor de Rackham",
+        with self.assertNumQueries(query_count):
+            count, queryset = async_to_sync(self.service.update)({}, WebsiteUpdateSchema(**payload))
+
+        self.assertEqual(count, 1)
+        self.assertEqual([website.pk for website in queryset], [WEBSITE_ID])
+        website = Website.objects.get(pk=WEBSITE_ID)
+        self.assertEqual({name: getattr(website, name) for name in expected_values}, expected_values)
+
+    def test_update_partial(self):
+        async_to_sync(self.service.update)({}, WebsiteUpdateSchema(headline="There and Back Again"))
+
+        website = Website.objects.get(pk=WEBSITE_ID)
+        self.assertEqual(
+            (website.name, website.headline, website.menu_id, website.homepage_id, website.footer),
+            ("Middle-earth", "There and Back Again", MENU_ROOT_ID, PAGE_SHIRE_ID, "<p>The Prancing Pony</p>"),
         )
 
-        self.assertEqual(count, 1)
-        website = queryset.first()
-        self.assertEqual(website.name, "Moulinsart")
-        self.assertEqual(website.headline, "Tonnerre de Brest")
-        self.assertEqual(website.footer, "<p>Mille sabords</p>")
-        self.assertEqual(website.meta_description, "Le trésor de Rackham")
+    @parameterized.expand(
+        [
+            # `validate_data`, once per matched record: keyed by its pk. It would
+            # land in an `<img src>`: a broken image, not a degraded one.
+            ("a document as the cover", {}, WebsiteUpdateSchema(cover_media=MEDIA_BOOK_ID), 6, WEBSITE_ID, "cover_media", "must be an image"),
+            # The message names the alternatives, which the field's own `choices`
+            # error could not: why the hook exists.
+            ("an unknown theme", {}, WebsiteUpdateSchema(theme="isengard"), 5, WEBSITE_ID, "theme", DEFAULT_THEME_ID),
+            ("options of another theme", {}, WebsiteUpdateSchema(theme_options={"mithril": 1}), 5, WEBSITE_ID, "theme_options", "mithril"),
+            # The read path degrades; a write must not persist options for a theme
+            # that no longer exists.
+            (
+                "options while the stored theme is gone",
+                {"theme": "deleted-from-the-code"},
+                WebsiteUpdateSchema(theme_options={"color_primary": "#fff"}),
+                5, WEBSITE_ID, "theme", "no longer exists",
+            ),
+            # Resolved before any row is read: keyed by the index of the payload.
+            ("an unknown homepage", {}, WebsiteUpdateSchema(homepage=PAGE_UNKNOWN_ID), 2, 0, "homepage", ""),
+            # Built unvalidated, as another caller than the API could: refused by
+            # `to_internal_values`, keyed by the index, and `validate_data` never
+            # sees it -- why the theme hook carries no null guard of its own.
+            ("a null theme", {}, WebsiteUpdateSchema.model_construct(theme=None), 0, 0, "theme", ""),
+        ]
+    )
+    def test_update_invalid(self, label, stored, data, query_count, error_owner, error_key, message):
+        Website.objects.filter(pk=WEBSITE_ID).update(**stored)
+        before = Website.objects.get(pk=WEBSITE_ID)
 
-    def test_update_sets_the_relations(self):
-        self.build_website()
+        with self.assertNumQueries(query_count):
+            with self.assertRaises(ServiceValidationMultiError) as ctx:
+                async_to_sync(self.service.update)({}, data)
 
-        count, queryset = self.update(menu=self.menu.pk, homepage=self.page.pk)
+        errors = ctx.exception.dict()
+        self.assertEqual({key: list(value) for key, value in errors.items()}, {error_owner: [error_key]})
+        self.assertIn(message, errors[error_owner][error_key][0])
+        website = Website.objects.get(pk=WEBSITE_ID)
+        self.assertEqual(
+            (website.theme, website.theme_options, website.cover_media_id, website.homepage_id),
+            (before.theme, before.theme_options, before.cover_media_id, before.homepage_id),
+        )
 
-        self.assertEqual(count, 1)
-        website = queryset.first()
-        self.assertEqual(website.menu_id, self.menu.pk)
-        self.assertEqual(website.homepage_id, self.page.pk)
+    def test_update_refuses_a_dict(self):
+        with self.assertNumQueries(0):
+            with self.assertRaises(TypeError):
+                async_to_sync(self.service.update)({}, {"name": "Arda"})
 
-    def test_an_image_is_accepted_as_the_cover(self):
-        self.build_website()
+        self.assertEqual(Website.objects.get(pk=WEBSITE_ID).name, "Middle-earth")
 
-        count, queryset = self.update(cover_media=self.image.pk)
+    # No `test_update_batch`: one row.
 
-        self.assertEqual(count, 1)
-        self.assertEqual(queryset.first().cover_media_id, self.image.pk)
+    def test_update_not_found(self):
+        # An unpopulated database: nothing to write, and no error.
+        Website.objects.all().delete()
 
-    def test_a_media_that_is_not_an_image_is_refused_as_the_cover(self):
-        """It would land in an `<img src>`: a broken image, not a degraded one."""
-        website = self.build_website()
+        with self.assertNumQueries(4):
+            count, queryset = async_to_sync(self.service.update)({}, WebsiteUpdateSchema(name="Arda"))
 
-        with self.assertRaises(ServiceValidationMultiError) as ctx:
-            self.update(cover_media=self.pdf.pk)
+        self.assertEqual((count, list(queryset)), (0, []))
+        self.assertFalse(Website.objects.exists())
 
-        self.assertIn("must be an image", ctx.exception.dict()[self.website_pk()]["cover_media"][0])
-        website.refresh_from_db()
-        self.assertIsNone(website.cover_media_id)
+    @parameterized.expand(
+        [
+            ("no rule", [], PAGE_MORDOR_ID, True),
+            # An author holding only their own pages can set the homepage to one
+            # of them, and to nothing else: another author's reads as unknown.
+            ("own pages, another author's", OWN_PAGE, PAGE_MORDOR_ID, False),
+            ("own pages, one's own", OWN_PAGE, PAGE_SHIRE_ID, True),
+            ("anonymous: no role, no rule", None, PAGE_MORDOR_ID, True),
+        ]
+    )
+    def test_update_relations_access_rules(self, label, rules, page_id, reached):
+        Website.objects.filter(pk=WEBSITE_ID).update(homepage=None)
+        if rules is None:
+            service = self.get_service(WebsiteService)
+        else:
+            self.role.rules = rules
+            self.role.save()
+            service = self.get_service(WebsiteService, user=self.user_frodon)
 
-    def test_the_homepage_may_be_an_unpublished_page(self):
-        """Documents the contract, rather than leaving it to be inferred.
+        if reached:
+            async_to_sync(service.update)({}, WebsiteUpdateSchema(homepage=page_id))
+        else:
+            with self.assertRaises(ServiceValidationMultiError) as ctx:
+                async_to_sync(service.update)({}, WebsiteUpdateSchema(homepage=page_id))
+            self.assertEqual(list(ctx.exception.dict()[0]), ["homepage"])
 
-        `HomePageView.get_homepage` renders the hero alone when the homepage is
-        unpublished or gone, so refusing a draft here would break the natural
-        set-then-publish order for no gain.
-        """
-        self.build_website()
-
-        count, queryset = self.update(homepage=self.draft.pk)
-
-        self.assertEqual(count, 1)
-        self.assertEqual(queryset.first().homepage_id, self.draft.pk)
-
-    def test_an_unknown_homepage_is_a_relation_error(self):
-        """No `validate_data` needed: relation resolution goes through `PageService.browse`."""
-        self.build_website()
-
-        with self.assertRaises(ServiceValidationMultiError) as ctx:
-            self.update(homepage=UNKNOWN_PAGE_ID)
-
-        self.assertIn("homepage", ctx.exception.dict()[0])
-
-    def test_update_on_an_unpopulated_database_writes_nothing(self):
-        count, _ = self.update(name="Moulinsart")
-
-        self.assertEqual(count, 0)
-
-    # ------------------------------------------
-    # Theme and its options
-    # ------------------------------------------
-
-    def test_an_unknown_theme_is_refused_and_lists_what_exists(self):
-        self.build_website()
-
-        with self.assertRaises(ServiceValidationMultiError) as ctx:
-            self.update(theme="no-such-theme")
-
-        messages = ctx.exception.dict()[self.website_pk()]["theme"]
-        self.assertIn("not a known theme", messages[0])
-        # The message names the alternatives: the field's own `choices` error
-        # could not, which is why this hook exists on top of it.
-        self.assertIn(DEFAULT_THEME_ID, messages[0])
-
-    def test_a_null_theme_is_a_field_error(self):
-        """Through the API, the update schema refuses `null` itself; built
-        unvalidated here, to reach the service's own guard.
-
-        Refused by `ServiceBase.to_internal_values`, which runs
-        `Field.validate()` on every supplied value -- so it is keyed by the
-        payload's **index**, not by the record's pk, and `validate_data` never
-        sees it. That is why the theme hook carries no null guard of its own:
-        it would be unreachable.
-        """
-        self.build_website()
-
-        with self.assertRaises(ServiceValidationMultiError) as ctx:
-            async_to_sync(self.service.update)({}, WebsiteUpdateSchema.model_construct(theme=None))
-
-        self.assertIn("theme", ctx.exception.dict()[0])
-
-    def test_a_known_theme_is_accepted(self):
-        self.build_website()
-
-        count, queryset = self.update(theme=DEFAULT_THEME_ID)
-
-        self.assertEqual(count, 1)
-        self.assertEqual(queryset.first().theme, DEFAULT_THEME_ID)
-
-    def test_switching_theme_clears_the_stored_options(self):
-        self.build_website(theme_options={"nope": 1})
-
-        self.update(theme=DEFAULT_THEME_ID)
-
-        self.assertEqual(Website.objects.get().theme_options, {})
-
-    def test_options_alone_are_validated_against_the_instance_theme(self):
-        """The cross-field case no schema can cover.
-
-        Only the options are sent, so the theme to validate them against has to
-        come from the stored record.
-        """
-        self.build_website(theme=DEFAULT_THEME_ID)
-
-        with self.assertRaises(ServiceValidationMultiError) as ctx:
-            self.update(theme_options={"nope": 1})
-
-        self.assertIn("theme_options", ctx.exception.dict()[self.website_pk()])
-
-    def test_theme_and_options_together_validate_against_the_incoming_theme(self):
-        self.build_website(theme="stale-theme")
-
-        # The stored theme does not exist, but the payload's does -- so the
-        # options are checked against the one being selected.
-        count, queryset = self.update(theme=DEFAULT_THEME_ID, theme_options={})
-
-        self.assertEqual(count, 1)
-        self.assertEqual(queryset.first().theme, DEFAULT_THEME_ID)
-
-    def test_patching_options_while_the_stored_theme_is_gone_is_refused(self):
-        """The read path degrades; a write must not persist options for a dead theme."""
-        self.build_website(theme="deleted-from-the-code")
-
-        with self.assertRaises(ServiceValidationMultiError) as ctx:
-            self.update(theme_options={"color_primary": "#fff"})
-
-        self.assertIn("theme", ctx.exception.dict()[self.website_pk()])
-
-    def website_pk(self):
-        """The key service errors are filed under on an update.
-
-        `validate_data` runs once per matched record, so its errors are keyed by
-        pk -- unlike `to_internal_values`, whose errors are keyed by the
-        payload's index.
-        """
-        return Website.objects.values_list("pk", flat=True).first()
+        self.assertEqual(Website.objects.get(pk=WEBSITE_ID).homepage_id, page_id if reached else None)
