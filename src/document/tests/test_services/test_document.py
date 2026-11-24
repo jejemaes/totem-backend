@@ -1,413 +1,447 @@
 import hashlib
-import json
+from datetime import date
 from unittest.mock import patch
+from uuid import UUID
 
 from asgiref.sync import async_to_sync
-from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from freezegun import freeze_time
 from parameterized import parameterized
 from PIL import Image
 
 from base.models import FileReference
-from core.services import Environment
 from core.services.exceptions import ServiceValidationMultiError
+from core.testing import ServiceTestCaseMixin
 from document.choices import DocumentType
 from document.models import Document
 from document.schemas import DocumentCreateSchema, DocumentFilterSchema, DocumentUpdateSchema
 from document.services import DocumentService
-from document.tests.common import (
-    CATEGORY_STATUS_ID,
+from document.tests.images import image_bytes, jpeg_rotated_bytes, pdf_bytes
+from user.tests.test_services.common_user import USER_FRODON_ID, USER_SAM_ID
+
+from document.tests.test_services.common_document import (
     CONTACT_ELROND_ID,
     CONTACT_GALADRIEL_ID,
-    CATEGORY_YEAR_ID,
     DOCUMENT_MINUTES_ID,
     DOCUMENT_NOTES_ID,
-    ROLES_FIXTURE,
-    TAG_2026_ID,
-    TAG_DRAFT_ID,
-    TAG_SIGNED_ID,
-    USER_ID1,
-    DocumentTestMixin,
+    DOCUMENT_UNKNOWN_ID,
+    PAYLOAD,
+    DocumentServiceCommonMixin,
+    upload,
 )
-from document.tests.images import image_bytes, jpeg_rotated_bytes, pdf_bytes
-from user.access_rights import get_all_permission
+from document.tests.test_services.common_document_tag import TAG_2026_ID, TAG_DRAFT_ID, TAG_SIGNED_ID, TAG_UNKNOWN_ID
+from document.tests.test_services.common_document_tag_category import CATEGORY_STATUS_ID, CATEGORY_YEAR_ID
 
-# A real one, small: a creation now makes a thumbnail of it.
-PAYLOAD = pdf_bytes(size=(60, 80))
+ALL_DOCUMENT_IDS = [DOCUMENT_NOTES_ID, DOCUMENT_MINUTES_ID]
+
+USER_UNKNOWN_ID = "5263de93-e694-41ef-b873-34610551afcd"
+
+TEXT = {"name": "Letter to Bilbo", "document_type": DocumentType.TEXT}
 
 
-def upload(name="map.pdf", payload=PAYLOAD):
-    return SimpleUploadedFile(name, payload, content_type="application/octet-stream")
+class DocumentServiceTest(DocumentServiceCommonMixin, ServiceTestCaseMixin, TestCase):
+    """ `DocumentService`: create, read, update, delete and default values.
+    `upload` has its own file.
 
+    `mimetype`, `checksum`, `size` and `thumbnail` are derived from the content
+    before the INSERT, which is also where the file is committed to storage: a
+    refused write leaves neither a row nor a `FileReference` behind.
 
-class TestDocumentService(DocumentTestMixin, TestCase):
+    No access rules tests: no `BaseRule` is registered for `Document`.
+    """
 
     def setUp(self):
         super().setUp()
-        self.env = Environment(user=self.user, language="en-us")
-        self.service = self.env.get(DocumentService)
-
-    def create(self, **payload):
-        return async_to_sync(self.service.create)([DocumentCreateSchema(**payload)])[0]
-
-    def assertNothingWritten(self, document_count):
-        """No row, and no file: `FileField.pre_save` commits the file with the
-        INSERT, and each stored file leaves a `FileReference` behind."""
-        self.assertEqual(Document.objects.count(), document_count)
-        self.assertFalse(FileReference.objects.exists())
+        self.service = self.get_service(DocumentService, user=self.user_frodon)
 
     # ------------------------------------------
-    # Tests Input Contract
+    # Create
     # ------------------------------------------
-
-    def test_update_schema_has_neither_type_nor_file(self):
-        # Replacing a file means creating a new document.
-        self.assertNotIn("document_type", DocumentUpdateSchema.model_fields)
-        self.assertNotIn("file", DocumentUpdateSchema.model_fields)
-
-    @parameterized.expand([("mimetype",), ("checksum",), ("size",)])
-    def test_derived_field_is_on_no_write_schema(self, field):
-        self.assertNotIn(field, DocumentCreateSchema.model_fields)
-        self.assertNotIn(field, DocumentUpdateSchema.model_fields)
-
-    # ------------------------------------------
-    # Tests Create
-    # ------------------------------------------
-
-    def test_create_file_derives_its_values(self):
-        document = self.create(document_type=DocumentType.FILE, file=upload())
-
-        document = Document.objects.get(pk=document.pk)
-        self.assertEqual(document.name, "map.pdf")
-        self.assertEqual(document.mimetype, "application/pdf")
-        self.assertEqual(document.checksum, hashlib.sha1(PAYLOAD).hexdigest())
-        self.assertEqual(document.size, len(PAYLOAD))
-        self.assertIsNone(document.text_content)
-        # The storage filed the uploaded bytes, not the empty rest of a stream
-        # left at EOF: it was rewound after being read for the checksum.
-        self.assertEqual(
-            FileReference.objects.get(symbolic_path=document.file.name).checksum,
-            document.checksum,
-        )
-
-    def test_create_file_keeps_the_name_given(self):
-        document = self.create(name="Map of the Shire", document_type=DocumentType.FILE, file=upload())
-        self.assertEqual(Document.objects.get(pk=document.pk).name, "Map of the Shire")
-
-    def test_create_file_with_relations(self):
-        document = self.create(
-            document_type=DocumentType.FILE,
-            file=upload(),
-            date="2026-03-25",
-            user=USER_ID1,
-            contact=CONTACT_GALADRIEL_ID,
-            tags=[TAG_DRAFT_ID, TAG_2026_ID],
-        )
-        document = Document.objects.get(pk=document.pk)
-        self.assertEqual(str(document.date), "2026-03-25")
-        self.assertEqual(str(document.user_id), USER_ID1)
-        self.assertEqual(document.contact_id, CONTACT_GALADRIEL_ID)
-        self.assertEqual(set(document.tags.values_list("id", flat=True)), {TAG_DRAFT_ID, TAG_2026_ID})
-
-    def test_create_defaults_to_the_acting_user(self):
-        document = self.create(name="Letter to Bilbo", document_type=DocumentType.TEXT)
-        self.assertEqual(str(Document.objects.get(pk=document.pk).user_id), str(self.user.pk))
-        # Announced as it is applied.
-        self.assertEqual(async_to_sync(self.service.default_values)(["user"]), {"user": self.user.pk})
 
     @parameterized.expand(
         [
-            ("UTC", "2026-03-25"),
-            # Already the 26th in New Zealand: the day of the acting user, not of the server.
-            ("Pacific/Auckland", "2026-03-26"),
+            # Named after the file by default; derived from the bytes. The roles,
+            # the owner, the transaction, the insert, the access rules checked on
+            # the rows written; and for a file, its reference and its thumbnail's.
+            (
+                "a file",
+                {"document_type": DocumentType.FILE, "file": "map.pdf"},
+                8,
+                {"name": "map.pdf", "mimetype": "application/pdf", "checksum": hashlib.sha1(PAYLOAD).hexdigest(), "size": len(PAYLOAD), "text_content": None},
+            ),
+            ("a file with a name", {"name": "Map of the Shire", "document_type": DocumentType.FILE, "file": "map.pdf"}, 8, {"name": "Map of the Shire"}),
+            # In bytes: two for "é" in UTF-8. No checksum, no file.
+            ("a text", {**TEXT, "text_content": "<p>Élessar</p>"}, 6, {"mimetype": "text/html", "size": 15, "checksum": None}),
+            ("an empty text", TEXT, 6, {"size": 0, "text_content": None}),
+            (
+                "a text with relations",
+                {**TEXT, "date": "2026-03-25", "user": USER_SAM_ID, "contact": CONTACT_GALADRIEL_ID, "tags": [TAG_DRAFT_ID, TAG_2026_ID]},
+                9,
+                {"date": date(2026, 3, 25), "user_id": UUID(USER_SAM_ID), "contact_id": CONTACT_GALADRIEL_ID},
+            ),
+            # The user defaults to the acting user, announced as applied.
+            ("the user left out", TEXT, 6, {"user_id": UUID(USER_FRODON_ID)}),
+            # Given, even as null, a field is never overwritten by its default.
+            ("a user set to null", {**TEXT, "user": None}, 5, {"user_id": None}),
+            ("a date set to null", {**TEXT, "date": None}, 6, {"date": None}),
+        ]
+    )
+    def test_create(self, label, payload, query_count, expected_values):
+        if "file" in payload:
+            payload = {**payload, "file": upload(payload["file"])}
+
+        with self.assertNumQueries(query_count):
+            instances = async_to_sync(self.service.create)([DocumentCreateSchema(**payload)])
+
+        self.assertEqual(len(instances), 1)
+        document = Document.objects.get(pk=instances[0].pk)
+        self.assertEqual({name: getattr(document, name) for name in expected_values}, expected_values)
+        self.assertCountEqual(document.tags.values_list("pk", flat=True), payload.get("tags", []))
+        if document.document_type == DocumentType.FILE:
+            # The storage filed the uploaded bytes, not the empty rest of a stream
+            # left at its end: it was rewound after being read for the checksum.
+            self.assertEqual(FileReference.objects.get(symbolic_path=document.file.name).checksum, document.checksum)
+        else:
+            self.assertFalse(document.file)
+
+    @parameterized.expand(
+        [
+            # Already the 26th in New Zealand: the day of the acting user, not of
+            # the server.
+            ("UTC", "UTC", date(2026, 3, 25)),
+            ("ahead of UTC", "Pacific/Auckland", date(2026, 3, 26)),
         ]
     )
     @freeze_time("2026-03-25 22:00:00")
-    def test_create_defaults_to_today(self, tz, expected):
-        service = self.env(tz=tz).get(DocumentService)
-        document = async_to_sync(service.create)(
-            [DocumentCreateSchema(name="Letter to Bilbo", document_type=DocumentType.TEXT)]
-        )[0]
-        self.assertEqual(str(Document.objects.get(pk=document.pk).date), expected)
+    def test_create_date_defaults_to_today(self, label, tz, expected):
+        service = self.get_service(DocumentService, user=self.user_frodon, tz=tz)
 
-    def test_create_keeps_a_date_set_to_null(self):
-        document = self.create(name="Letter to Bilbo", document_type=DocumentType.TEXT, date=None)
-        self.assertIsNone(Document.objects.get(pk=document.pk).date)
+        instances = async_to_sync(service.create)([DocumentCreateSchema(**TEXT)])
 
-    def test_create_keeps_a_user_set_to_null(self):
-        document = self.create(name="Letter to Bilbo", document_type=DocumentType.TEXT, user=None)
-        self.assertIsNone(Document.objects.get(pk=document.pk).user_id)
+        self.assertEqual(Document.objects.get(pk=instances[0].pk).date, expected)
 
-    def test_create_without_acting_user_has_no_default_user(self):
-        # An API key acts as no user.
-        service = Environment(user=None, language="en-us").get(DocumentService)
-        document = async_to_sync(service.create)(
-            [DocumentCreateSchema(name="Letter to Bilbo", document_type=DocumentType.TEXT)]
-        )[0]
-        self.assertIsNone(Document.objects.get(pk=document.pk).user_id)
+    def test_create_without_acting_user(self):
+        # An API key acts as no user: there is no owner to default to.
+        service = self.get_service(DocumentService)
 
-    def test_create_text_derives_its_values(self):
-        document = self.create(
-            name="Letter to Bilbo", document_type=DocumentType.TEXT, text_content="<p>Élessar</p>"
-        )
+        instances = async_to_sync(service.create)([DocumentCreateSchema(**TEXT)])
 
-        document = Document.objects.get(pk=document.pk)
-        self.assertEqual(document.mimetype, "text/html")
-        # In bytes: two for "é" in UTF-8.
-        self.assertEqual(document.size, 15)
-        self.assertIsNone(document.checksum)
-        self.assertFalse(document.file)
-
-    def test_create_empty_text(self):
-        document = self.create(name="Blank page", document_type=DocumentType.TEXT)
-        self.assertEqual(Document.objects.get(pk=document.pk).size, 0)
+        self.assertIsNone(Document.objects.get(pk=instances[0].pk).user_id)
 
     @parameterized.expand(
         [
-            # Named: unnamed, the error would be on `name`, raised first.
-            ("file without upload", {"name": "Map", "document_type": DocumentType.FILE}, "file"),
-            (
-                "file with text",
-                {"document_type": DocumentType.FILE, "file": "map.pdf", "text_content": "<p>Here</p>"},
-                "text_content",
-            ),
-            ("text with upload", {"name": "Letter", "document_type": DocumentType.TEXT, "file": "map.pdf"}, "file"),
-            ("text without name", {"document_type": DocumentType.TEXT}, "name"),
-            ("executable upload", {"document_type": DocumentType.FILE, "file": "logo.svg"}, "file"),
-            # Resolved through its service, as any relation.
-            (
-                "unknown contact",
-                {"name": "Letter", "document_type": DocumentType.TEXT, "contact": "01JK0000000000000000000099"},
-                "contact",
-            ),
+            # Square-bounded at 256 pixels, as WEBP; a photo turned upright.
+            ("an image", "ring.png", image_bytes(size=(1000, 500)), ("WEBP", (256, 128))),
+            ("a photo", "frodon.jpg", jpeg_rotated_bytes(size=(400, 200)), ("WEBP", (128, 256))),
+            ("a pdf", "map.pdf", pdf_bytes(size=(600, 800)), ("WEBP", (192, 256))),
+            # Nothing to draw: no thumbnail, and no error.
+            ("a plain text file", "notes.txt", b"One ring", None),
         ]
     )
-    def test_create_invalid(self, dummy, payload, field):
-        if "file" in payload:
-            payload = {**payload, "file": upload(payload["file"])}
-        with self.assertRaises(ServiceValidationMultiError) as ctx:
-            self.create(**payload)
-        self.assertEqual(list(ctx.exception.dict()[0]), [field])
-        self.assertNothingWritten(2)
+    def test_create_thumbnail(self, label, name, payload, expected):
+        instances = async_to_sync(self.service.create)([DocumentCreateSchema(document_type=DocumentType.FILE, file=upload(name, payload))])
 
-    def test_create_too_large(self):
-        with patch.object(DocumentService, "MAX_UPLOAD_SIZE", len(PAYLOAD) - 1):
-            with self.assertRaises(ServiceValidationMultiError) as ctx:
-                self.create(document_type=DocumentType.FILE, file=upload())
-        self.assertEqual(list(ctx.exception.dict()[0]), ["file"])
-        self.assertNothingWritten(2)
-
-    # ------------------------------------------
-    # Tests Thumbnail
-    # ------------------------------------------
-
-    @parameterized.expand(
-        [
-            ("image", "ring.png", image_bytes(size=(1000, 500)), (256, 128)),
-            ("photo", "frodon.jpg", jpeg_rotated_bytes(size=(400, 200)), (128, 256)),
-            ("pdf", "map.pdf", pdf_bytes(size=(600, 800)), (192, 256)),
-        ]
-    )
-    def test_create_file_with_thumbnail(self, dummy, name, payload, size):
-        document = self.create(document_type=DocumentType.FILE, file=upload(name, payload))
-
-        document = Document.objects.get(pk=document.pk)
-        with open(document.thumbnail.storage.symlink_path(document.thumbnail.name), "rb") as stored:
-            thumbnail = Image.open(stored)
-            self.assertEqual((thumbnail.format, thumbnail.size), ("WEBP", size))
+        document = Document.objects.get(pk=instances[0].pk)
+        if expected is None:
+            self.assertFalse(document.thumbnail)
+        else:
+            with open(document.thumbnail.storage.symlink_path(document.thumbnail.name), "rb") as stored:
+                thumbnail = Image.open(stored)
+                self.assertEqual((thumbnail.format, thumbnail.size), expected)
         # The file itself is stored untouched.
         self.assertEqual(document.size, len(payload))
 
-    def test_create_file_without_thumbnail(self):
-        document = self.create(document_type=DocumentType.FILE, file=upload("notes.txt", b"One ring"))
-        self.assertFalse(Document.objects.get(pk=document.pk).thumbnail)
-
-    def test_create_text_without_thumbnail(self):
-        document = self.create(name="Letter", document_type=DocumentType.TEXT, text_content="<p>Hi</p>")
-        self.assertFalse(Document.objects.get(pk=document.pk).thumbnail)
-
-    def test_thumbnail_failure_does_not_refuse_the_upload(self):
+    def test_create_thumbnail_failure_does_not_refuse_the_file(self):
         # A PDF pdfium cannot read: the document is created, with no thumbnail.
         payload = b"%PDF-1.4 not really a pdf"
+
         with self.assertLogs("document.thumbnails", "WARNING"):
-            documents = async_to_sync(self.service.upload)([upload("map.pdf", payload)])
-        document = Document.objects.get(pk=documents[0].pk)
-        self.assertEqual(document.checksum, hashlib.sha1(payload).hexdigest())
-        self.assertFalse(document.thumbnail)
+            instances = async_to_sync(self.service.create)([DocumentCreateSchema(document_type=DocumentType.FILE, file=upload("map.pdf", payload))])
 
-    def test_delete_removes_the_thumbnail(self):
-        document = self.create(document_type=DocumentType.FILE, file=upload("ring.png", image_bytes()))
-        thumbnail = Document.objects.get(pk=document.pk).thumbnail
-        self.assertTrue(thumbnail.storage.symlink_exists(thumbnail.name))
+        document = Document.objects.get(pk=instances[0].pk)
+        self.assertEqual((document.checksum, bool(document.thumbnail)), (hashlib.sha1(payload).hexdigest(), False))
 
-        async_to_sync(self.service.delete)({"id": document.pk})
+    @parameterized.expand(
+        [
+            # `validate_data`, keyed by the index of the payload, before the
+            # INSERT: nothing reaches the storage. Named: unnamed, the error
+            # would be on `name`, raised first.
+            ("a file without upload", {"name": "Map", "document_type": DocumentType.FILE}, None, 5, "file"),
+            ("a file with text", {"document_type": DocumentType.FILE, "file": "map.pdf", "text_content": "<p>Here</p>"}, None, 5, "text_content"),
+            ("a text with an upload", {**TEXT, "file": "map.pdf"}, None, 5, "file"),
+            # The null check of `to_internal_values`, before any query.
+            ("a text without name", {"document_type": DocumentType.TEXT}, None, 0, "name"),
+            ("an executable upload", {"document_type": DocumentType.FILE, "file": "logo.svg"}, None, 5, "file"),
+            ("an upload too large", {"document_type": DocumentType.FILE, "file": "map.pdf"}, len(PAYLOAD) - 1, 5, "file"),
+        ]
+    )
+    def test_create_invalid(self, label, payload, max_size, query_count, error_key):
+        if "file" in payload:
+            payload = {**payload, "file": upload(payload["file"])}
 
-        self.assertFalse(thumbnail.storage.symlink_exists(thumbnail.name))
+        with patch.object(DocumentService, "MAX_UPLOAD_SIZE", max_size or DocumentService.MAX_UPLOAD_SIZE):
+            with self.assertNumQueries(query_count):
+                with self.assertRaises(ServiceValidationMultiError) as ctx:
+                    async_to_sync(self.service.create)([DocumentCreateSchema(**payload)])
+
+        self.assertEqual(list(ctx.exception.dict()[0]), [error_key])
+        self.assertEqual(Document.objects.count(), 2)
         self.assertFalse(FileReference.objects.exists())
 
-    # ------------------------------------------
-    # Tests Upload
-    # ------------------------------------------
+    def test_create_refuses_a_dict(self):
+        with self.assertNumQueries(0):
+            with self.assertRaises(TypeError):
+                async_to_sync(self.service.create)([TEXT])
 
-    def test_upload_creates_one_document_per_file(self):
-        documents = async_to_sync(self.service.upload)(
-            [upload("map.pdf"), upload("ring.png", image_bytes())],
-            tags=[TAG_SIGNED_ID],
-            user=USER_ID1,
-            contact=CONTACT_GALADRIEL_ID,
-        )
+        self.assertEqual(Document.objects.count(), 2)
 
-        documents = Document.objects.filter(pk__in=[d.pk for d in documents]).order_by("name")
-        self.assertEqual(
-            [(d.name, d.document_type, d.mimetype) for d in documents],
-            [("map.pdf", "file", "application/pdf"), ("ring.png", "file", "image/png")],
-        )
-        for document in documents:
-            self.assertEqual(str(document.user_id), USER_ID1)
-            self.assertEqual(document.contact_id, CONTACT_GALADRIEL_ID)
-            self.assertEqual(list(document.tags.values_list("id", flat=True)), [TAG_SIGNED_ID])
-
-    def test_upload_without_common_values(self):
-        documents = async_to_sync(self.service.upload)([upload()])
-        document = Document.objects.get(pk=documents[0].pk)
-        # The acting user, as for `create`: see `test_create_defaults_to_the_acting_user`.
-        self.assertEqual(str(document.user_id), str(self.user.pk))
-        self.assertIsNone(document.contact_id)
-        self.assertFalse(document.tags.exists())
-
-    def test_upload_is_all_or_nothing(self):
-        # The second file is refused: none is created, and the error says which.
-        with self.assertRaises(ServiceValidationMultiError) as ctx:
-            async_to_sync(self.service.upload)(
-                [upload("map.pdf"), upload("logo.svg"), upload("ring.png")]
-            )
-        self.assertEqual(list(ctx.exception.dict()), [1])
-        self.assertEqual(list(ctx.exception.dict()[1]), ["file"])
-        self.assertNothingWritten(2)
-
-    def test_upload_too_many_files(self):
-        with patch.object(DocumentService, "MAX_UPLOAD_COUNT", 2):
+    @parameterized.expand(
+        [
+            # Resolved through their services, as any relation, before the
+            # transaction: the roles, the owner, then the relation given.
+            ("unknown contact", {"contact": "01JK0000000000000000000099"}, 3, "contact"),
+            ("unknown tag", {"tags": [TAG_DRAFT_ID, TAG_UNKNOWN_ID]}, 3, "tags"),
+            ("unknown owner", {"user": USER_UNKNOWN_ID}, 2, "user"),
+        ]
+    )
+    def test_create_relations(self, label, values, query_count, error_key):
+        with self.assertNumQueries(query_count):
             with self.assertRaises(ServiceValidationMultiError) as ctx:
-                async_to_sync(self.service.upload)([upload(), upload(), upload()])
-        self.assertEqual(list(ctx.exception.dict()), ["files"])
-        self.assertNothingWritten(2)
+                async_to_sync(self.service.create)([DocumentCreateSchema(**TEXT, **values)])
+
+        self.assertEqual(list(ctx.exception.dict()[0]), [error_key])
+        self.assertEqual(Document.objects.count(), 2)
+
+    @parameterized.expand(
+        [
+            ("every input valid", [TEXT, {"document_type": DocumentType.FILE, "file": "map.pdf"}], 8, None),
+            # All or nothing: the valid first input is not written either.
+            ("the second input invalid", [TEXT, {"document_type": DocumentType.FILE, "file": "logo.svg"}], 5, {1: ["file"]}),
+        ]
+    )
+    def test_create_batch(self, label, payloads, query_count, errors):
+        data = [
+            DocumentCreateSchema(**{**payload, "file": upload(payload["file"])} if "file" in payload else payload)
+            for payload in payloads
+        ]
+
+        with self.assertNumQueries(query_count):
+            if errors is None:
+                instances = async_to_sync(self.service.create)(data)
+            else:
+                with self.assertRaises(ServiceValidationMultiError) as ctx:
+                    async_to_sync(self.service.create)(data)
+
+        if errors is None:
+            self.assertEqual([document.name for document in instances], ["Letter to Bilbo", "map.pdf"])
+            self.assertEqual(Document.objects.count(), 4)
+        else:
+            self.assertEqual({key: list(value) for key, value in ctx.exception.dict().items()}, errors)
+            self.assertEqual(Document.objects.count(), 2)
+            self.assertFalse(FileReference.objects.exists())
+
+    @parameterized.expand(
+        [
+            ("every field", None, {"user": USER_FRODON_ID, "date": date(2026, 3, 25)}),
+            ("the fields asked", ["user"], {"user": USER_FRODON_ID}),
+        ]
+    )
+    @freeze_time("2026-03-25 10:00:00")
+    def test_default_values(self, label, fields, expected):
+        with self.assertNumQueries(0):
+            values = async_to_sync(self.service.default_values)(fields)
+
+        self.assertEqual(
+            {name: str(value) if name == "user" else value for name, value in values.items() if value not in (None, [])},
+            expected,
+        )
 
     # ------------------------------------------
-    # Tests Read
+    # Read
     # ------------------------------------------
 
     @parameterized.expand(
         [
-            ({"tag": TAG_DRAFT_ID}, [DOCUMENT_NOTES_ID]),
-            # Once each, though the notes carry both tags.
-            ({"tag": f"{TAG_DRAFT_ID},{TAG_2026_ID},{TAG_SIGNED_ID}"}, [DOCUMENT_NOTES_ID, DOCUMENT_MINUTES_ID]),
-            ({"tag_category": CATEGORY_YEAR_ID}, [DOCUMENT_NOTES_ID]),
-            # Once each, though the notes carry two tags of Status and Year.
-            ({"tag_category": f"{CATEGORY_STATUS_ID},{CATEGORY_YEAR_ID}"}, [DOCUMENT_NOTES_ID, DOCUMENT_MINUTES_ID]),
-            ({"contact": CONTACT_ELROND_ID}, [DOCUMENT_NOTES_ID]),
-            ({"contact": "null"}, [DOCUMENT_MINUTES_ID]),
-            ({"contact": CONTACT_GALADRIEL_ID}, []),
-            ({"document_type": "text"}, [DOCUMENT_NOTES_ID, DOCUMENT_MINUTES_ID]),
-            ({"document_type": "file"}, []),
-            ({"mimetype": "text/"}, [DOCUMENT_NOTES_ID, DOCUMENT_MINUTES_ID]),
-            ({"mimetype": "image/"}, []),
-            ({"search": "elrond"}, [DOCUMENT_NOTES_ID]),
+            ("no filter", None, ALL_DOCUMENT_IDS),
+            # The filter schema of the API, with its own lookups.
+            ("a tag", DocumentFilterSchema(tag=TAG_DRAFT_ID), [DOCUMENT_NOTES_ID]),
+            # Once each, though the notes carry two of them.
+            ("any of several tags", DocumentFilterSchema(tag=f"{TAG_DRAFT_ID},{TAG_2026_ID},{TAG_SIGNED_ID}"), ALL_DOCUMENT_IDS),
+            ("a tag category", DocumentFilterSchema(tag_category=CATEGORY_YEAR_ID), [DOCUMENT_NOTES_ID]),
+            ("any of several tag categories", DocumentFilterSchema(tag_category=f"{CATEGORY_STATUS_ID},{CATEGORY_YEAR_ID}"), ALL_DOCUMENT_IDS),
+            ("a contact", DocumentFilterSchema(contact=CONTACT_ELROND_ID), [DOCUMENT_NOTES_ID]),
+            ("no contact", DocumentFilterSchema(contact="null"), [DOCUMENT_MINUTES_ID]),
+            ("a contact without document", DocumentFilterSchema(contact=CONTACT_GALADRIEL_ID), []),
+            ("the texts", DocumentFilterSchema(document_type="text"), ALL_DOCUMENT_IDS),
+            ("the files", DocumentFilterSchema(document_type="file"), []),
+            ("the start of a mimetype", DocumentFilterSchema(mimetype="text/"), ALL_DOCUMENT_IDS),
+            ("a search term", DocumentFilterSchema(search="elrond"), [DOCUMENT_NOTES_ID]),
         ]
     )
-    def test_read_filters(self, filters, expected_ids):
-        queryset = async_to_sync(self.service.read)(DocumentFilterSchema(**filters))
-        self.assertEqual(sorted(queryset.values_list("id", flat=True)), sorted(expected_ids))
+    def test_read_filters(self, label, filters, expected_pks):
+        with self.assertNumQueries(2):
+            pks = list(async_to_sync(self.service.read)(filters).values_list("pk", flat=True))
+
+        self.assertCountEqual(pks, expected_pks)
+
+    @parameterized.expand(
+        [
+            ("by name", ["name"], [DOCUMENT_MINUTES_ID, DOCUMENT_NOTES_ID]),
+            ("by size, descending", ["-size"], [DOCUMENT_MINUTES_ID, DOCUMENT_NOTES_ID]),
+        ]
+    )
+    def test_read_ordering(self, label, ordering, expected_pks):
+        with self.assertNumQueries(2):
+            pks = [document.pk for document in async_to_sync(self.service.read)(ordering=ordering)]
+
+        self.assertEqual(pks, expected_pks)
+
+    @parameterized.expand(
+        [
+            ("plain fields", ["id", "name"], 2, {}),
+            # Each relation asked is prefetched with the fields asked on it.
+            ("the tags and the contact", ["id", "tags__name", "contact__display_name"], 4, {"tags": ["2026", "Draft"], "contact": "Elrond Half-elven"}),
+        ]
+    )
+    def test_read_fields(self, label, fields, query_count, expected):
+        with self.assertNumQueries(query_count):
+            documents = list(async_to_sync(self.service.read)({"id": DOCUMENT_NOTES_ID}, fields=fields))
+            loaded = {
+                "tags": sorted(tag.name for tag in documents[0].tags.all()) if "tags" in expected else None,
+                "contact": documents[0].contact.display_name if "contact" in expected else None,
+            }
+
+        self.assertEqual({name: value for name, value in loaded.items() if name in expected}, expected)
+        self.assertIn("text_content", documents[0].get_deferred_fields())
 
     # ------------------------------------------
-    # Tests Update
+    # Update
     # ------------------------------------------
 
-    def test_update_text_follows_the_size(self):
-        async_to_sync(self.service.update)(
-            {"id": DOCUMENT_NOTES_ID}, DocumentUpdateSchema(text_content="<p>Nine for mortal men</p>")
-        )
-        self.assertEqual(Document.objects.get(pk=DOCUMENT_NOTES_ID).size, 26)
+    @parameterized.expand(
+        [
+            # Only the size of a text ever moves: `DocumentQuerySet.update`.
+            ("the text, and its size", DOCUMENT_NOTES_ID, {"text_content": "<p>Nine for mortal men</p>"}, 5, {"size": 26}),
+            ("the contact", DOCUMENT_NOTES_ID, {"contact": CONTACT_GALADRIEL_ID}, 6, {"contact_id": CONTACT_GALADRIEL_ID}),
+            ("the tags replaced", DOCUMENT_MINUTES_ID, {"tags": [TAG_DRAFT_ID]}, 9, {}),
+            ("name and date", DOCUMENT_MINUTES_ID, {"name": "Minutes", "date": "2026-01-01"}, 5, {"name": "Minutes", "date": date(2026, 1, 1)}),
+        ]
+    )
+    def test_update(self, label, pk, payload, query_count, expected_values):
+        with self.assertNumQueries(query_count):
+            count, queryset = async_to_sync(self.service.update)({"id": pk}, DocumentUpdateSchema(**payload))
 
-    def test_update_contact(self):
-        async_to_sync(self.service.update)(
-            {"id": DOCUMENT_NOTES_ID}, DocumentUpdateSchema(contact=CONTACT_GALADRIEL_ID)
-        )
-        self.assertEqual(Document.objects.get(pk=DOCUMENT_NOTES_ID).contact_id, CONTACT_GALADRIEL_ID)
+        self.assertEqual(count, 1)
+        self.assertEqual([document.pk for document in queryset], [pk])
+        document = Document.objects.get(pk=pk)
+        self.assertEqual({name: getattr(document, name) for name in expected_values}, expected_values)
+        if "tags" in payload:
+            self.assertEqual(list(document.tags.values_list("pk", flat=True)), payload["tags"])
 
     def test_update_metadata_of_a_file(self):
-        document = self.create(document_type=DocumentType.FILE, file=upload())
-        async_to_sync(self.service.update)(
-            {"id": document.pk}, DocumentUpdateSchema(name="Map of the Shire", tags=[TAG_SIGNED_ID])
-        )
-        document = Document.objects.get(pk=document.pk)
-        self.assertEqual(document.name, "Map of the Shire")
-        self.assertEqual(list(document.tags.values_list("id", flat=True)), [TAG_SIGNED_ID])
+        instances = async_to_sync(self.service.create)([DocumentCreateSchema(document_type=DocumentType.FILE, file=upload())])
+
+        async_to_sync(self.service.update)({"id": instances[0].pk}, DocumentUpdateSchema(name="Map of the Shire", tags=[TAG_SIGNED_ID]))
+
+        document = Document.objects.get(pk=instances[0].pk)
+        self.assertEqual((document.name, list(document.tags.values_list("pk", flat=True))), ("Map of the Shire", [TAG_SIGNED_ID]))
         # Untouched: the file and what is derived from it.
-        self.assertEqual(document.size, len(PAYLOAD))
+        self.assertEqual((document.size, document.checksum), (len(PAYLOAD), hashlib.sha1(PAYLOAD).hexdigest()))
 
-    def test_update_text_of_a_file_is_refused(self):
-        document = self.create(document_type=DocumentType.FILE, file=upload())
+    def test_update_partial(self):
+        async_to_sync(self.service.update)({"id": DOCUMENT_NOTES_ID}, DocumentUpdateSchema(name="Notes"))
+
+        document = Document.objects.get(pk=DOCUMENT_NOTES_ID)
+        self.assertEqual(
+            (document.name, document.text_content, document.size, document.contact_id),
+            ("Notes", "<p>One ring</p>", 15, CONTACT_ELROND_ID),
+        )
+
+    @parameterized.expand(
+        [
+            # Resolved before any row is read: keyed by the index of the payload.
+            ("unknown contact", DocumentUpdateSchema(contact="01JK0000000000000000000099"), 2, {0: ["contact"]}),
+            ("unknown tag", DocumentUpdateSchema(tags=[TAG_UNKNOWN_ID]), 2, {0: ["tags"]}),
+            # Built unvalidated, as another caller than the API could.
+            ("name set to null", DocumentUpdateSchema.model_construct(name=None), 0, {0: ["name"]}),
+        ]
+    )
+    def test_update_invalid(self, label, data, query_count, errors):
+        with self.assertNumQueries(query_count):
+            with self.assertRaises(ServiceValidationMultiError) as ctx:
+                async_to_sync(self.service.update)({"id": DOCUMENT_NOTES_ID}, data)
+
+        self.assertEqual({key: list(value) for key, value in ctx.exception.dict().items()}, errors)
+        document = Document.objects.get(pk=DOCUMENT_NOTES_ID)
+        self.assertEqual((document.name, document.contact_id), ("Notes of the Council of Elrond", CONTACT_ELROND_ID))
+
+    def test_update_text_of_a_file(self):
+        instances = async_to_sync(self.service.create)([DocumentCreateSchema(document_type=DocumentType.FILE, file=upload())])
+
         with self.assertRaises(ServiceValidationMultiError) as ctx:
-            async_to_sync(self.service.update)(
-                {"id": document.pk}, DocumentUpdateSchema(text_content="<p>Here be dragons</p>")
+            async_to_sync(self.service.update)({"id": instances[0].pk}, DocumentUpdateSchema(text_content="<p>Here be dragons</p>"))
+
+        # `validate_data` during an update: keyed by the pk of the record.
+        self.assertEqual({key: list(value) for key, value in ctx.exception.dict().items()}, {instances[0].pk: ["text_content"]})
+        self.assertIsNone(Document.objects.get(pk=instances[0].pk).text_content)
+
+    def test_update_refuses_a_dict(self):
+        with self.assertNumQueries(0):
+            with self.assertRaises(TypeError):
+                async_to_sync(self.service.update)({"id": DOCUMENT_NOTES_ID}, {"name": "Notes"})
+
+        self.assertEqual(Document.objects.get(pk=DOCUMENT_NOTES_ID).name, "Notes of the Council of Elrond")
+
+    def test_update_batch(self):
+        with self.assertNumQueries(6):
+            count, queryset = async_to_sync(self.service.update)(
+                DocumentFilterSchema(document_type="text"), DocumentUpdateSchema(contact=CONTACT_GALADRIEL_ID)
             )
-        # Keyed by the record: `validate_data` on an update.
-        self.assertEqual(list(ctx.exception.dict()[document.pk]), ["text_content"])
-        self.assertIsNone(Document.objects.get(pk=document.pk).text_content)
+
+        self.assertEqual(count, 2)
+        self.assertCountEqual([document.pk for document in queryset], ALL_DOCUMENT_IDS)
+        self.assertEqual(Document.objects.filter(contact_id=CONTACT_GALADRIEL_ID).count(), 2)
+
+    def test_update_not_found(self):
+        with self.assertNumQueries(4):
+            count, queryset = async_to_sync(self.service.update)({"id": DOCUMENT_UNKNOWN_ID}, DocumentUpdateSchema(name="Red Book"))
+
+        self.assertEqual((count, list(queryset)), (0, []))
+        self.assertFalse(Document.objects.filter(name="Red Book").exists())
 
     # ------------------------------------------
-    # Tests Delete
+    # Delete
     # ------------------------------------------
 
-    def test_delete_removes_the_file(self):
-        document = self.create(document_type=DocumentType.FILE, file=upload())
-        storage, name = document.file.storage, Document.objects.get(pk=document.pk).file.name
-        # `symlink_exists`, not `exists`: the storage stores by checksum, and
-        # `exists` looks under the filestore -- see `TestMediaService`.
-        self.assertTrue(storage.symlink_exists(name))
+    @parameterized.expand(
+        [
+            ("a text", {"id": DOCUMENT_NOTES_ID}, 7, 1),
+            ("nothing matches", {"id": DOCUMENT_UNKNOWN_ID}, 5, 0),
+        ]
+    )
+    def test_delete(self, label, filters, query_count, affected):
+        with self.assertNumQueries(query_count):
+            count = async_to_sync(self.service.delete)(filters)
+
+        self.assertEqual(count, affected)
+        self.assertEqual(Document.objects.count(), 2 - affected)
+
+    @parameterized.expand(
+        [
+            # The file and its thumbnail leave the storage with the row.
+            ("a file with a thumbnail", "ring.png", image_bytes(), True),
+            ("a file without thumbnail", "notes.txt", b"One ring", False),
+        ]
+    )
+    def test_delete_removes_the_files(self, label, name, payload, has_thumbnail):
+        instances = async_to_sync(self.service.create)([DocumentCreateSchema(document_type=DocumentType.FILE, file=upload(name, payload))])
+        document = Document.objects.get(pk=instances[0].pk)
+        stored = [document.file] + ([document.thumbnail] if has_thumbnail else [])
+        self.assertTrue(all(field.storage.symlink_exists(field.name) for field in stored))
 
         async_to_sync(self.service.delete)({"id": document.pk})
 
         self.assertFalse(Document.objects.filter(pk=document.pk).exists())
-        self.assertFalse(storage.symlink_exists(name))
+        # `symlink_exists`, not `exists`: the storage files by checksum.
+        self.assertFalse(any(field.storage.symlink_exists(field.name) for field in stored))
         self.assertFalse(FileReference.objects.exists())
-
-
-class TestDocumentRoles(TestCase):
-    """The roles shipped. No rule is registered for the documents, so the roles
-    differ by their scopes alone, which the controllers check."""
-
-    def roles(self):
-        return {
-            item["pk"]: set(json.loads(item["fields"]["permissions"]))
-            for item in json.loads(ROLES_FIXTURE.read_text())
-        }
-
-    def test_every_scope_granted_is_registered(self):
-        registered = {permission for permission, _ in get_all_permission()}
-        for pk, permissions in self.roles().items():
-            self.assertLessEqual(permissions, registered, pk)
-
-    def test_user_reads_the_tags_and_manages_the_documents(self):
-        self.assertEqual(
-            self.roles()["DOCUMENT_USER"],
-            {
-                "totem.document.create",
-                "totem.document.read",
-                "totem.document.update",
-                "totem.document.delete",
-                "totem.documenttag.read",
-                "totem.documenttagcategory.read",
-            },
-        )
-
-    def test_manager_manages_everything(self):
-        self.assertEqual(
-            self.roles()["DOCUMENT_MANAGER"],
-            {
-                f"totem.{model}.{operation}"
-                for model in ("document", "documenttag", "documenttagcategory")
-                for operation in ("create", "read", "update", "delete")
-            },
-        )
