@@ -1,11 +1,9 @@
-import shutil
-import tempfile
 from pathlib import Path
 
 from django.core import serializers
-from django.test import override_settings
 
 from contact.models import Contact
+from core.testing import MediaRootTestMixin
 from document.choices import DocumentType
 from document.models import Document, DocumentTag, DocumentTagCategory
 from user.models import User
@@ -39,27 +37,6 @@ def load_roles(*pks):
     for obj in objects:
         obj.save()
     return {obj.object.pk: obj.object for obj in objects}
-
-
-class MediaRootTestMixin:
-    """A fresh `MEDIA_ROOT` for the class: what the documents upload stays there.
-
-    `StorageSettingsMixin` listens on `setting_changed`, so the module-level
-    storage instances really do follow it.
-    """
-
-    @classmethod
-    def setUpClass(cls):
-        cls._media_root = tempfile.mkdtemp()
-        cls._override = override_settings(MEDIA_ROOT=cls._media_root)
-        cls._override.enable()
-        super().setUpClass()
-
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        cls._override.disable()
-        shutil.rmtree(cls._media_root, ignore_errors=True)
 
 
 class DocumentTestMixin(MediaRootTestMixin):
