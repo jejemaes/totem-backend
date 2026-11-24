@@ -77,8 +77,9 @@ class CommonTestMixin(UserCommonTestMixin):
     with a position and a line on Ale. That split is what the `budget_*_manage_own`
     rules are tested against.
 
-    Distinct from `account.tests.common`, which the service tests keep: the API
-    tests own their data. The amounts are the same, so the totals are too.
+    Distinct from the `common_*` of `test_services`, the same ledger split per
+    resource: the API tests own their data. The amounts are the same, so the
+    totals are too.
     Everything is bulk created, so the stored totals are refreshed by hand, as a
     reconciliation job would.
 

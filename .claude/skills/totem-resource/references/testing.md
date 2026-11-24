@@ -43,7 +43,9 @@ pre-existing ones.
 
 ## Service tests
 
-`src/user/tests/test_services/` is the reference. The other apps still mix an
+`src/user/tests/test_services/` is the reference; `src/account/tests/test_services/`
+follows it too, with a chain of `common_*` mixins, group by, resequence, and
+rules registered for the test (`test_account_movement_group_by`). The other apps still mix an
 operational style (`test_create_valid`, roles from the fixtures) and a narrative
 one (`Environment(None)` only, data created in each test); migrate a module to
 this convention when you rewrite its tests.
