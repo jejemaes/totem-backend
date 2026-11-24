@@ -12,7 +12,7 @@ class ServiceTestCaseMixin:
     Data does not belong here: each resource has its own `common_<resource>.py`.
     """
 
-    def get_service(self, service_class, user=None, language="en-us"):
+    def get_service(self, service_class, user=None, language="en-us", tz=None):
         """ The service, in a fresh `Environment` acting as `user`.
 
         Fresh on each call: an environment memoizes the roles of its user, so a
@@ -20,7 +20,7 @@ class ServiceTestCaseMixin:
         rules. `user=None` is an anonymous caller, or an API key: no role, so no
         access rule applies to it.
         """
-        return Environment(user=user, language=language).get(service_class)
+        return Environment(user=user, language=language, tz=tz).get(service_class)
 
 
 class MediaRootTestMixin:

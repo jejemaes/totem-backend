@@ -1,7 +1,3 @@
-from pathlib import Path
-
-from django.core import serializers
-
 from contact.models import Contact
 from core.testing import MediaRootTestMixin
 from document.choices import DocumentType
@@ -24,23 +20,12 @@ CONTACT_GALADRIEL_ID = "01JK0000000000000000000002"
 DOCUMENT_NOTES_ID = "01JX0000000000000000000001"
 DOCUMENT_MINUTES_ID = "01JX0000000000000000000002"
 
-ROLES_FIXTURE = Path(__file__).resolve().parent.parent / "fixtures" / "system" / "user_roles.json"
-
-
-def load_roles(*pks):
-    """The given roles, read from the fixture of the app, as `populate` loads
-    them. Not `loaddata`: `user_roles` also names a fixture of other apps."""
-    objects = [
-        obj for obj in serializers.deserialize("json", ROLES_FIXTURE.read_text())
-        if obj.object.pk in pks
-    ]
-    for obj in objects:
-        obj.save()
-    return {obj.object.pk: obj.object for obj in objects}
-
 
 class DocumentTestMixin(MediaRootTestMixin):
-    """Two tag categories, Status (Draft, Signed) and Year (2026), and a third
+    """The data of the model tests; the service tests have their own, in
+    `test_services/common_*`.
+
+    Two tag categories, Status (Draft, Signed) and Year (2026), and a third
     one with no tag; two contacts, Elrond and Galadriel; two text documents,
     the notes tagged Draft and 2026 and filed under Elrond, the minutes Signed
     and under no contact. No file document: a file is derived by the service,
@@ -50,7 +35,7 @@ class DocumentTestMixin(MediaRootTestMixin):
     @classmethod
     def setUpTestData(cls):
         super().setUpTestData()
-        cls.user = User.objects.create(  # the acting user of the service tests
+        cls.user = User.objects.create(
             pk=USER_ID1,
             username="Frodon",
             password="MiL0u4ev3r",
