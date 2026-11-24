@@ -43,12 +43,11 @@ pre-existing ones.
 
 ## Service tests
 
-`src/user/tests/test_services/` is the reference; `src/account/tests/test_services/`
-follows it too, with a chain of `common_*` mixins, group by, resequence, and
-rules registered for the test (`test_account_movement_group_by`). The other apps still mix an
-operational style (`test_create_valid`, roles from the fixtures) and a narrative
-one (`Environment(None)` only, data created in each test); migrate a module to
-this convention when you rewrite its tests.
+Every app follows this convention. `src/user/tests/test_services/` is the
+smallest reference; `src/account/tests/test_services/` shows a chain of
+`common_*` mixins, group by, resequence and rules registered for the test
+(`test_account_movement_group_by`); `src/authentication/tests/test_services/`
+shows a service bound to no model (`AuthService`), one file per operation.
 
 ### Files, one set per resource
 
@@ -59,7 +58,7 @@ this convention when you rewrite its tests.
 | `test_<resource>_display_name.py` | `display_name` |
 | `test_<resource>_resequence.py` | `ResequenceMixin` |
 | `test_<resource>_group_by.py` | `GroupByMixin` |
-| `test_<resource>_<op>.py` | an operation of its own (`read_tree`, `upload`, `change_password`…) |
+| `test_<resource>_<op>.py` | an operation of its own (`read_tree`, `upload`, `change_password`, `login`…) |
 
 Schema tests do not belong here: they go in `<app>/tests/test_schemas/test_<resource>.py`
 (a `SimpleTestCase`, asserting the field named by the pydantic error).
