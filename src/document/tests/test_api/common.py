@@ -1,7 +1,7 @@
 from contact.models import Contact
+from core.testing import MediaRootTestMixin
 from document.choices import DocumentType
 from document.models import Document, DocumentTag, DocumentTagCategory
-from document.tests.common import MediaRootTestMixin
 from user.tests.test_api.common import CommonTestMixin as UserCommonTestMixin
 
 CATEGORY_STATUS_ID = "01JD0000000000000000000001"

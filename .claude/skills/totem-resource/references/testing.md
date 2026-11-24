@@ -18,6 +18,7 @@ One directory per layer, mirroring where the logic lives:
 src/<app>/tests/
   test_models/     QuerySet overrides, constraints, defaults
   test_services/   validate_data, named reads, composition
+  test_schemas/    field-level validation of the input schemas
   test_api/        status codes, response shape, scopes
   test_views/      server-rendered pages (website only)
 ```
@@ -42,28 +43,100 @@ pre-existing ones.
 
 ## Service tests
 
+`src/user/tests/test_services/` is the reference. The other apps still mix an
+operational style (`test_create_valid`, roles from the fixtures) and a narrative
+one (`Environment(None)` only, data created in each test); migrate a module to
+this convention when you rewrite its tests.
+
+### Files, one set per resource
+
+| File | Covers |
+|---|---|
+| `common_<resource>.py` | the data: a `<Resource>ServiceCommonMixin`, `setUpTestData` only |
+| `test_<resource>.py` | create, read, update, delete, default values |
+| `test_<resource>_display_name.py` | `display_name` |
+| `test_<resource>_resequence.py` | `ResequenceMixin` |
+| `test_<resource>_group_by.py` | `GroupByMixin` |
+| `test_<resource>_<op>.py` | an operation of its own (`read_tree`, `upload`, `change_password`…) |
+
+Schema tests do not belong here: they go in `<app>/tests/test_schemas/test_<resource>.py`
+(a `SimpleTestCase`, asserting the field named by the pydantic error).
+
+- `common_<resource>.py` holds data only: id constants at module level,
+  `bulk_create`, Lord of the Rings names. One resource's mixin may extend
+  another's (a budget line extends the budget).
+- One `TestCase` per file:
+  `class <Resource>ServiceTest(<Resource>ServiceCommonMixin, ServiceTestCaseMixin, TestCase)`,
+  one `# ---` banner section per operation, a `# Utils` section at the bottom.
+- `core.testing.ServiceTestCaseMixin.get_service(ServiceClass, user=...)` builds
+  the service in a **fresh** `Environment`: an environment memoizes the roles of
+  its user, so a service built before a role edit keeps the old rules.
+  `user=None` is an anonymous caller or an API key: no role, so no rule.
+- `core.testing.MediaRootTestMixin` gives the class a temporary `MEDIA_ROOT`.
+
+### Every test asserts input and output
+
+- What the service **returns** (instances, `(count, queryset)`, the count
+  deleted) **and** what is **in the database** afterwards: the values written,
+  the rows gone, the rows left untouched on a refusal.
+- Its **query count**, `assertNumQueries`, as a parameter of the row when it
+  varies. A count moving is what tells that a relation, a prefetch or a refresh
+  changed; say in a comment what the queries are when it is not obvious.
+- `@parameterized.expand` wherever two tests differ only by data, with a named
+  label as first argument (`label`, never `dummy`).
+- Errors: `ServiceValidationMultiError.dict()` is keyed by the payload **index**
+  for what `to_internal_values` refuses (relations, field rules), by the record
+  **pk** for `validate_data` during an update, and by `"__all__"` for a database
+  constraint (`_database_error_to_validation_error`). Assert the key and the
+  field named, not only that it raised.
+
+### Which tests, per operation
+
+- **create**: `test_create` (P), `test_create_invalid` (P), `test_create_refuses_a_dict`,
+  `test_create_relations` (P, unknown or out-of-scope relation),
+  `test_create_batch` (P, all or nothing, errors indexed), `test_default_values` (P),
+  `test_create_access_rules` (P).
+- **read**: `test_read_filters` (P, the pks), `test_read_ordering` (P),
+  `test_read_fields` (P, what is loaded or deferred, what is prefetched),
+  `test_read_access_rules` (P).
+- **update**: `test_update` (P), `test_update_partial`, `test_update_invalid` (P),
+  `test_update_refuses_a_dict`, `test_update_batch`, `test_update_not_found`,
+  `test_update_access_rules` (P).
+- **delete**: `test_delete` (P, cascades and `SET_NULL`), `test_delete_protected`
+  (P, for a `PROTECT`), `test_delete_access_rules` (P).
+- **display_name**: `test_display_name` (P, valid, unknown, malformed, repeated
+  pks), `test_display_name_access_rules` (P).
+- **resequence**: `test_resequence` (P, the order in the database),
+  `test_resequence_invalid` (P), `test_resequence_access_rules` (P).
+- **group_by**: `test_group_by_dimensions`, `_measures`, `_filters`, `_ordering`,
+  `_pagination`, `_invalid`, `_access_rules`, all (P).
+- **an operation left out on purpose**: `test_operation_is_not_composed` (P over
+  the names), `assertFalse(hasattr(Service, name))`.
+- **an operation of its own**: one section, `test_<op>_<behaviour>`, same
+  requirements.
+
+When a test from this list cannot exist, leave it out and say why in a comment
+in its section.
+
+### Access rules
+
+Test **the rule, not a role**: never a role from the fixtures. Set the rules on
+the role the acting user currently holds, as the API tests do:
+
 ```python
-class TestPageService(TestCase):
-    def setUp(self):
-        super().setUp()
-        self.env = Environment(None)
-        self.service = self.env.get(PageService)
+self.role.rules = rules
+self.role.save()
+service = self.get_service(UserService, user=self.user_frodon)  # after the edit
 ```
 
-`Environment(None)` is an anonymous visitor; pass a user to exercise access
-rules. Call the async surface through `async_to_sync(self.service.create)([schema])`.
-Assert on `ServiceValidationMultiError`, and check *which key* carries the error:
-
-```python
-with self.assertRaises(ServiceValidationMultiError) as ctx:
-    ...
-self.assertIn("homepage", ctx.exception.dict()[0])
-```
-
-Errors from `to_internal_values` are keyed by the payload's **index** (`0`),
-because they are raised before any row is matched. Errors from `validate_data`
-during an update are keyed by the record's **pk**. Getting this wrong produces a
-confusing `KeyError` rather than a failed assertion.
+Rows: `[]`, one per rule, a combination (the rules of a role combine with AND),
+two roles (roles combine with OR), and an anonymous row
+(`get_service(Service)`, which no rule reaches). A rule whose `operations` do not
+include the operation under test holds nothing back: pin it with a comment on
+the row. Never mock `apply_access_rules`: register a real `BaseRule` for the test
+if the project has none (see `user/tests/test_services/test_relation_resolution.py`).
+No `BaseRule` for the model → no `*_access_rules` tests, and the class docstring
+says so.
 
 ## API tests
 
