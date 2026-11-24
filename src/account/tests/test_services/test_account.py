@@ -1,161 +1,289 @@
 from asgiref.sync import async_to_sync
 from django.test import TestCase
 from parameterized import parameterized
-from pydantic import ValidationError as PydanticValidationError
 
-from account.models import Account
+from account.models import Account, AccountCategory
 from account.schemas import AccountCreateSchema, AccountUpdateSchema
 from account.services import AccountService
-from core.services import Environment
 from core.services.exceptions import ServiceValidationMultiError
+from core.testing import ServiceTestCaseMixin
 
-from account.tests.common import ACCOUNT_ID1, ACCOUNT_ID2, ACCOUNT_ID3, AccountTestMixin
+from account.tests.test_services.common_account import (
+    ACCOUNT_BREE_ID,
+    ACCOUNT_MORIA_ID,
+    ACCOUNT_SHIRE_ID,
+)
+from account.tests.test_services.common_account_category import CATEGORY_BREE_ID
+from account.tests.test_services.common_account_movement import AccountMovementServiceCommonMixin
+
+ALL_ACCOUNT_IDS = [ACCOUNT_SHIRE_ID, ACCOUNT_BREE_ID, ACCOUNT_MORIA_ID]
+
+# A unique field rather than a named constraint: the database names the index,
+# and `_database_error_to_validation_error` finds no message for it.
+RAW_INTEGRITY_ERROR = "A global validation error occurred: "
 
 
-class TestAccountService(AccountTestMixin, TestCase):
+class AccountServiceTest(AccountMovementServiceCommonMixin, ServiceTestCaseMixin, TestCase):
+    """ `AccountService`: create, read, update, delete.
+
+    No access rules tests: no `BaseRule` is registered for `Account`. No default
+    values beyond the model's.
+    """
 
     def setUp(self):
         super().setUp()
-        self.env = Environment(user=self.user, language="en-us")
-        self.service = self.env.get(AccountService)
+        self.service = self.get_service(AccountService, user=self.user_frodon)
 
     # ------------------------------------------
-    # Tests Input Contract
+    # Create
     # ------------------------------------------
 
     @parameterized.expand(
         [
-            ("lower case code", {"code": "shop2", "name": "Shop 2"}),
-            ("space in code", {"code": "SHOP 2", "name": "Shop 2"}),
-            ("code too long", {"code": "A" * 51, "name": "Shop 2"}),
-            ("missing code", {"name": "Shop 2"}),
-            ("missing name", {"code": "SHOP2"}),
+            # The roles of the acting user, the insert, then the refresh of its
+            # stored totals: one grouped read per total, one UPDATE, the read
+            # back; and the lookups of the budget positions reaching it.
+            ("required fields only", {"code": "RIVENDELL", "name": "Last Homely House"}, 12, {"active": True, "description": None}),
+            (
+                "every field",
+                {"code": "GREY-HAVENS_1", "name": "Mithlond", "description": "West", "active": False},
+                12,
+                {"active": False, "description": "West"},
+            ),
         ]
     )
-    def test_invalid_field_is_rejected_when_building_the_schema(self, dummy, payload):
+    def test_create(self, label, payload, query_count, expected_values):
+        with self.assertNumQueries(query_count):
+            instances = async_to_sync(self.service.create)([AccountCreateSchema(**payload)])
+
+        self.assertEqual([account.code for account in instances], [payload["code"]])
+        account = Account.objects.get(pk=instances[0].pk)
+        self.assertEqual(
+            {name: getattr(account, name) for name in ["code", "name", *expected_values]},
+            {"code": payload["code"], "name": payload["name"], **expected_values},
+        )
+        # Refreshed with the creation: zero, never null.
+        self.assertAccountTotals(account.pk, "0", "0", "0")
+
+    @parameterized.expand(
+        [
+            # Pinned as found: a unique field, not a named constraint, so the raw
+            # database error is handed back.
+            ("code taken", {"code": "SHIRE", "name": "Hobbiton"}, 5),
+            ("name taken", {"code": "HOBBITON", "name": "Bag End"}, 5),
+        ]
+    )
+    def test_create_invalid(self, label, payload, query_count):
+        with self.assertNumQueries(query_count):
+            with self.assertRaises(ServiceValidationMultiError) as ctx:
+                async_to_sync(self.service.create)([AccountCreateSchema(**payload)])
+
+        errors = ctx.exception.dict()
+        self.assertEqual(list(errors), ["__all__"])
+        self.assertTrue(errors["__all__"]["__all__"][0].startswith(RAW_INTEGRITY_ERROR))
+        self.assertEqual(Account.objects.count(), 3)
+
+    def test_create_refuses_a_dict(self):
         with self.assertNumQueries(0):
-            with self.assertRaises(PydanticValidationError):
-                AccountCreateSchema(**payload)
+            with self.assertRaises(TypeError):
+                async_to_sync(self.service.create)([{"code": "RIVENDELL", "name": "Last Homely House"}])
 
-    @parameterized.expand([(AccountCreateSchema,), (AccountUpdateSchema,)])
-    def test_totals_are_not_writable(self, schema):
-        # Derived from the movements: no request schema carries them.
-        self.assertFalse({"total_debit", "total_credit", "balance"} & set(schema.model_fields))
+        self.assertEqual(Account.objects.count(), 3)
 
-    # ------------------------------------------
-    # Tests Create
-    # ------------------------------------------
+    # No `test_create_relations`: an account has no relation to write.
 
     @parameterized.expand(
         [
-            ({"code": "SHOP2", "name": "Shop 2"}, 12),
-            ({"code": "SHOP-2_B", "name": "Shop 2", "description": "Second shop", "active": False}, 12),
+            ("every input valid", [("RIVENDELL", "Last Homely House"), ("LORIEN", "Caras Galadhon")], 12, None),
+            # All or nothing: the valid first input is not written either.
+            ("the second input taken", [("RIVENDELL", "Last Homely House"), ("BREE", "Staddle")], 5, "__all__"),
         ]
     )
-    def test_create_valid(self, payload, query_count):
-        data = AccountCreateSchema(**payload)
-        # The insert, then the refresh of its stored totals: one grouped read per
-        # total, one UPDATE, and the read back of the refreshed values. Plus two
-        # lookups of the budget positions reaching the account, none for a new one.
+    def test_create_batch(self, label, accounts, query_count, error_key):
+        data = [AccountCreateSchema(code=code, name=name) for code, name in accounts]
+
         with self.assertNumQueries(query_count):
-            instances = async_to_sync(self.service.create)([data])
+            if error_key is None:
+                instances = async_to_sync(self.service.create)(data)
+            else:
+                with self.assertRaises(ServiceValidationMultiError) as ctx:
+                    async_to_sync(self.service.create)(data)
 
-        # The totals of a new account are refreshed with its creation: zero, not NULL.
-        self.assertTotals(instances[0].pk, "0", "0", "0")
-
-    @parameterized.expand(
-        [
-            ({"code": "SHOP", "name": "Another shop"}, "code"),
-            ({"code": "SHOP2", "name": "Shop"}, "name"),
-        ]
-    )
-    def test_create_duplicate(self, payload, dummy):
-        data = AccountCreateSchema(**payload)
-        with self.assertRaises(ServiceValidationMultiError):
-            async_to_sync(self.service.create)([data])
-
-    # ------------------------------------------
-    # Tests Read
-    # ------------------------------------------
+        if error_key is None:
+            self.assertEqual([account.code for account in instances], ["RIVENDELL", "LORIEN"])
+            self.assertEqual(Account.objects.count(), 5)
+        else:
+            self.assertEqual(list(ctx.exception.dict()), [error_key])
+            self.assertFalse(Account.objects.filter(code="RIVENDELL").exists())
 
     @parameterized.expand(
         [
-            ({"code": "SHOP"}, ["id", "code", "balance"], 2, 1),
-            ({"active": True}, ["id", "code", "total_debit", "total_credit", "balance"], 2, 2),
-            ({"id__in": [ACCOUNT_ID1, ACCOUNT_ID2, ACCOUNT_ID3]}, ["id"], 2, 3),
+            ("every field", None, {"active": True}),
+            ("the fields asked", ["active", "code"], {"active": True}),
         ]
     )
-    def test_read_valid(self, filters, fields, query_count, expected_count):
-        # The roles of the acting user, then the rows: stored totals are columns,
-        # reading them costs nothing more.
+    def test_default_values(self, label, fields, expected):
+        with self.assertNumQueries(0):
+            values = async_to_sync(self.service.default_values)(fields)
+
+        self.assertEqual({name: value for name, value in values.items() if value is not None}, expected)
+
+    # ------------------------------------------
+    # Read
+    # ------------------------------------------
+
+    @parameterized.expand(
+        [
+            ("no filter", {}, ALL_ACCOUNT_IDS),
+            ("by code", {"code": "SHIRE"}, [ACCOUNT_SHIRE_ID]),
+            ("active ones", {"active": True}, [ACCOUNT_SHIRE_ID, ACCOUNT_BREE_ID]),
+            ("by a stored total", {"balance__gt": 0}, [ACCOUNT_SHIRE_ID]),
+            ("nothing matches", {"code": "MORDOR"}, []),
+        ]
+    )
+    def test_read_filters(self, label, filters, expected_pks):
+        # The roles of the acting user, then the accounts.
+        with self.assertNumQueries(2):
+            pks = [account.pk for account in async_to_sync(self.service.read)(filters)]
+
+        self.assertCountEqual(pks, expected_pks)
+
+    @parameterized.expand(
+        [
+            ("by code", ["code"], [ACCOUNT_BREE_ID, ACCOUNT_MORIA_ID, ACCOUNT_SHIRE_ID]),
+            ("by a stored total", ["-balance", "code"], [ACCOUNT_SHIRE_ID, ACCOUNT_BREE_ID, ACCOUNT_MORIA_ID]),
+            ("by state, then name", ["active", "-name"], [ACCOUNT_MORIA_ID, ACCOUNT_BREE_ID, ACCOUNT_SHIRE_ID]),
+        ]
+    )
+    def test_read_ordering(self, label, ordering, expected_pks):
+        with self.assertNumQueries(2):
+            pks = [account.pk for account in async_to_sync(self.service.read)(ordering=ordering)]
+
+        self.assertEqual(pks, expected_pks)
+
+    @parameterized.expand(
+        [
+            ("plain fields", ["id", "code"], {"code"}),
+            # Stored totals are columns: reading them costs nothing more.
+            ("the stored totals", ["id", "total_debit", "total_credit", "balance"], {"total_debit", "total_credit", "balance"}),
+        ]
+    )
+    def test_read_fields(self, label, fields, loaded):
+        with self.assertNumQueries(2):
+            accounts = list(async_to_sync(self.service.read)({"id": ACCOUNT_SHIRE_ID}, fields=fields))
+
+        self.assertEqual(len(accounts), 1)
+        self.assertFalse(loaded & accounts[0].get_deferred_fields())
+        self.assertIn("description", accounts[0].get_deferred_fields())
+
+    # ------------------------------------------
+    # Update
+    # ------------------------------------------
+
+    @parameterized.expand(
+        [
+            ("the name", {"name": "Bag End, Hobbiton"}, {"name": "Bag End, Hobbiton", "code": "SHIRE"}),
+            ("the code", {"code": "SHIRE-1"}, {"code": "SHIRE-1"}),
+            ("state and description", {"active": False, "description": "Sold"}, {"active": False, "description": "Sold"}),
+            ("the description emptied", {"description": None}, {"description": None}),
+        ]
+    )
+    def test_update(self, label, payload, expected_values):
+        with self.assertNumQueries(5):
+            count, queryset = async_to_sync(self.service.update)({"id": ACCOUNT_SHIRE_ID}, AccountUpdateSchema(**payload))
+
+        self.assertEqual(count, 1)
+        self.assertEqual([account.pk for account in queryset], [ACCOUNT_SHIRE_ID])
+        account = Account.objects.get(pk=ACCOUNT_SHIRE_ID)
+        self.assertEqual({name: getattr(account, name) for name in expected_values}, expected_values)
+        # Nothing the totals read was written: they stay.
+        self.assertAccountTotals(ACCOUNT_SHIRE_ID, "-100.50", "150.00", "49.50")
+
+    def test_update_partial(self):
+        async_to_sync(self.service.update)({"id": ACCOUNT_MORIA_ID}, AccountUpdateSchema(description="Delved too deep"))
+
+        account = Account.objects.get(pk=ACCOUNT_MORIA_ID)
+        self.assertEqual(
+            (account.code, account.name, account.active, account.description),
+            ("MORIA", "Khazad-dum", False, "Delved too deep"),
+        )
+
+    @parameterized.expand(
+        [
+            ("code taken", AccountUpdateSchema(code="BREE"), 6, "__all__"),
+            ("name taken", AccountUpdateSchema(name="The Prancing Pony"), 6, "__all__"),
+            # Built unvalidated, as another caller than the API could: the schema
+            # refuses a null name itself. The null check of the service keys it by
+            # the index of the payload, before any query.
+            ("name set to null", AccountUpdateSchema.model_construct(name=None), 0, 0),
+        ]
+    )
+    def test_update_invalid(self, label, data, query_count, error_key):
         with self.assertNumQueries(query_count):
-            qs = async_to_sync(self.service.read)(filters, fields=fields)
-            self.assertEqual(qs.count(), expected_count)
+            with self.assertRaises(ServiceValidationMultiError) as ctx:
+                async_to_sync(self.service.update)({"id": ACCOUNT_SHIRE_ID}, data)
 
-    def test_read_totals(self):
-        self.assertTotals(ACCOUNT_ID1, "-100.50", "150.00", "49.50")
-        self.assertTotals(ACCOUNT_ID2, "0", "0", "0")
+        self.assertEqual(list(ctx.exception.dict()), [error_key])
+        account = Account.objects.get(pk=ACCOUNT_SHIRE_ID)
+        self.assertEqual((account.code, account.name), ("SHIRE", "Bag End"))
 
-    def test_read_order_by_balance(self):
-        qs = async_to_sync(self.service.read)(ordering=["-balance"])
+    def test_update_refuses_a_dict(self):
+        with self.assertNumQueries(0):
+            with self.assertRaises(TypeError):
+                async_to_sync(self.service.update)({"id": ACCOUNT_SHIRE_ID}, {"name": "Hobbiton"})
 
-        self.assertEqual(list(qs.values_list("id", flat=True))[0], ACCOUNT_ID1)
+        self.assertEqual(Account.objects.get(pk=ACCOUNT_SHIRE_ID).name, "Bag End")
+
+    def test_update_batch(self):
+        with self.assertNumQueries(5):
+            count, queryset = async_to_sync(self.service.update)({"active": True}, AccountUpdateSchema(active=False))
+
+        self.assertEqual(count, 2)
+        self.assertCountEqual([account.pk for account in queryset], [ACCOUNT_SHIRE_ID, ACCOUNT_BREE_ID])
+        self.assertFalse(Account.objects.filter(active=True).exists())
+
+    def test_update_not_found(self):
+        with self.assertNumQueries(4):
+            count, queryset = async_to_sync(self.service.update)({"code": "MORDOR"}, AccountUpdateSchema(active=False))
+
+        self.assertEqual((count, list(queryset)), (0, []))
+        self.assertEqual(Account.objects.filter(active=True).count(), 2)
 
     # ------------------------------------------
-    # Tests Update
+    # Delete
     # ------------------------------------------
 
     @parameterized.expand(
         [
-            ({"id": ACCOUNT_ID1}, {"name": "Main shop"}, 5, 1),
-            ({"id": ACCOUNT_ID1}, {"active": False, "description": "Closed"}, 5, 1),
-            ({"active": False}, {"active": True}, 5, 1),
-            ({"code": "NOTFOUND"}, {"name": "Nothing"}, 4, 0),
+            # The collector reads each table reaching the account, and its own
+            # category goes with it (cascade), with what reaches the category.
+            ("an account with a category", {"id": ACCOUNT_BREE_ID}, 21, 1, [ACCOUNT_SHIRE_ID, ACCOUNT_MORIA_ID]),
+            ("an account without category", {"id": ACCOUNT_MORIA_ID}, 15, 1, [ACCOUNT_SHIRE_ID, ACCOUNT_BREE_ID]),
+            ("nothing matches", {"code": "MORDOR"}, 5, 0, ALL_ACCOUNT_IDS),
         ]
     )
-    def test_update_valid(self, filters, payload, query_count, affected_row):
-        data = AccountUpdateSchema(**payload)
+    def test_delete(self, label, filters, query_count, affected, remaining_pks):
         with self.assertNumQueries(query_count):
-            count, queryset = async_to_sync(self.service.update)(filters, data)
-            self.assertEqual(count, affected_row)
+            count = async_to_sync(self.service.delete)(filters)
 
-    def test_update_keeps_the_totals(self):
-        async_to_sync(self.service.update)({"id": ACCOUNT_ID1}, AccountUpdateSchema(name="Main shop"))
-
-        self.assertTotals(ACCOUNT_ID1, "-100.50", "150.00", "49.50")
+        self.assertEqual(count, affected)
+        self.assertCountEqual(Account.objects.values_list("pk", flat=True), remaining_pks)
+        self.assertEqual(AccountCategory.objects.filter(pk=CATEGORY_BREE_ID).exists(), ACCOUNT_BREE_ID in remaining_pks)
 
     @parameterized.expand(
         [
-            ({"id": ACCOUNT_ID1}, {"code": "BANK"}),
-            ({"id": ACCOUNT_ID1}, {"name": "Bank"}),
-            ({"id": ACCOUNT_ID1}, {"name": None}),
+            # `AccountMovement.account` is PROTECT: deactivate it instead.
+            ("an account with movements", {"id": ACCOUNT_SHIRE_ID}, "AccountMovement.account"),
+            # Several accounts, one of them protected: nothing is deleted.
+            ("among others", {"id__in": [ACCOUNT_SHIRE_ID, ACCOUNT_MORIA_ID]}, "AccountMovement.account"),
         ]
     )
-    def test_update_invalid(self, filters, payload):
-        # Built unvalidated: the schema refuses a `null` name itself now, and what
-        # is tested here is the service, which other callers than the API reach.
-        data = AccountUpdateSchema.model_construct(**payload)
-        with self.assertRaises(ServiceValidationMultiError):
-            async_to_sync(self.service.update)(filters, data)
+    def test_delete_protected(self, label, filters, relation):
+        # Refused by the collector, before any DELETE.
+        with self.assertNumQueries(12):
+            with self.assertRaises(ServiceValidationMultiError) as ctx:
+                async_to_sync(self.service.delete)(filters)
 
-    # ------------------------------------------
-    # Tests Delete
-    # ------------------------------------------
-
-    @parameterized.expand(
-        [
-            ({"id": ACCOUNT_ID2}, 1),  # its own category goes with it
-            ({"id": ACCOUNT_ID3}, 1),
-            ({"code": "NOTFOUND"}, 0),
-        ]
-    )
-    def test_delete_valid(self, filters, affected_row):
-        count = async_to_sync(self.service.delete)(filters)
-        self.assertEqual(count, affected_row)
-        self.assertFalse(Account.objects.filter(**filters).exists())
-
-    def test_delete_account_with_movements_is_refused(self):
-        with self.assertRaises(ServiceValidationMultiError):
-            async_to_sync(self.service.delete)({"id": ACCOUNT_ID1})
-
-        self.assertTrue(Account.objects.filter(pk=ACCOUNT_ID1).exists())
+        self.assertEqual(ctx.exception.code, "protected_error")
+        self.assertIn(relation, str(ctx.exception.dict()["__all__"]))
+        self.assertEqual(Account.objects.count(), 3)
