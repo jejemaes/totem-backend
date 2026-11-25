@@ -3,10 +3,10 @@ from django.test import TestCase
 from parameterized import parameterized
 
 from core.testing import ServiceTestCaseMixin
+from website.schemas import PageFilterSchema
 from website.services import PageService
 
 from website.tests.test_services.common_page import (
-    PAGE_MORDOR_ID,
     PAGE_RIVENDELL_ID,
     PAGE_SHIRE_ID,
     PageServiceCommonMixin,
@@ -35,10 +35,11 @@ class PageReadPublishedServiceTest(PageServiceCommonMixin, ServiceTestCaseMixin,
             ("narrowed by the filters", {"slug": "rivendell"}, None, 1, [PAGE_RIVENDELL_ID]),
             # A draft stays out, whatever the filters ask.
             ("a draft asked by its slug", {"slug": "mordor"}, None, 1, []),
-            # Pinned as found, worth a fix of its own: the filters are merged
-            # over the publication state, so a caller can widen it to the drafts.
-            # No caller passes filters a visitor controls today.
-            ("the filters override the state", {"is_published": False}, None, 1, [PAGE_MORDOR_ID]),
+            # The state is applied on top of the filters: they cannot widen it.
+            ("the filters cannot widen it", {"is_published": False}, None, 1, []),
+            # Any form of filters `read` takes, the filter schema of the API too.
+            ("a filter schema", PageFilterSchema(search="dell"), None, 1, [PAGE_RIVENDELL_ID]),
+            ("a filter schema asking the drafts", PageFilterSchema(is_published=False), None, 1, []),
             ("ordered", None, ["-title"], 1, [PAGE_SHIRE_ID, PAGE_RIVENDELL_ID]),
         ]
     )

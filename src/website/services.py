@@ -72,11 +72,15 @@ class PageService(
 
         Deliberately not folded into `get_queryset()`: the admin and a future
         API must still be able to read drafts.
+
+        The state is applied on top of the caller's filters, not merged into
+        them: merged into a dict, an `is_published` of the caller would replace
+        it and widen the read to the drafts. Narrowing the queryset `read`
+        returns is what a caller of a service may do (see `ServiceBase.browse`),
+        and it takes any form of filters `read` takes, not only a dict.
         """
-        published = {"is_published": True}
-        if filters:
-            published.update(filters)
-        return await self.read(published, ordering=ordering, fields=fields)
+        queryset = await self.read(filters, ordering=ordering, fields=fields)
+        return queryset.filter(is_published=True)
 
 
 class MenuService(
