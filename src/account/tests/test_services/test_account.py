@@ -18,9 +18,8 @@ from account.tests.test_services.common_account_movement import AccountMovementS
 
 ALL_ACCOUNT_IDS = [ACCOUNT_SHIRE_ID, ACCOUNT_BREE_ID, ACCOUNT_MORIA_ID]
 
-# A unique field rather than a named constraint: the database names the index,
-# and `_database_error_to_validation_error` finds no message for it.
-RAW_INTEGRITY_ERROR = "A global validation error occurred: "
+CODE_TAKEN = "An account with that code already exists."
+NAME_TAKEN = "An account with that name already exists."
 
 
 class AccountServiceTest(AccountMovementServiceCommonMixin, ServiceTestCaseMixin, TestCase):
@@ -67,20 +66,17 @@ class AccountServiceTest(AccountMovementServiceCommonMixin, ServiceTestCaseMixin
 
     @parameterized.expand(
         [
-            # Pinned as found: a unique field, not a named constraint, so the raw
-            # database error is handed back.
-            ("code taken", {"code": "SHIRE", "name": "Hobbiton"}, 5),
-            ("name taken", {"code": "HOBBITON", "name": "Bag End"}, 5),
+            # A named constraint: reported with its message, under no index.
+            ("code taken", {"code": "SHIRE", "name": "Hobbiton"}, 5, CODE_TAKEN),
+            ("name taken", {"code": "HOBBITON", "name": "Bag End"}, 5, NAME_TAKEN),
         ]
     )
-    def test_create_invalid(self, label, payload, query_count):
+    def test_create_invalid(self, label, payload, query_count, message):
         with self.assertNumQueries(query_count):
             with self.assertRaises(ServiceValidationMultiError) as ctx:
                 async_to_sync(self.service.create)([AccountCreateSchema(**payload)])
 
-        errors = ctx.exception.dict()
-        self.assertEqual(list(errors), ["__all__"])
-        self.assertTrue(errors["__all__"]["__all__"][0].startswith(RAW_INTEGRITY_ERROR))
+        self.assertEqual(ctx.exception.dict(), {"__all__": {"__all__": [message]}})
         self.assertEqual(Account.objects.count(), 3)
 
     def test_create_refuses_a_dict(self):
@@ -210,20 +206,22 @@ class AccountServiceTest(AccountMovementServiceCommonMixin, ServiceTestCaseMixin
 
     @parameterized.expand(
         [
-            ("code taken", AccountUpdateSchema(code="BREE"), 6, "__all__"),
-            ("name taken", AccountUpdateSchema(name="The Prancing Pony"), 6, "__all__"),
+            ("code taken", AccountUpdateSchema(code="BREE"), 6, "__all__", CODE_TAKEN),
+            ("name taken", AccountUpdateSchema(name="The Prancing Pony"), 6, "__all__", NAME_TAKEN),
             # Built unvalidated, as another caller than the API could: the schema
             # refuses a null name itself. The null check of the service keys it by
             # the index of the payload, before any query.
-            ("name set to null", AccountUpdateSchema.model_construct(name=None), 0, 0),
+            ("name set to null", AccountUpdateSchema.model_construct(name=None), 0, 0, None),
         ]
     )
-    def test_update_invalid(self, label, data, query_count, error_key):
+    def test_update_invalid(self, label, data, query_count, error_key, message):
         with self.assertNumQueries(query_count):
             with self.assertRaises(ServiceValidationMultiError) as ctx:
                 async_to_sync(self.service.update)({"id": ACCOUNT_SHIRE_ID}, data)
 
         self.assertEqual(list(ctx.exception.dict()), [error_key])
+        if message:
+            self.assertEqual(ctx.exception.dict()[error_key]["__all__"], [message])
         account = Account.objects.get(pk=ACCOUNT_SHIRE_ID)
         self.assertEqual((account.code, account.name), ("SHIRE", "Bag End"))
 
