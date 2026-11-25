@@ -308,7 +308,7 @@ class AccountAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             ({"code": "lower"}, 422, "code"),
             ({"code": "WITH SPACE"}, 422, "code"),
             ({"code": "A" * 51}, 422, "code"),
-            ({"code": "SHIRE"}, 422, None),  # taken: reported by the database, unkeyed
+            ({"code": "SHIRE"}, 422, None),  # taken: a named constraint, unkeyed
             ({"name": None}, 422, "name"),
             ({"name": "Bag End"}, 422, None),  # taken
             ({"description": None}, 201, None),

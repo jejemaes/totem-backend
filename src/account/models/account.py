@@ -25,11 +25,13 @@ class AccountQuerySet(ComputedQuerySetMixin, models.QuerySet):
 
 class Account(models.Model):
     id = ULIDField("ID", primary_key=True)
-    name = models.CharField("Name", max_length=255, unique=True)
+    # Unique through the named constraints of `Meta`, not `unique=True`: a
+    # duplicate then reports their message rather than the raw database error,
+    # which names an index `_database_error_to_validation_error` cannot map.
+    name = models.CharField("Name", max_length=255)
     code = models.CharField(
         "Code",
         max_length=50,
-        unique=True,
         # Becomes the `pattern` of the generated pydantic field, so a bad code is
         # refused before any query. The check constraint below covers the ORM side.
         validators=[RegexValidator(ACCOUNT_CODE_PATTERN)],
@@ -79,6 +81,16 @@ class Account(models.Model):
         verbose_name = "Account"
         verbose_name_plural = "Accounts"
         constraints = [
+            models.UniqueConstraint(
+                fields=["code"],
+                name="unique_account_code",
+                violation_error_message="An account with that code already exists.",
+            ),
+            models.UniqueConstraint(
+                fields=["name"],
+                name="unique_account_name",
+                violation_error_message="An account with that name already exists.",
+            ),
             models.CheckConstraint(
                 condition=Q(code__regex=ACCOUNT_CODE_PATTERN),
                 name="account_code_format",
