@@ -91,33 +91,34 @@ class UserServiceTest(UserServiceCommonMixin, ServiceTestCaseMixin, TestCase):
 
     @parameterized.expand(
         [
+            # A database constraint: reported for the whole batch, under no index.
             (
                 "login taken",
                 {"login": "frodon@lacomte.com", "email": "frodon2@lacomte.com", "roles": []},
                 5,
+                "__all__",
+                "__all__",
                 "A user with that username already exists.",
             ),
+            # `validate_data`: keyed by the index of the payload, on `roles`,
+            # before the user row is written -- four queries fewer than the
+            # constraint used to cost, rolling back an INSERT.
             (
-                # The constraint is on the relation, not on `User`: its
-                # `violation_error_message` is not found, and the raw database
-                # error is handed back instead. Pinned as found.
                 "two roles of one category",
                 {"login": "pipin@lacomte.com", "email": "pipin@lacomte.com", "roles": [ROLE_HOBBIT_ID, ROLE_WIZARD_ID]},
-                9,
-                "A global validation error occurred: ",
+                5,
+                0,
+                "roles",
+                "A user can only have one role per category: FELLOWSHIP.",
             ),
         ]
     )
-    def test_create_invalid(self, label, payload, query_count, message):
+    def test_create_invalid(self, label, payload, query_count, error_owner, error_key, message):
         with self.assertNumQueries(query_count):
             with self.assertRaises(ServiceValidationMultiError) as ctx:
                 async_to_sync(self.service.create)([UserCreateSchema(**payload)])
 
-        # A database constraint is reported for the whole batch, under no index.
-        errors = ctx.exception.dict()
-        self.assertEqual(list(errors), ["__all__"])
-        self.assertEqual(len(errors["__all__"]["__all__"]), 1)
-        self.assertTrue(errors["__all__"]["__all__"][0].startswith(message), errors)
+        self.assertEqual(ctx.exception.dict(), {error_owner: {error_key: [message]}})
         self.assertEqual(User.objects.count(), 3)
 
     def test_create_refuses_a_dict(self):
@@ -363,9 +364,10 @@ class UserServiceTest(UserServiceCommonMixin, ServiceTestCaseMixin, TestCase):
         [
             # Resolved before any row is read: keyed by the index of the payload.
             ("unknown role", {"roles": ["SHIRE_UNKNOWN"]}, 2, {0: ["roles"]}),
-            # Database constraints: keyed on nobody. See `test_create_invalid`
-            # about the raw message of the roles.
-            ("two roles of one category", {"roles": [ROLE_HOBBIT_ID, ROLE_WIZARD_ID]}, 10, {"__all__": None}),
+            # `validate_data` during an update: keyed by the pk of the record,
+            # before anything is written.
+            ("two roles of one category", {"roles": [ROLE_HOBBIT_ID, ROLE_WIZARD_ID]}, 6, {UUID(USER_GOLLUM_ID): ["roles"]}),
+            # A database constraint: keyed on nobody.
             ("login taken", {"login": "frodon@lacomte.com"}, 6, {"__all__": None}),
         ]
     )
