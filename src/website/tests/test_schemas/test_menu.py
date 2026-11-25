@@ -2,7 +2,7 @@ from django.test import SimpleTestCase
 from parameterized import parameterized
 from pydantic import ValidationError as PydanticValidationError
 
-from website.schemas import MenuCreateSchema, MenuUpdateSchema
+from website.schemas import MenuCreateSchema, MenuFilterSchema, MenuUpdateSchema
 
 
 class MenuSchemaTest(SimpleTestCase):
@@ -25,3 +25,9 @@ class MenuSchemaTest(SimpleTestCase):
     def test_path_is_on_no_write_schema(self, schema):
         # Materialized by `MenuQuerySet`, never written by a client.
         self.assertNotIn("parent_path", schema.model_fields)
+
+    def test_filter_schema_root_is_a_ulid(self):
+        with self.assertRaises(PydanticValidationError) as ctx:
+            MenuFilterSchema(root="journeys")
+
+        self.assertEqual([error["loc"][0] for error in ctx.exception.errors()], ["root"])

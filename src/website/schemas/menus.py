@@ -1,6 +1,8 @@
 from typing import Optional
 
+from django.db.models import Q
 from pydantic import Field
+from ulid import ULID
 
 from core.api.filters import FilterSchema, MultiValue
 from core.schemas import ModelSchema
@@ -84,11 +86,12 @@ class MenuFilterSchema(FilterSchema):
         description="Comma-separated identifiers of the direct parent items, `null` "
         "for the top-level items.",
     )
-    root: Optional[str] = Field(
+    # `ULID` rather than `str`: a malformed id is refused (422) instead of
+    # silently matching nothing.
+    root: Optional[ULID] = Field(
         None,
-        q="parent_path__startswith",
         title="Root",
-        description="Identifier of an ancestor: returns the whole subtree below it.",
+        description="Identifier of an item: returns it and the whole subtree below it.",
     )
     # `target_page` and not `page`: the list route flattens every query
     # parameter into one signature, where `page` and `page_size` already belong
@@ -107,3 +110,18 @@ class MenuFilterSchema(FilterSchema):
         title="Search Term",
         description="Search term in the name or the target link.",
     )
+
+    def filter_root(self, value):
+        """The item and every item below it, at any depth.
+
+        Not a `parent_path__startswith` on the pk: a path starts at the top of
+        its tree, so an inner item is the prefix of nothing -- the bug
+        `MenuService.read_tree` was fixed of, which reads the root's own path
+        first. Here, a containment does it in one condition: a path is ULIDs of
+        a fixed length joined by `/`, which a ULID never contains, so `"<pk>/"`
+        only matches a whole segment. It does not use the prefix index of
+        `parent_path`, which on a table of menus is no loss.
+        """
+        if not value:
+            return Q()
+        return Q(parent_path__contains=f"{value}/")
