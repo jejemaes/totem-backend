@@ -103,10 +103,8 @@ class MenuAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
             ({"target_page": PAGE_ID3}, []),
             # `root` returns the whole subtree, the root included.
             ({"root": MENU_ID1}, ALL_MENU_IDS),
-            # `root` is a `parent_path__startswith` on the pk itself, and a path
-            # always starts at a top-level item: an inner node matches nothing.
-            # Pinned so the limitation stays known.
-            ({"root": MENU_ID3}, []),
+            # At any depth: an inner item is the root of its subtree too.
+            ({"root": MENU_ID3}, [MENU_ID3, MENU_ID4, MENU_ID5]),
         ]
     )
     def test_list_filters(self, filters, expected_pks):
@@ -117,9 +115,14 @@ class MenuAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(data["count"], len(expected_pks))
         self.assertEqual({item["id"] for item in data["results"]}, set(expected_pks))
 
-    # No `test_list_invalid_filters`: every filter of `MenuFilterSchema` is a
-    # string, so no value can fail to parse -- an id that is not a ULID matches
-    # nothing rather than answering 422.
+    # `root` is the only filter that can fail to parse: the others are strings,
+    # so an id there that is not a ULID matches nothing rather than answering 422.
+    @parameterized.expand([({"root": "not-a-ulid"}, "root")])
+    def test_list_invalid_filters(self, filters, error_field):
+        response = self.do_request("GET", self.url, params=filters)
+
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual([detail["loc"][-1] for detail in response.json()["detail"]], [error_field])
 
     @parameterized.expand(
         [

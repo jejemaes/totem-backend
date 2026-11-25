@@ -157,10 +157,10 @@ class MenuServiceTest(MenuServiceCommonMixin, ServiceTestCaseMixin, TestCase):
             ("no filter", None, ALL_MENU_IDS),
             # The filter schema of the API, with its own lookups.
             ("a whole tree", MenuFilterSchema(root=MENU_ROOT_ID), [MENU_ROOT_ID, MENU_FELLOWSHIP_ID, MENU_JOURNEYS_ID, MENU_SHIRE_ID, MENU_MORDOR_ID]),
-            # Pinned as found, worth a fix of its own: a path starts at the top of
-            # its tree, so an inner ancestor is the prefix of nothing -- the bug
-            # `read_tree` was fixed of, still in this filter.
-            ("the subtree of an inner item", MenuFilterSchema(root=MENU_JOURNEYS_ID), []),
+            # At any depth: an inner item is the root of its subtree too.
+            ("the subtree of an inner item", MenuFilterSchema(root=MENU_JOURNEYS_ID), [MENU_JOURNEYS_ID, MENU_SHIRE_ID, MENU_MORDOR_ID]),
+            ("a leaf", MenuFilterSchema(root=MENU_SHIRE_ID), [MENU_SHIRE_ID]),
+            ("an unknown item", MenuFilterSchema(root=MENU_UNKNOWN_ID), []),
             ("the direct children", MenuFilterSchema(parent=[MENU_ROOT_ID]), [MENU_FELLOWSHIP_ID, MENU_JOURNEYS_ID]),
             ("the top-level items", MenuFilterSchema(parent=["null"]), [MENU_ROOT_ID, MENU_WEST_ID]),
             ("by target page", MenuFilterSchema(target_page=[PAGE_SHIRE_ID]), [MENU_SHIRE_ID]),
