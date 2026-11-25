@@ -8,6 +8,7 @@ from authentication.models import ApiKey, RefreshToken
 from authentication.schemas import ApiKeyCreateSchema, ApiKeyFilterSchema
 from authentication.services import ApiKeyService
 from authentication.tokens import hash_secret
+from core.services.exceptions import ServiceValidationMultiError
 from core.testing import ServiceTestCaseMixin
 
 from authentication.tests.test_services.common_api_key import (
@@ -18,6 +19,8 @@ from authentication.tests.test_services.common_api_key import (
 )
 
 EXPIRES_AT = datetime(2030, 1, 1, tzinfo=dt_timezone.utc)
+
+NAME_TAKEN = "An API key with that name already exists."
 
 
 class ApiKeyServiceTest(ApiKeyServiceCommonMixin, ServiceTestCaseMixin, TestCase):
@@ -59,9 +62,22 @@ class ApiKeyServiceTest(ApiKeyServiceCommonMixin, ServiceTestCaseMixin, TestCase
         self.assertEqual({name: getattr(stored, name) for name in expected_values}, expected_values)
         self.assertIsNone(stored.secret)
 
-    # No `test_create_invalid`: the one rule, a registered public scope, is the
-    # `choices` of the field, refused when the schema is built -- see
-    # `test_schemas.test_api_key`. A `validate_data` would be dead code.
+    @parameterized.expand(
+        [
+            # A named constraint: reported with its message, under no index. The
+            # other rule, a registered public scope, is the `choices` of the field,
+            # refused when the schema is built -- see `test_schemas.test_api_key`.
+            ("name taken", {"name": "Red Book Archive", "scope": []}, NAME_TAKEN),
+            ("name of a revoked key", {"name": "Palantír", "scope": []}, NAME_TAKEN),
+        ]
+    )
+    def test_create_invalid(self, label, payload, message):
+        with self.assertNumQueries(5):
+            with self.assertRaises(ServiceValidationMultiError) as ctx:
+                async_to_sync(self.service.create)([ApiKeyCreateSchema(**payload)])
+
+        self.assertEqual(ctx.exception.dict(), {"__all__": {"__all__": [message]}})
+        self.assertEqual(ApiKey.objects.count(), 2)
 
     def test_create_refuses_a_dict(self):
         with self.assertNumQueries(0):

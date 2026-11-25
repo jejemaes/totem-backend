@@ -77,7 +77,8 @@ class ApiKey(ScopedPrincipalMixin, models.Model):
         max_length=255,
         null=False,
         blank=False,
-        unique=True,
+        # Unique through the named constraint of `Meta`, not `unique=True`: a
+        # duplicate then reports its message rather than the raw database error.
         help_text="What this key is for. Unique, so it can be named in an operational runbook.",
     )
     secret_hash = models.CharField(
@@ -122,6 +123,13 @@ class ApiKey(ScopedPrincipalMixin, models.Model):
     class Meta:
         verbose_name = "API Key"
         verbose_name_plural = "API Keys"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["name"],
+                name="unique_api_key_name",
+                violation_error_message="An API key with that name already exists.",
+            ),
+        ]
 
     def __str__(self):
         return self.name
