@@ -23,8 +23,26 @@ class UserService(
     DeleteMixin,
     ServiceBase[User],
 ):
-    # def validate_data(self, data, instance):
-    #     raise self.ValidationError({"field": "validation error"})
+    def validate_data(self, data, instance):
+        """A user holds one role per category at most.
+
+        The `unique_role_category` constraint holds the line, but it sits on the
+        relation, not on `User`: violated, it reports the raw database error,
+        unkeyed, once the user row is written. Restated here, it names `roles`
+        and refuses before any write. Costs no query: the roles arrive resolved,
+        as instances. Only the roles of the payload: an update replaces them all.
+        """
+        roles = data.get("roles")
+        if not roles:
+            return
+        # The category of a role is the part of its id before the first `_`, as
+        # `SPLIT_PART("role_id", '_', 1)` in the constraint.
+        categories = [role.pk.split("_", 1)[0] for role in roles]
+        duplicates = sorted({category for category in categories if categories.count(category) > 1})
+        if duplicates:
+            raise self.ValidationError(
+                f"A user can only have one role per category: {', '.join(duplicates)}.", key="roles"
+            )
 
     # Password
     #
