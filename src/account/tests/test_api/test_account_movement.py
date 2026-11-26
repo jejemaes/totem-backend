@@ -5,7 +5,7 @@ from django.utils.dateparse import parse_date, parse_datetime
 from freezegun import freeze_time
 from parameterized import parameterized
 
-from account.models import Account, AccountMovement
+from account.models import Account, AccountMovement, Invoice
 from authentication.testing import mint_access_token
 from core.testing import APITestCaseMixin
 from user.access_rights import get_user_scopes
@@ -41,6 +41,8 @@ MOVEMENT_FIELDS = [
     "reference",
     "category",
     "contact",
+    "origin_type",
+    "invoice",
     "create_date",
     "update_date",
 ]
@@ -553,6 +555,31 @@ class AccountMovementAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(AccountMovement.objects.get(pk=MOVEMENT_ID3).account_id, ACCOUNT_ID1)
 
+    @parameterized.expand(
+        [
+            ("the name", {"name": "Old Toby"}, 200, None),
+            ("the contact", {"contact": None}, 200, None),
+            ("the amount", {"amount": "-12.00"}, 422, "amount"),
+            ("the date", {"date": "2026-10-01"}, 422, "date"),
+            ("the reference", {"reference": "OTHER"}, 422, "reference"),
+        ]
+    )
+    def test_update_booked_movement(self, label, data, status_code, error_field):
+        # Booked from an invoice: its amount, date and reference are the invoice's.
+        invoice = Invoice.objects.create(
+            date="2026-10-15", contact=self.contact_tobold, account=self.account_shire, amount_total=Decimal("100"),
+        )
+        AccountMovement.objects.filter(pk=MOVEMENT_ID3).update(origin_type="invoice", invoice=invoice)
+
+        response = self.do_request("PATCH", self.url_detail, data=data)
+
+        self.assertEqual(response.status_code, status_code, response.json())
+        if error_field:
+            self.assertEqual([detail["loc"][-1] for detail in response.json()["detail"]], [error_field])
+            self.assertEqual(AccountMovement.objects.get(pk=MOVEMENT_ID3).amount, Decimal("-20.50"))
+        else:
+            self.assert_api_format(response.json(), AccountMovement.objects.get(pk=MOVEMENT_ID3))
+
     def test_update_not_found(self):
         response = self.do_request("PATCH", f"{self.url}{MOVEMENT_ID4}/", data=self.payload_update)
 
@@ -699,6 +726,15 @@ class AccountMovementAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                     api_data["contact"],
                     {"id": obj.contact.pk, "display_name": obj.contact.display_name, "is_company": obj.contact.is_company},
                 )
+        # Read only: a movement entered here has no origin. A booked one is
+        # tested with the document booking it.
+        if "origin_type" in fields:
+            self.assertEqual(api_data["origin_type"], obj.origin_type)
+        if "invoice" in fields:
+            if obj.invoice is None:
+                self.assertIsNone(api_data["invoice"])
+            else:
+                self.assertEqual(api_data["invoice"]["id"], obj.invoice_id)
         if "date" in fields:
             self.assertEqual(parse_date(api_data["date"]), obj.date)
         for date_field in ("create_date", "update_date"):

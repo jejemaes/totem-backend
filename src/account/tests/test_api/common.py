@@ -51,6 +51,7 @@ MOVEMENT_SCOPES = [
     "totem.accountmovement.update",
     "totem.accountmovement.delete",
 ]
+INVOICE_SCOPES = ["totem.invoice.create", "totem.invoice.read", "totem.invoice.update", "totem.invoice.delete"]
 BUDGET_SCOPES = ["totem.budget.create", "totem.budget.read", "totem.budget.update", "totem.budget.delete"]
 
 PERMISSION_DENIED = {"detail": ["You do not have permission to perform this action."]}

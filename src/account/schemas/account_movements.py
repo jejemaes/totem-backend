@@ -11,6 +11,7 @@ from account.models import AccountMovement
 
 from .account_categories import AccountCategoryDisplayNameSchema
 from .accounts import AccountDisplayNameSchema
+from .invoices import InvoiceDisplayNameSchema
 
 # ----------------------------------------------------
 # API Schemas
@@ -19,14 +20,21 @@ from .accounts import AccountDisplayNameSchema
 MOVEMENT_FIELDS = ["amount", "name", "description", "date", "reference", "category", "contact"]
 
 
+class AccountMovementDisplayNameSchema(ModelSchema):
+    class Meta:
+        model = AccountMovement
+        fields = ["id", "name", "amount", "date"]
+
+
 class AccountMovementSchema(ModelSchema):
     account: Optional[AccountDisplayNameSchema] = None
     category: Optional[AccountCategoryDisplayNameSchema] = None
     contact: Optional[ContactDisplayNameSchema] = None
+    invoice: Optional[InvoiceDisplayNameSchema] = None
 
     class Meta:
         model = AccountMovement
-        fields = ["id", "account", *MOVEMENT_FIELDS, "create_date", "update_date"]
+        fields = ["id", "account", *MOVEMENT_FIELDS, "origin_type", "invoice", "create_date", "update_date"]
         optional_fields = "__all__"
 
 
@@ -47,7 +55,8 @@ class AccountMovementUpdateSchema(ModelSchema):
 # No `account` in the update schema: moving a movement to another account would
 # move money between their balances behind a correction of a line, and would have
 # to re-check the scope of its category. Delete it and create it on the right one.
-# No display name schema: nothing relates to a movement.
+# No `origin_type` nor `invoice` in any write schema: a movement with an origin is
+# booked by its document, never by hand.
 
 # ----------------------------------------------------
 # Filters Schemas
@@ -74,6 +83,19 @@ class AccountMovementFilterSchema(FilterSchema):
         title="Contact",
         description="Comma-separated identifiers of the contacts, `null` for the "
         "movements without counterparty.",
+    )
+    origin_type: MultiValue(str) = Field(
+        None,
+        q="origin_type",
+        title="Origin Type",
+        description="Comma-separated origin types (`invoice`), `null` for the "
+        "movements entered by hand.",
+    )
+    invoice: MultiValue(str) = Field(
+        None,
+        q="invoice__id",
+        title="Invoice",
+        description="Comma-separated identifiers of the invoices the movements were booked from.",
     )
     date_from: Optional[date] = Field(
         None,

@@ -4,7 +4,7 @@
     "pk": "ACCOUNT_ADMIN",
     "fields": {
         "name": "Administrator",
-        "permissions": "[\"totem.account.create\", \"totem.account.read\", \"totem.account.update\", \"totem.account.delete\", \"totem.accountcategory.create\", \"totem.accountcategory.read\", \"totem.accountcategory.update\", \"totem.accountcategory.delete\", \"totem.accountmovement.create\", \"totem.accountmovement.read\", \"totem.accountmovement.update\", \"totem.accountmovement.delete\"]",
+        "permissions": "[\"totem.account.create\", \"totem.account.read\", \"totem.account.update\", \"totem.account.delete\", \"totem.accountcategory.create\", \"totem.accountcategory.read\", \"totem.accountcategory.update\", \"totem.accountcategory.delete\", \"totem.accountmovement.create\", \"totem.accountmovement.read\", \"totem.accountmovement.update\", \"totem.accountmovement.delete\", \"totem.invoice.create\", \"totem.invoice.read\", \"totem.invoice.update\", \"totem.invoice.delete\"]",
         "rules": "[]"
     }
 },
@@ -13,7 +13,7 @@
     "pk": "ACCOUNT_READER",
     "fields": {
         "name": "Reader",
-        "permissions": "[\"totem.account.read\", \"totem.accountcategory.read\", \"totem.accountmovement.read\"]",
+        "permissions": "[\"totem.account.read\", \"totem.accountcategory.read\", \"totem.accountmovement.read\", \"totem.invoice.read\"]",
         "rules": "[]"
     }
 },

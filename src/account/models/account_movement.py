@@ -1,6 +1,7 @@
 from django.db import models
 from django.utils import timezone
 
+from account.choices import MovementOriginType
 from core.orm.fields import ULIDField
 
 
@@ -60,6 +61,28 @@ class AccountMovement(models.Model):
         on_delete=models.SET_NULL,
         help_text="Counterparty of the movement (a supplier, a customer...).",
     )
+    # The document a movement was booked from: one foreign key per kind, which the
+    # `account_movement_origin` constraint ties to `origin_type`. Rather than a
+    # generic foreign key: a real column per kind keeps the integrity, the
+    # `on_delete` and the joins. Both empty for a movement entered by hand.
+    origin_type = models.CharField(
+        "Origin Type",
+        max_length=16,
+        choices=MovementOriginType.choices,
+        null=True,
+        blank=True,
+        help_text="The kind of document the movement was booked from; empty when entered by hand.",
+    )
+    invoice = models.ForeignKey(
+        "account.Invoice",
+        verbose_name="Invoice",
+        related_name="account_movements",
+        null=True,
+        blank=True,
+        # The ledger keeps what was paid: an invoice with movements stays.
+        on_delete=models.PROTECT,
+        help_text="The invoice whose payment booked the movement.",
+    )
 
     create_date = models.DateTimeField("Create Date", auto_now_add=True)
     update_date = models.DateTimeField("Update Date", auto_now=True)
@@ -79,6 +102,15 @@ class AccountMovement(models.Model):
                 condition=~models.Q(amount=0),
                 name="account_movement_amount_not_zero",
                 violation_error_message="The amount cannot be zero.",
+            ),
+            # One branch per origin type, extended with each new one.
+            models.CheckConstraint(
+                condition=(
+                    models.Q(origin_type__isnull=True, invoice__isnull=True)
+                    | models.Q(origin_type=MovementOriginType.INVOICE, invoice__isnull=False)
+                ),
+                name="account_movement_origin",
+                violation_error_message="The origin of the movement does not match its origin type.",
             ),
         ]
 

@@ -24,6 +24,11 @@ register_permission("totem.accountmovement.read", "Read Account Movements", is_p
 register_permission("totem.accountmovement.update", "Update Account Movements", is_public=True)
 register_permission("totem.accountmovement.delete", "Delete Account Movements", is_public=True)
 
+register_permission("totem.invoice.create", "Create Invoices", is_public=True)
+register_permission("totem.invoice.read", "Read Invoices", is_public=True)
+register_permission("totem.invoice.update", "Update Invoices", is_public=True)
+register_permission("totem.invoice.delete", "Delete Invoices", is_public=True)
+
 register_permission("totem.budget.create", "Create Budgets", is_public=True)
 register_permission("totem.budget.read", "Read Budgets", is_public=True)
 register_permission("totem.budget.update", "Update Budgets", is_public=True)
@@ -33,7 +38,7 @@ register_permission("totem.budget.delete", "Delete Budgets", is_public=True)
 # Access rules
 # ---------------------------------------------------------
 
-# None on accounts, categories and movements: whoever holds a scope reaches all
+# None on accounts, categories, movements and invoices: whoever holds a scope reaches all
 # of them.
 #
 # The budgets have one rule per model and per reach. The positions and lines are
