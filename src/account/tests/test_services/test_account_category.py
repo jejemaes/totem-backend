@@ -262,8 +262,9 @@ class AccountCategoryServiceTest(AccountMovementServiceCommonMixin, ServiceTestC
     @parameterized.expand(
         [
             # `AccountMovement.category` is SET_NULL: the movements stay, uncategorized.
-            ("a category in use", {"id": CATEGORY_GENERAL_ID}, 13, 1, [MOVEMENT_BREAKFAST_ID]),
-            ("several", {"account__isnull": False}, 13, 2, [MOVEMENT_PIPEWEED_ID]),
+            # `Invoice.category` too: one UPDATE more, even when no invoice has it.
+            ("a category in use", {"id": CATEGORY_GENERAL_ID}, 14, 1, [MOVEMENT_BREAKFAST_ID]),
+            ("several", {"account__isnull": False}, 14, 2, [MOVEMENT_PIPEWEED_ID]),
             ("nothing matches", {"name": "Lembas"}, 5, 0, []),
         ]
     )

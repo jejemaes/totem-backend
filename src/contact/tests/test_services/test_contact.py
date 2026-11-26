@@ -344,9 +344,10 @@ class ContactServiceTest(ContactServiceCommonMixin, ServiceTestCaseMixin, TestCa
 
     @parameterized.expand(
         [
-            ("a person with tags", {"id": CONTACT_SAM_ID}, 9, 1, {}),
+            # The collector also reads the invoices of the contact (PROTECT).
+            ("a person with tags", {"id": CONTACT_SAM_ID}, 10, 1, {}),
             # `Contact.parent` is SET_NULL: its persons stay, in no company.
-            ("a company with persons", {"id": CONTACT_PONY_ID}, 9, 1, {CONTACT_SAM_ID: None}),
+            ("a company with persons", {"id": CONTACT_PONY_ID}, 10, 1, {CONTACT_SAM_ID: None}),
             ("nothing matches", {"id": CONTACT_UNKNOWN_ID}, 4, 0, {CONTACT_SAM_ID: CONTACT_PONY_ID}),
         ]
     )

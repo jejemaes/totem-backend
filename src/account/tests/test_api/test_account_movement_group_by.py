@@ -333,7 +333,7 @@ class AccountMovementGroupByAPITest(CommonTestMixin, APITestCaseMixin, TestCase)
         request = components["AccountMovementGroupBySchema"]["properties"]
         self.assertEqual(
             request["group_by_fields"]["items"]["enum"],
-            ["account", "category", "contact", "date_day", "date_week", "date_month", "date_quarter", "date_year"],
+            ["account", "category", "contact", "origin_type", "date_day", "date_week", "date_month", "date_quarter", "date_year"],
         )
         self.assertEqual(
             request["measures"]["items"]["enum"],

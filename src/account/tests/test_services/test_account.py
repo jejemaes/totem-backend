@@ -253,10 +253,12 @@ class AccountServiceTest(AccountMovementServiceCommonMixin, ServiceTestCaseMixin
 
     @parameterized.expand(
         [
-            # The collector reads each table reaching the account, and its own
-            # category goes with it (cascade), with what reaches the category.
-            ("an account with a category", {"id": ACCOUNT_BREE_ID}, 21, 1, [ACCOUNT_SHIRE_ID, ACCOUNT_MORIA_ID]),
-            ("an account without category", {"id": ACCOUNT_MORIA_ID}, 15, 1, [ACCOUNT_SHIRE_ID, ACCOUNT_BREE_ID]),
+            # The collector reads each table reaching the account -- the invoices
+            # included, twice: for the computed fields, then for the delete -- and
+            # its own category goes with it (cascade), with what reaches the category:
+            # the invoices again, set to no category.
+            ("an account with a category", {"id": ACCOUNT_BREE_ID}, 24, 1, [ACCOUNT_SHIRE_ID, ACCOUNT_MORIA_ID]),
+            ("an account without category", {"id": ACCOUNT_MORIA_ID}, 17, 1, [ACCOUNT_SHIRE_ID, ACCOUNT_BREE_ID]),
             ("nothing matches", {"code": "MORDOR"}, 5, 0, ALL_ACCOUNT_IDS),
         ]
     )
@@ -277,8 +279,8 @@ class AccountServiceTest(AccountMovementServiceCommonMixin, ServiceTestCaseMixin
         ]
     )
     def test_delete_protected(self, label, filters, relation):
-        # Refused by the collector, before any DELETE.
-        with self.assertNumQueries(12):
+        # Refused by the collector, before any DELETE; it reads the invoices too.
+        with self.assertNumQueries(13):
             with self.assertRaises(ServiceValidationMultiError) as ctx:
                 async_to_sync(self.service.delete)(filters)
 

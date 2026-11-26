@@ -1,5 +1,9 @@
+import mimetypes
+
 from django.db.models import Q, Sum
 from django.utils import timezone
+
+from base.files.validation import validate_upload
 
 from core.services import (
     CreateMixin,
@@ -10,6 +14,8 @@ from core.services import (
     ReadMixin,
     ResequenceMixin,
     ServiceBase,
+    ServiceValidationError,
+    ServiceValidationMultiError,
     UpdateMixin,
     date_dimensions,
     number_measures,
@@ -22,6 +28,7 @@ from account.models import (
     Budget,
     BudgetLine,
     BudgetPosition,
+    Invoice,
 )
 from account.schemas import (
     AccountCategoryCreateSchema,
@@ -36,6 +43,8 @@ from account.schemas import (
     BudgetPositionCreateSchema,
     BudgetPositionUpdateSchema,
     BudgetUpdateSchema,
+    InvoiceCreateSchema,
+    InvoiceUpdateSchema,
 )
 
 
@@ -71,15 +80,22 @@ class AccountMovementService(
     """Every write here goes stale the stored totals of the accounts concerned,
     which the computed-field context of the write refreshes before it commits.
 
-    Grouped by account, category, contact and period. The amount is signed, so its
-    sum is the balance: the debits and the credits are measures of their own, as
-    there is no direction column to group by.
+    Grouped by account, category, contact, origin and period. The amount is signed,
+    so its sum is the balance: the debits and the credits are measures of their
+    own, as there is no direction column to group by.
+
+    A movement with an origin (`origin_type`) is booked by its document, which
+    owns its amount, date and reference: those are refused here on update, and
+    the movement on delete, so the ledger cannot disagree with the document.
+    Correct the document instead. The rest -- its name, description, category,
+    contact -- is edited as on any movement.
     """
 
     group_by_dimensions = {
         "account": Dimension("account"),
         "category": Dimension("category"),
         "contact": Dimension("contact"),
+        "origin_type": Dimension("origin_type"),
         **date_dimensions("date", ["day", "week", "month", "quarter", "year"]),
     }
     group_by_measures = {
@@ -91,8 +107,21 @@ class AccountMovementService(
         **share_measure("amount", exclude=["category"]),
     }
 
+    # What the document a movement was booked from owns.
+    ORIGIN_OWNED_FIELDS = ("amount", "date", "reference")
+
     def validate_data(self, data, instance):
         error = self.ValidationError({})
+
+        if instance is not None and instance.origin_type is not None:
+            for name in self.ORIGIN_OWNED_FIELDS:
+                if name in data:
+                    error.add_message(
+                        "This movement was booked from a document: change the document instead.",
+                        key=name,
+                    )
+            if error:
+                raise error
 
         # Also a check constraint, which only reports an unkeyed integrity error.
         if "amount" in data and data["amount"] == 0:
@@ -116,6 +145,98 @@ class AccountMovementService(
 
         if error:
             raise error
+
+    def _delete_preprocess(self, queryset):
+        # On the queryset about to be deleted: a single booked movement refuses
+        # the whole batch, reported as a `PROTECT` would be.
+        if queryset.filter(origin_type__isnull=False).exists():
+            raise ServiceValidationMultiError(
+                {"__all__": ServiceValidationError(
+                    "A movement booked from a document cannot be deleted: change the document instead."
+                )},
+                code="protected_error",
+            )
+        return queryset
+
+
+class InvoiceService(
+    CreateMixin[InvoiceCreateSchema],
+    ReadMixin,
+    GroupByMixin,
+    UpdateMixin[InvoiceUpdateSchema],
+    DeleteMixin,
+    ServiceBase[Invoice],
+):
+    """`number` is assigned by `InvoiceQuerySet.bulk_create`; `file_mimetype` is
+    derived from the uploaded file by `_create_preprocess_values`, as for a
+    document.
+
+    Deleting an invoice with movements is refused by their `PROTECT` foreign key,
+    reported as a validation error.
+    """
+
+    # A scanned invoice can be a large PDF, as a document.
+    MAX_UPLOAD_SIZE = 20 * 1024 * 1024
+
+    group_by_dimensions = {
+        "account": Dimension("account"),
+        "category": Dimension("category"),
+        "contact": Dimension("contact"),
+        "currency_code": Dimension("currency_code"),
+        **date_dimensions("date", ["month", "quarter", "year"]),
+    }
+    group_by_measures = {
+        **number_measures("amount_total", ["sum"]),
+    }
+
+    def validate_data(self, data, instance):
+        error = self.ValidationError({})
+
+        if "amount_total" in data and data["amount_total"] is not None and data["amount_total"] <= 0:
+            error.add_message("The total amount must be positive.", key="amount_total")
+
+        # Policy, as for a movement: today in the timezone of the site.
+        date = data.get("date")
+        if date is not None and date > timezone.localdate():
+            error.add_message("The date cannot be in the future.", key="date")
+
+        # The rule of the movements its payments book, which take this category:
+        # one of another account would be refused there. Checked when either
+        # side changes, the other one read from the invoice.
+        if "category" in data or "account" in data:
+            if "category" in data:
+                category = data["category"]
+            else:
+                # Only when the account changes under a category: one query then.
+                category = instance.category if instance is not None and instance.category_id else None
+            # A null account is refused by the field itself.
+            account_id = getattr(data["account"], "pk", None) if "account" in data else instance.account_id
+            if category is not None and category.account_id is not None and category.account_id != account_id:
+                error.add_message("This category belongs to another account.", key="category")
+
+        upload = data.get("file_content")
+        if instance is None and upload is not None:
+            try:
+                validate_upload(upload, self.MAX_UPLOAD_SIZE, key="file_content")
+                # Narrower than the floor of `validate_upload`: what a viewer of
+                # invoices can show.
+                mimetype = mimetypes.guess_type(upload.name or "")[0] or ""
+                if mimetype != "application/pdf" and not mimetype.startswith("image/"):
+                    raise self.ValidationError("The file must be a PDF or an image.", key="file_content")
+            except self.ValidationError as exc:
+                for key, messages in exc.message_dict.items():
+                    error.add_message(messages, key=key)
+
+        if error:
+            raise error
+
+    def _create_preprocess_values(self, internal_data):
+        for values in internal_data:
+            upload = values.get("file_content")
+            if upload is not None:
+                # From the filename, as `validate_upload` checked it.
+                values["file_mimetype"] = mimetypes.guess_type(upload.name or "")[0]
+        return internal_data
 
 
 class BudgetService(

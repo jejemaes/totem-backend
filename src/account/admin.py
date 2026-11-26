@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from account.models import Account, AccountCategory, AccountMovement, Budget, BudgetLine, BudgetPosition
+from account.models import Account, AccountCategory, AccountMovement, Budget, BudgetLine, BudgetPosition, Invoice
 
 # The admin writes through `Model.save()`, around the service layer: the business
 # rules of `account.services` are not applied here, and the stored totals of an
@@ -23,10 +23,23 @@ class AccountCategoryAdmin(admin.ModelAdmin):
 
 @admin.register(AccountMovement)
 class AccountMovementAdmin(admin.ModelAdmin):
-    list_display = ("date", "account", "name", "amount", "category", "contact", "reference")
-    list_filter = ("account", "category", "contact")
+    list_display = ("date", "account", "name", "amount", "category", "contact", "reference", "origin_type")
+    list_filter = ("account", "category", "contact", "origin_type")
     search_fields = ("name", "reference")
     date_hierarchy = "date"
+    # Booked by its document: the admin does not set an origin.
+    readonly_fields = ("origin_type", "invoice")
+
+
+@admin.register(Invoice)
+class InvoiceAdmin(admin.ModelAdmin):
+    list_display = ("number", "name", "date", "contact", "account", "amount_total", "currency_code")
+    list_filter = ("account", "category", "currency_code")
+    search_fields = ("number", "name", "reference")
+    date_hierarchy = "date"
+    # `file_mimetype` is derived by `InvoiceService` only: a file added here has
+    # none.
+    readonly_fields = ("number", "file_mimetype")
 
 
 class BudgetPositionInline(admin.TabularInline):

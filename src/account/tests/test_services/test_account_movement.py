@@ -342,11 +342,12 @@ class AccountMovementServiceTest(AccountMovementServiceCommonMixin, ServiceTestC
 
     @parameterized.expand(
         [
-            # The rows, the delete, then the refresh of the account's totals.
-            ("one movement", {"id": MOVEMENT_SALE_ID}, 11, 1, ("-100.50", "0", "-100.50")),
-            ("the debits", {"amount__lt": 0}, 11, 2, ("0", "150.00", "150.00")),
-            ("a whole account", {"account": ACCOUNT_SHIRE_ID}, 11, 3, ("0", "0", "0")),
-            ("nothing matches", {"id": MOVEMENT_UNKNOWN_ID}, 5, 0, SHIRE_TOTALS),
+            # The check that none was booked by a document, the rows, the delete,
+            # then the refresh of the account's totals.
+            ("one movement", {"id": MOVEMENT_SALE_ID}, 12, 1, ("-100.50", "0", "-100.50")),
+            ("the debits", {"amount__lt": 0}, 12, 2, ("0", "150.00", "150.00")),
+            ("a whole account", {"account": ACCOUNT_SHIRE_ID}, 12, 3, ("0", "0", "0")),
+            ("nothing matches", {"id": MOVEMENT_UNKNOWN_ID}, 6, 0, SHIRE_TOTALS),
         ]
     )
     def test_delete(self, label, filters, query_count, affected, totals):
