@@ -17,7 +17,7 @@ class InvoiceServiceCommonMixin(AccountMovementServiceCommonMixin):
         INV/2026/00001  Tobold   SHIRE  100.00 EUR  (OLD-TOBY-7)  category SHIRE
         INV/2026/00002  Lobelia  BREE    40.00 USD                no category
 
-    Data only.
+    No payment: the `payment` app adds them. Data only.
     """
 
     @classmethod
@@ -34,3 +34,4 @@ class InvoiceServiceCommonMixin(AccountMovementServiceCommonMixin):
                 account=cls.account_bree, amount_total=Decimal("40.00"), currency_code="USD",
             ),
         ])
+        Invoice.objects.refresh_computed()

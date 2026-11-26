@@ -10,8 +10,8 @@ from account.tests.test_services.common_invoice import InvoiceServiceCommonMixin
 
 
 class InvoiceModelTest(InvoiceServiceCommonMixin, TestCase):
-    """ What `Invoice` holds on every write path: its number and its
-    constraints. """
+    """ What `Invoice` holds on every write path: its number, its constraints, its
+    payment status before any payment. """
 
     def test_number_follows_the_year(self):
         self.assertEqual(self.invoice_pipeweed.number, "INV/2026/00001")
@@ -40,6 +40,13 @@ class InvoiceModelTest(InvoiceServiceCommonMixin, TestCase):
     def test_amount_total_positive(self):
         with self.assertRaises(IntegrityError), transaction.atomic():
             Invoice.objects.filter(pk=self.invoice_ale.pk).update(amount_total=Decimal("0"))
+
+    def test_unpaid(self):
+        invoice = Invoice.objects.get(pk=self.invoice_pipeweed.pk)
+        self.assertEqual(
+            (invoice.amount_paid, invoice.amount_residual, invoice.payment_status),
+            (Decimal("0"), Decimal("100.00"), "not_paid"),
+        )
 
     # Utils
 

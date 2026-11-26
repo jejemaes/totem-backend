@@ -29,14 +29,15 @@ INVOICE_ID2 = "01JV0000000000000000000002"
 
 INVOICE_FIELDS = [
     "id", "number", "name", "reference", "date", "due_date", "contact", "account", "category", "description",
-    "amount_total", "currency_code", "file_content", "file_mimetype", "create_date", "update_date",
+    "amount_total", "currency_code", "file_content", "file_mimetype", "amount_paid",
+    "amount_residual", "payment_status", "create_date", "update_date",
 ]
 
 
 @freeze_time("2026-10-20 10:00:00")
 class InvoiceAPITest(CommonTestMixin, MediaRootTestMixin, APITestCaseMixin, TestCase):
     """ `/accounting/invoices/`: the multipart creation, the list and its filters,
-    the scopes.
+    the scopes. The payments of an invoice are tested in `payment`.
 
     No access rules tests: no `BaseRule` is registered for `Invoice`.
     """
@@ -54,6 +55,7 @@ class InvoiceAPITest(CommonTestMixin, MediaRootTestMixin, APITestCaseMixin, Test
                 account=cls.account_bree, amount_total=Decimal("40.00"), currency_code="USD",
             ),
         ])
+        Invoice.objects.refresh_computed()
         cls.role.permissions = INVOICE_SCOPES
         cls.role.rules = []
         cls.role.save()
@@ -81,12 +83,13 @@ class InvoiceAPITest(CommonTestMixin, MediaRootTestMixin, APITestCaseMixin, Test
         results = response.json()["results"]
         # Newest first.
         self.assertEqual([item["id"] for item in results], [INVOICE_ID1, INVOICE_ID2])
-        # Read back: the bulk-created instance still holds its date as a string.
+        # Read back: the bulk-created instance holds no paid amounts.
         self.assert_api_format(results[0], Invoice.objects.get(pk=INVOICE_ID1))
 
     @parameterized.expand(
         [
-            ("contact", {"contact": CONTACT_TOBOLD_ID}, [INVOICE_ID1]),
+            ("not paid", {"payment_status": "not_paid"}, [INVOICE_ID1, INVOICE_ID2]),
+            ("paid", {"payment_status": "paid"}, []),
             ("account", {"account": ACCOUNT_ID1}, [INVOICE_ID1]),
             ("category", {"category": CATEGORY_SHIRE_ID}, [INVOICE_ID1]),
             ("no category", {"category": "null"}, [INVOICE_ID2]),
@@ -181,7 +184,7 @@ class InvoiceAPITest(CommonTestMixin, MediaRootTestMixin, APITestCaseMixin, Test
 
         self.assertEqual(response.status_code, 200, response.json())
         invoice = Invoice.objects.get(pk=INVOICE_ID1)
-        self.assertEqual(invoice.amount_total, Decimal("80.00"))
+        self.assertEqual((invoice.amount_total, invoice.amount_residual), (Decimal("80.00"), Decimal("80.00")))
         self.assert_api_format(response.json(), invoice)
 
     @parameterized.expand(
@@ -213,9 +216,10 @@ class InvoiceAPITest(CommonTestMixin, MediaRootTestMixin, APITestCaseMixin, Test
     def assert_api_format(self, api_data, obj, fields=None):
         fields = fields or INVOICE_FIELDS
 
-        for name in ("id", "number", "name", "reference", "description", "currency_code", "file_mimetype"):
+        for name in ("id", "number", "name", "reference", "description", "currency_code", "file_mimetype", "payment_status"):
             self.assertEqual(api_data[name], getattr(obj, name))
-        self.assertEqual(Decimal(api_data["amount_total"]), obj.amount_total)
+        for name in ("amount_total", "amount_paid", "amount_residual"):
+            self.assertEqual(Decimal(api_data[name]), getattr(obj, name))
         self.assertEqual(api_data["date"], obj.date.isoformat())
         self.assertEqual(api_data["contact"]["id"], obj.contact_id)
         self.assertEqual(api_data["account"]["id"], obj.account_id)

@@ -1,13 +1,17 @@
 from collections import defaultdict
+from decimal import Decimal
 
 from django.db import connection, models, transaction
-from django.db.models import Q
+from django.db.models import Case, F, Q, Sum, Value, When
 from django.utils import timezone
 
+from account.choices import InvoicePaymentStatus
 from base.choices import CurrencyCode
 from base.files.storages import PrivateMediaFileSystemStorage
 from base.models.mixins import CleanupFileModelMixin, CleanupFileQuerysetMixin
-from core.orm.fields import ULIDField
+from core.orm.fields import ComputedField, ComputedQuerySetMixin, ULIDField
+
+from .account import amount_field
 
 INVOICE_NUMBER_PREFIX = "INV"
 # Any constant: the key of the advisory lock serializing the numbering.
@@ -51,7 +55,7 @@ def assign_invoice_numbers(invoices):
             invoice.number = f"{prefix}{sequence:05d}"
 
 
-class InvoiceQuerySet(CleanupFileQuerysetMixin, models.QuerySet):
+class InvoiceQuerySet(CleanupFileQuerysetMixin, ComputedQuerySetMixin, models.QuerySet):
 
     def bulk_create(self, objs, *args, **kwargs):
         # Here rather than in the service: the number must be unique whoever
@@ -67,12 +71,12 @@ class InvoiceQuerySet(CleanupFileQuerysetMixin, models.QuerySet):
 
 
 class Invoice(CleanupFileModelMixin, models.Model):
-    """A supplier invoice: what we owe a contact, to be paid from one of our
-    accounts.
+    """A supplier invoice: what we owe a contact, booked on one of our accounts.
 
-    The file is the original document, set at creation only: `queryset.update()`
-    does not go through `FileField.pre_save`, so an update could not store a new
-    one.
+    Paid by the payments of the `payment` app targeting it; this model only reads
+    them, through `payments`, the reverse accessor that app declares. The file is
+    the original document, set at creation only: `queryset.update()` does not go
+    through `FileField.pre_save`, so an update could not store a new one.
     """
 
     id = ULIDField("ID", primary_key=True)
@@ -136,6 +140,41 @@ class Invoice(CleanupFileModelMixin, models.Model):
     file_mimetype = models.CharField(
         "File Mimetype", max_length=64, null=True, blank=True, editable=False,
         help_text="Guessed from the name of the uploaded file, for the viewer to pick.",
+    )
+
+    # Stored: listed and filtered by. Only the `done` payments count; a pending
+    # one is not money gone yet.
+    amount_paid = ComputedField(
+        "Amount Paid",
+        output_field=amount_field(),
+        annotation_method=lambda: Sum(
+            "payments__amount", filter=Q(payments__state="done"), default=Decimal("0")
+        ),
+        depends_on=["payments", "payments__amount", "payments__state"],
+        stored=True,
+        help_text="Sum of the done payments of the invoice.",
+    )
+    # Both read their own row only: generated columns, recomputed by PostgreSQL
+    # in the very UPDATE refreshing `amount_paid`.
+    amount_residual = ComputedField(
+        "Amount Due",
+        output_field=amount_field(),
+        annotation_method=lambda: F("amount_total") - F("amount_paid"),
+        depends_on=["amount_total", "amount_paid"],
+        stored=True,
+        help_text="Total amount minus the amount paid.",
+    )
+    payment_status = ComputedField(
+        "Payment Status",
+        output_field=models.CharField(max_length=16, choices=InvoicePaymentStatus.choices),
+        annotation_method=lambda: Case(
+            # NULL is the value of a row not refreshed yet: nothing paid.
+            When(Q(amount_paid__isnull=True) | Q(amount_paid__lte=0), then=Value(InvoicePaymentStatus.NOT_PAID)),
+            When(amount_paid__gte=F("amount_total"), then=Value(InvoicePaymentStatus.PAID)),
+            default=Value(InvoicePaymentStatus.PARTIALLY_PAID),
+        ),
+        depends_on=["amount_total", "amount_paid"],
+        stored=True,
     )
 
     create_date = models.DateTimeField("Create Date", auto_now_add=True)

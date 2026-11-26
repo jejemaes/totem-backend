@@ -45,6 +45,9 @@ class InvoiceSchema(ModelSchema):
             *INVOICE_FIELDS,
             "file_content",
             "file_mimetype",
+            "amount_paid",
+            "amount_residual",
+            "payment_status",
             "create_date",
             "update_date",
         ]
@@ -93,7 +96,8 @@ class InvoiceUpdateSchema(ModelSchema):
 
 # No `number` in any write schema: assigned at creation. No `file_content` in the
 # update schema: `queryset.update()` skips `FileField.pre_save`, so a new file
-# would never reach the storage. `file_mimetype` is in no write schema: derived.
+# would never reach the storage. `file_mimetype` and the paid amounts are in no
+# write schema: derived.
 
 # ----------------------------------------------------
 # Filters Schemas
@@ -118,6 +122,12 @@ class InvoiceFilterSchema(FilterSchema):
         q="category__id",
         title="Default Category",
         description="Comma-separated identifiers of the categories, `null` for the invoices without one.",
+    )
+    payment_status: MultiValue(str, allow_null=False) = Field(
+        None,
+        q="payment_status",
+        title="Payment Status",
+        description="Comma-separated payment statuses (`not_paid`, `partially_paid`, `paid`).",
     )
     date_from: Optional[date] = Field(
         None,

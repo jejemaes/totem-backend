@@ -476,8 +476,9 @@ class BudgetPositionServiceTest(BudgetLineServiceCommonMixin, ServiceTestCaseMix
     def test_practical_amount_movement_deleted(self):
         service = self.get_service(AccountMovementService, user=self.user_frodon)
 
-        # The origin check included: see `AccountMovementServiceTest.test_delete`.
-        with self.assertNumQueries(18):
+        # The origin check and the nulling of `Payment.account_movement` included:
+        # see `AccountMovementServiceTest.test_delete`.
+        with self.assertNumQueries(20):
             async_to_sync(service.delete)({"id": MOVEMENT_BREAKFAST_ID})
 
         self.assertPositionTotals(POSITION_BREAKFAST_ID, "-1000.00", "0")

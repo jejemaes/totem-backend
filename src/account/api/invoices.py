@@ -7,6 +7,7 @@ from ninja.files import UploadedFile
 
 from authentication.authenticators import ApiKeyAuth, JWTAuth
 from core.api import DisplayNameModelControllerMixin, GroupByModelControllerMixin, ModelController
+from payment.api.mixins import PaymentTargetModelControllerMixin
 from totem.api import api_v1
 from user.security import TokenHasScopePermissionModelControllerMixin
 from account.schemas import (
@@ -14,6 +15,9 @@ from account.schemas import (
     InvoiceCreateSchema,
     InvoiceDisplayNameSchema,
     InvoiceFilterSchema,
+    InvoicePaymentCreateSchema,
+    InvoicePaymentSchema,
+    InvoicePaymentUpdateSchema,
     InvoiceSchema,
     InvoiceUpdateSchema,
 )
@@ -24,11 +28,17 @@ class InvoiceController(
     TokenHasScopePermissionModelControllerMixin,
     DisplayNameModelControllerMixin,
     GroupByModelControllerMixin,
+    PaymentTargetModelControllerMixin,
     ModelController,
 ):
     """The creation is `multipart/form-data`, as for a document: the form fields
     of `InvoiceCreateFormSchema` plus an optional `file_content` part. The update
-    is JSON: the file cannot change."""
+    is JSON: the file cannot change.
+
+    The payments of an invoice are listed under it, `/{id}/payments/`, with its
+    `read` scope; registered, changed and deleted there with its `update` scope,
+    since paying an invoice changes it.
+    """
 
     api = api_v1
     service = InvoiceService
@@ -42,11 +52,16 @@ class InvoiceController(
         "delete": ["totem.invoice.delete"],
         "display_name": ["totem.invoice.read"],
         "group_by": ["totem.invoice.read"],
+        "payment_read": ["totem.invoice.read"],
+        "payment": ["totem.invoice.update"],
     }
 
     list_response_schema: Schema = List[InvoiceSchema]
     list_filter_schema: FilterSchema = InvoiceFilterSchema
-    list_ordering_fields = ["number", "date", "due_date", "amount_total", "create_date"]
+    # The paid amounts are stored columns, so they can be ordered by.
+    list_ordering_fields = [
+        "number", "date", "due_date", "amount_total", "amount_paid", "amount_residual", "create_date",
+    ]
     list_ordering_default_fields = ["-date", "-number"]
 
     retrieve_response_schema: Schema = InvoiceSchema
@@ -57,6 +72,9 @@ class InvoiceController(
     update_request_schema = InvoiceUpdateSchema
     update_response_schema = InvoiceSchema
     display_name_response_schema = InvoiceDisplayNameSchema
+    payment_create_request_schema = InvoicePaymentCreateSchema
+    payment_update_request_schema = InvoicePaymentUpdateSchema
+    payment_response_schema = InvoicePaymentSchema
 
     # Create, multipart
 
