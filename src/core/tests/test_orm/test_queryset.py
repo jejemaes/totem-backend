@@ -1,7 +1,7 @@
 from django.test import TestCase
 from parameterized import parameterized
 
-from core.orm.queryset import queryset_fetch_fields
+from core.orm.queryset import model_instance_to_dict, queryset_fetch_fields
 from core.tests.computed_app.models import Category, Line, Order, Product
 
 
@@ -49,3 +49,33 @@ class TestQuerysetFetchFields(TestCase):
         with self.assertNumQueries(3):
             names = [line.product.category.name for line in queryset]
         self.assertEqual(names, ["Smoking"] * 3)
+
+
+class TestModelInstanceToDict(TestCase):
+    """What a list route serializes: see `PageNumberPagination`."""
+
+    @classmethod
+    def setUpTestData(cls):
+        product = Product.objects.create(name="Pipe", category=Category.objects.create(name="Smoking"))
+        cls.order = Order.objects.create(label="A")
+        Line.objects.create(order=cls.order, product=product)
+
+    def test_reverse_relation_leaves_out_its_back_reference(self):
+        """A prefetched reverse foreign key caches the order on each line too: it
+        used to be followed back, line to order to line, until a RecursionError.
+        A one-to-one does the same, from either side (see `payment`)."""
+        [order] = queryset_fetch_fields(Order.objects.all(), ["id", "lines__id", "lines__product__name"])
+
+        values = model_instance_to_dict(order)
+
+        [line] = values["lines"]
+        self.assertNotIn("order", line)
+        self.assertEqual(line["product"]["name"], "Pipe")
+
+    def test_forward_relation_is_kept(self):
+        [line] = queryset_fetch_fields(Line.objects.all(), ["id", "order__label", "product__category__name"])
+
+        values = model_instance_to_dict(line)
+
+        self.assertEqual(values["order"]["label"], "A")
+        self.assertEqual(values["product"]["category"]["name"], "Smoking")

@@ -75,9 +75,11 @@ def model_prepare_fetch_fields(model: Model, field_lookups: t.Dict[str, t.Dict[s
     return only_fields, prefetch
 
 
-def model_instance_to_dict(instance) -> t.Dict[str, t.Any]:
+def model_instance_to_dict(instance, back_reference: t.Optional[str] = None) -> t.Dict[str, t.Any]:
     """ Converts a Django model instance to a dictionary with only the fetched fields, including prefetched related objects.
         For relations, the result dict will contain a list of related objects converted to dicts as well.
+        :param back_reference: the cache name of the relation leading back to the
+            instance this one was reached from, left out (see below).
     """
     values = {}
     for key, value in instance.__dict__.items():
@@ -89,11 +91,34 @@ def model_instance_to_dict(instance) -> t.Dict[str, t.Any]:
     # many-to-many ones. Without this a nested foreign key silently vanishes from
     # every list payload, while retrieve/create/update -- which serialize the
     # instance itself rather than this dict -- keep it.
+    #
+    # Prefetching a one-to-one, or a reverse foreign key, also caches the parent
+    # on each related object -- Django does it so that reading back costs no
+    # query. That back reference is no fetched field, and following it would go
+    # round forever: `payment.account_movement.payment.account_movement...`.
     for key, value in instance._state.fields_cache.items():
-        values[key] = model_instance_to_dict(value) if value is not None else None
+        if key != back_reference:
+            values[key] = (
+                model_instance_to_dict(value, _back_reference(instance, key)) if value is not None else None
+            )
     for key, value in instance.__dict__.get("_prefetched_objects_cache", {}).items():
-        values[key] = [model_instance_to_dict(i) for i in value]
+        values[key] = [model_instance_to_dict(i, _back_reference(instance, key)) for i in value]
     return values
+
+
+def _back_reference(instance, cache_name) -> t.Optional[str]:
+    """The cache name, on a related object, of the relation leading back to
+    `instance` through its relation cached as `cache_name`."""
+    for field in instance._meta.get_fields():
+        # No `remote_field` on a generic foreign key: nothing leads back.
+        if field.is_relation and field.remote_field is not None and _cache_name(field) == cache_name:
+            return _cache_name(field.remote_field)
+    return None
+
+
+def _cache_name(field) -> t.Optional[str]:
+    # A many-to-many field has no field cache: its prefetch is keyed by its name.
+    return getattr(field, "cache_name", field.name)
 
 
 # ---------------------------------------------------------------------
