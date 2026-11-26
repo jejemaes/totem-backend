@@ -342,11 +342,12 @@ class AccountMovementServiceTest(AccountMovementServiceCommonMixin, ServiceTestC
 
     @parameterized.expand(
         [
-            # The check that none was booked by a document, the rows, the delete,
-            # then the refresh of the account's totals.
-            ("one movement", {"id": MOVEMENT_SALE_ID}, 12, 1, ("-100.50", "0", "-100.50")),
-            ("the debits", {"amount__lt": 0}, 12, 2, ("0", "150.00", "150.00")),
-            ("a whole account", {"account": ACCOUNT_SHIRE_ID}, 12, 3, ("0", "0", "0")),
+            # The check that none was booked by a payment, the rows, the delete --
+            # no fast delete: `Payment.account_movement` is nulled first -- then
+            # the refresh of the account's totals.
+            ("one movement", {"id": MOVEMENT_SALE_ID}, 14, 1, ("-100.50", "0", "-100.50")),
+            ("the debits", {"amount__lt": 0}, 14, 2, ("0", "150.00", "150.00")),
+            ("a whole account", {"account": ACCOUNT_SHIRE_ID}, 14, 3, ("0", "0", "0")),
             ("nothing matches", {"id": MOVEMENT_UNKNOWN_ID}, 6, 0, SHIRE_TOTALS),
         ]
     )

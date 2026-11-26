@@ -21,6 +21,9 @@ from core.services import (
     number_measures,
     share_measure,
 )
+from payment.choices import PaymentDirection, PaymentState, PaymentTargetType
+from payment.services.mixins import PaymentTargetServiceMixin
+from account.choices import MovementOriginType
 from account.models import (
     Account,
     AccountCategory,
@@ -84,11 +87,12 @@ class AccountMovementService(
     so its sum is the balance: the debits and the credits are measures of their
     own, as there is no direction column to group by.
 
-    A movement with an origin (`origin_type`) is booked by its document, which
-    owns its amount, date and reference: those are refused here on update, and
-    the movement on delete, so the ledger cannot disagree with the document.
-    Correct the document instead. The rest -- its name, description, category,
-    contact -- is edited as on any movement.
+    A movement with an origin (`origin_type`) is booked by a payment of its
+    document (`PaymentService._sync_account_movements`), which owns its amount,
+    date and reference: those are refused here on update, and the movement on
+    delete, so the ledger cannot disagree with what was paid. Correct the payment
+    instead. The rest -- its name, description, category, contact -- is edited
+    as on any movement.
     """
 
     group_by_dimensions = {
@@ -160,6 +164,7 @@ class AccountMovementService(
 
 
 class InvoiceService(
+    PaymentTargetServiceMixin,
     CreateMixin[InvoiceCreateSchema],
     ReadMixin,
     GroupByMixin,
@@ -169,10 +174,14 @@ class InvoiceService(
 ):
     """`number` is assigned by `InvoiceQuerySet.bulk_create`; `file_mimetype` is
     derived from the uploaded file by `_create_preprocess_values`, as for a
-    document.
+    document. The paid amounts follow the payments targeting the invoice.
 
-    Deleting an invoice with movements is refused by their `PROTECT` foreign key,
-    reported as a validation error.
+    The payments of an invoice are registered, changed and deleted from here
+    (`PaymentTargetServiceMixin`), and their rules are those of a supplier
+    invoice: paid by outgoing payments in its currency, never beyond what is due.
+
+    Deleting an invoice with payments or movements is refused by their `PROTECT`
+    foreign keys, reported as a validation error.
     """
 
     # A scanned invoice can be a large PDF, as a document.
@@ -182,11 +191,14 @@ class InvoiceService(
         "account": Dimension("account"),
         "category": Dimension("category"),
         "contact": Dimension("contact"),
+        "payment_status": Dimension("payment_status"),
         "currency_code": Dimension("currency_code"),
         **date_dimensions("date", ["month", "quarter", "year"]),
     }
     group_by_measures = {
         **number_measures("amount_total", ["sum"]),
+        **number_measures("amount_paid", ["sum"]),
+        **number_measures("amount_residual", ["sum"]),
     }
 
     def validate_data(self, data, instance):
@@ -229,6 +241,59 @@ class InvoiceService(
 
         if error:
             raise error
+
+    # Payments
+
+    payment_target_type = PaymentTargetType.INVOICE
+    payment_target_field = "invoice"
+
+    @classmethod
+    def _payment_default_values(cls, target):
+        # A supplier invoice: we pay it, in its currency, to its supplier.
+        return {
+            "direction": PaymentDirection.OUTGOING,
+            "currency_code": target.currency_code,
+            "contact": target.contact_id,
+        }
+
+    @classmethod
+    def _payment_validate(cls, target, values, instance):
+        error = cls.ValidationError({})
+        if values["direction"] != PaymentDirection.OUTGOING:
+            error.add_message("An invoice is paid by an outgoing payment.", key="direction")
+        if values["currency_code"] != target.currency_code:
+            error.add_message(
+                f"The invoice is in {target.currency_code}, the payment in {values['currency_code']}.",
+                key="currency_code",
+            )
+        # A done payment cannot pay more than what is due. Its own share, if it
+        # already counted towards the invoice, is due again once rewritten.
+        amount = values["amount"]
+        if values["state"] == PaymentState.DONE and amount is not None and target.amount_residual is not None:
+            due = target.amount_residual
+            if (
+                instance is not None
+                and instance.state == PaymentState.DONE
+                and instance.invoice_id == target.pk
+            ):
+                due += instance.amount
+            if amount > due:
+                error.add_message(f"The amount exceeds what is due on the invoice ({due}).", key="amount")
+        if error:
+            raise error
+
+    @classmethod
+    def _payment_movement_values(cls, target, payment):
+        return {
+            "account_id": target.account_id,
+            "reference": target.number,
+            "contact_id": payment.contact_id or target.contact_id,
+            # The default: the movement's own once booked, see
+            # `PaymentService.movement_initial_fields`.
+            "category_id": target.category_id,
+            "origin_type": MovementOriginType.INVOICE,
+            "invoice_id": target.pk,
+        }
 
     def _create_preprocess_values(self, internal_data):
         for values in internal_data:

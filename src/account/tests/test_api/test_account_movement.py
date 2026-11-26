@@ -727,7 +727,7 @@ class AccountMovementAPITest(CommonTestMixin, APITestCaseMixin, TestCase):
                     {"id": obj.contact.pk, "display_name": obj.contact.display_name, "is_company": obj.contact.is_company},
                 )
         # Read only: a movement entered here has no origin. A booked one is
-        # tested with the document booking it.
+        # tested in `payment`.
         if "origin_type" in fields:
             self.assertEqual(api_data["origin_type"], obj.origin_type)
         if "invoice" in fields:

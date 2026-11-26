@@ -1,0 +1,20 @@
+[
+{
+    "model": "user.userrole",
+    "pk": "PAYMENT_USER",
+    "fields": {
+        "name": "User",
+        "permissions": "[\"totem.payment.create\", \"totem.payment.read\", \"totem.payment.update\", \"totem.payment.delete\", \"totem.paymentmethod.read\"]",
+        "rules": "[]"
+    }
+},
+{
+    "model": "user.userrole",
+    "pk": "PAYMENT_ADMIN",
+    "fields": {
+        "name": "Administrator",
+        "permissions": "[\"totem.payment.create\", \"totem.payment.read\", \"totem.payment.update\", \"totem.payment.delete\", \"totem.paymentmethod.create\", \"totem.paymentmethod.read\", \"totem.paymentmethod.update\", \"totem.paymentmethod.delete\"]",
+        "rules": "[]"
+    }
+}
+]

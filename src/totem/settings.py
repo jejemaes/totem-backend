@@ -47,6 +47,7 @@ INSTALLED_APPS = [
     "website",
     "contact",
     "account",
+    "payment",
     "document",
     "saas",
     # `core` must be last since it autodiscover `api` module

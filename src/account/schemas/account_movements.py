@@ -20,12 +20,6 @@ from .invoices import InvoiceDisplayNameSchema
 MOVEMENT_FIELDS = ["amount", "name", "description", "date", "reference", "category", "contact"]
 
 
-class AccountMovementDisplayNameSchema(ModelSchema):
-    class Meta:
-        model = AccountMovement
-        fields = ["id", "name", "amount", "date"]
-
-
 class AccountMovementSchema(ModelSchema):
     account: Optional[AccountDisplayNameSchema] = None
     category: Optional[AccountCategoryDisplayNameSchema] = None
@@ -55,8 +49,10 @@ class AccountMovementUpdateSchema(ModelSchema):
 # No `account` in the update schema: moving a movement to another account would
 # move money between their balances behind a correction of a line, and would have
 # to re-check the scope of its category. Delete it and create it on the right one.
+# No display name schema: nothing relates to a movement but a payment, which
+# renders it with a schema of its own (`PaymentAccountMovementSchema`).
 # No `origin_type` nor `invoice` in any write schema: a movement with an origin is
-# booked by its document, never by hand.
+# booked by its document (a payment), never by hand.
 
 # ----------------------------------------------------
 # Filters Schemas

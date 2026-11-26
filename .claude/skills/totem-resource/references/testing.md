@@ -158,6 +158,7 @@ tests.
 | `test_<resource>_display_name.py` | `DisplayNameModelControllerMixin` | `/display-name/` |
 | `test_<resource>_resequence.py` | `ResequenceModelControllerMixin` | `/resequence/` |
 | `test_<resource>_group_by.py` | `GroupByModelControllerMixin` | `/group-by/` |
+| `test_<resource>_payments.py` | `PaymentTargetModelControllerMixin` | `/{id}/payments/` |
 
 Each file has one `TestCase` class, with one `# ---` banner section per
 operation and a `# Utils` section at the bottom.
@@ -259,6 +260,16 @@ self.role.save()
   `_user/_apikey_access_rules` (P).
 - **default_value**: `test_default_value_request`, `_response`,
   `_query_fields` (P), `_user/_apikey_access_rights` (P).
+- **payment target** (`_payments.py`, `PaymentTargetModelControllerMixin` of
+  `payment`): `test_payment_list_response` (only the document's, not
+  paginated), `_unknown_<document>` (404), `test_payment_register_request` (P), `_response`,
+  `_unknown_<document>` (404), `_ignores_what_it_forces` (the target, the state
+  and the contact of the body are no part of it), `test_payment_update_request` (P), `_response`,
+  `_not_found` (P: a payment of another document, an unknown one),
+  `test_payment_cancel_response` (the payment is cancelled, not deleted), `_not_found` (P),
+  and `_user/_apikey_access_rights` (P) for each of the four routes, with a row
+  showing that no `totem.payment.*` scope opens them, and one that the write
+  scope does not open the list.
 - **extra `@route`** (`_actions.py`), for each route `<name>`:
   `test_<name>_response`, `test_<name>_request` (P, if it has a body), and
   `_user/_apikey_access_rights` (P).

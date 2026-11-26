@@ -30,7 +30,7 @@ from account.tests.test_services.common_invoice import (
 @freeze_time(NOW)
 class InvoiceServiceTest(InvoiceServiceCommonMixin, MediaRootTestMixin, ServiceTestCaseMixin, TestCase):
     """ `InvoiceService`: the number, the file and its mimetype, the business
-    rules.
+    rules. The paid amounts are tested with the payments, in `payment`.
 
     No access rules tests: no `BaseRule` is registered for `Invoice`.
     """
@@ -67,6 +67,10 @@ class InvoiceServiceTest(InvoiceServiceCommonMixin, MediaRootTestMixin, ServiceT
         self.assertEqual(invoice.file_mimetype, mimetype)
         self.assertEqual(bool(invoice.file_content), upload is not None)
         self.assertEqual(invoice.currency_code, "EUR")
+        self.assertEqual(
+            (invoice.amount_paid, invoice.amount_residual, invoice.payment_status),
+            (Decimal("0"), Decimal("12.50"), "not_paid"),
+        )
 
     @parameterized.expand(
         [
@@ -111,6 +115,8 @@ class InvoiceServiceTest(InvoiceServiceCommonMixin, MediaRootTestMixin, ServiceT
         self.assertEqual(count, 1)
         invoice = Invoice.objects.get(pk=INVOICE_ALE_ID)
         self.assertEqual((invoice.amount_total, invoice.due_date), (Decimal("30.00"), date(2026, 11, 30)))
+        # Generated: follows the total in the very UPDATE.
+        self.assertEqual(invoice.amount_residual, Decimal("30.00"))
         # The number is not written by an update.
         self.assertEqual(invoice.number, "INV/2026/00002")
 

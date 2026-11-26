@@ -27,19 +27,19 @@ class AccountMovementAdmin(admin.ModelAdmin):
     list_filter = ("account", "category", "contact", "origin_type")
     search_fields = ("name", "reference")
     date_hierarchy = "date"
-    # Booked by its document: the admin does not set an origin.
+    # Booked by a payment: the admin does not set an origin.
     readonly_fields = ("origin_type", "invoice")
 
 
 @admin.register(Invoice)
 class InvoiceAdmin(admin.ModelAdmin):
-    list_display = ("number", "name", "date", "contact", "account", "amount_total", "currency_code")
-    list_filter = ("account", "category", "currency_code")
+    list_display = ("number", "name", "date", "contact", "account", "amount_total", "currency_code", "amount_paid", "payment_status")
+    list_filter = ("payment_status", "account", "category", "currency_code")
     search_fields = ("number", "name", "reference")
     date_hierarchy = "date"
     # `file_mimetype` is derived by `InvoiceService` only: a file added here has
     # none.
-    readonly_fields = ("number", "file_mimetype")
+    readonly_fields = ("number", "file_mimetype", "amount_paid", "amount_residual", "payment_status")
 
 
 class BudgetPositionInline(admin.TabularInline):
